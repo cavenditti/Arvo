@@ -1,0 +1,13 @@
+{
+  "tabs.dashboard": "Cruscotto",
+  "tabs.map": "Mappa",
+  "tabs.scouting": "Rilievi",
+  "tabs.alerts": "Avvisi",
+  "tabs.settings": "Impostazioni",
+  "common.loading": "Caricamento…",
+  "common.save": "Salva",
+  "common.cancel": "Annulla",
+  "common.retry": "Riprova",
+  "common.offline": "Offline",
+  "common.decision_support": "Le indicazioni fornite sono di supporto alle decisioni e non costituiscono prescrizione agronomica."
+}

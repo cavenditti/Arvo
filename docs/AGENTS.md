@@ -41,6 +41,8 @@ Read `docs/PHASE0.md` (scope) and `docs/API.md` (REST contract) first. Spec: `ag
 
 ## App patterns
 
+- Expo **SDK 57**; routes live in `app/src/app/` (`@/*` alias = `app/src/*`). Read `app/AGENTS.md`
+  (points to the versioned Expo docs) before using Expo APIs.
 - Expo Router file routes; TypeScript strict; use `@tanstack/react-query` for all server state
   (`useQuery`/`useMutation`, keys like `['parcels']`, `['indices', parcelId, index]`).
 - API access only via `src/api/client.ts` (`api.get/post/patch/del`), types from `src/api/types.ts`.
@@ -61,10 +63,10 @@ Read `docs/PHASE0.md` (scope) and `docs/API.md` (REST contract) first. Spec: `ag
 | be-imagery | `modules/scenes.rs`, `modules/indices.rs`, `imagery/stac.rs`, `imagery/worker.rs`, `imagery/synth.rs`, `imagery/mod.rs`, `core/src/indices.rs` |
 | be-alerts | `modules/alerts.rs`, `jobs/detect.rs`, `jobs/mod.rs`, `core/src/anomaly.rs` |
 | be-scouting | `modules/observations.rs`, `modules/reports.rs` |
-| fe-shell | `app/app/_layout.tsx`, `app/app/login.tsx`, `app/app/register.tsx`, `app/app/(tabs)/settings.tsx`, `src/api/client.ts`, `src/auth/*`, `src/i18n/*` (owns files; others append keys), `src/theme.ts` |
-| fe-map | `app/app/(tabs)/map.tsx`, `app/app/parcel/[id].tsx`, `app/app/parcel/new.tsx`, `src/components/MapView.native.tsx`, `MapView.web.tsx`, `src/components/map/mapHtml.ts`, `src/features/parcels/*` |
-| fe-dashboard | `app/app/(tabs)/index.tsx`, `app/app/(tabs)/alerts.tsx`, `src/components/IndexChart.tsx`, `WeatherPanel.tsx`, `AlertList.tsx`, `src/features/insights/*` |
-| fe-scouting | `app/app/(tabs)/scouting.tsx`, `app/app/observation/new.tsx`, `src/offline/*`, `src/features/scouting/*` |
+| fe-shell | `app/src/app/_layout.tsx`, `app/src/app/login.tsx`, `app/src/app/register.tsx`, `app/src/app/(tabs)/settings.tsx`, `app/src/api/client.ts`, `app/src/auth/*`, `app/src/i18n/*` (owns files; others append keys), `app/src/theme.ts` |
+| fe-map | `app/src/app/(tabs)/map.tsx`, `app/src/app/parcel/[id].tsx`, `app/src/app/parcel/new.tsx`, `app/src/components/MapView.native.tsx`, `MapView.web.tsx`, `app/src/components/map/mapHtml.ts`, `app/src/features/parcels/*` |
+| fe-dashboard | `app/src/app/(tabs)/index.tsx`, `app/src/app/(tabs)/alerts.tsx`, `app/src/components/IndexChart.tsx`, `WeatherPanel.tsx`, `AlertList.tsx`, `app/src/features/insights/*` |
+| fe-scouting | `app/src/app/(tabs)/scouting.tsx`, `app/src/app/observation/new.tsx`, `app/src/offline/*`, `app/src/features/scouting/*` |
 
 Backend test ports: be-auth 8791 · be-parcels 8792 · be-weather 8793 · be-imagery 8794 · be-alerts 8795 · be-scouting 8796.
 i18n JSONs are shared append-points: **add only your namespaced keys, never reformat the file.**

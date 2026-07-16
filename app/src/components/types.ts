@@ -1,0 +1,50 @@
+// SPINE (read-only) — frozen component contracts (docs/AGENTS.md). Implementations replace the
+// placeholder component files but MUST keep these exact props.
+import type {
+  Advisory,
+  AgroSummary,
+  Alert,
+  GeoJSONPolygon,
+  IndexName,
+  IndexPoint,
+  Parcel,
+  WeatherDaily,
+} from '../api/types';
+
+export interface ParcelFeature {
+  parcel: Parcel;
+  /** fill color override (e.g. NDVI choropleth), CSS color string */
+  color?: string;
+}
+
+export interface MapViewProps {
+  parcels: ParcelFeature[];
+  mode: 'view' | 'draw';
+  onSelectParcel?: (parcelId: string) => void;
+  onDrawComplete?: (geometry: GeoJSONPolygon) => void;
+  /** [lon, lat, zoom?] */
+  focus?: [number, number, number?];
+  /** extra point markers (e.g. scouting observations) */
+  markers?: { id: string; lon: number; lat: number; label?: string }[];
+  height?: number;
+}
+
+export interface IndexChartProps {
+  series: IndexPoint[];
+  index: IndexName;
+  height?: number;
+}
+
+export interface WeatherPanelProps {
+  daily: WeatherDaily[];
+  agro?: AgroSummary;
+  advisories?: Advisory[];
+}
+
+export type AlertAction = 'ack' | 'dismiss' | 'snooze';
+
+export interface AlertListProps {
+  alerts: Alert[];
+  onAction: (id: string, action: AlertAction) => void;
+  parcelNames?: Record<string, string>;
+}

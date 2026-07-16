@@ -1,0 +1,13 @@
+{
+  "tabs.dashboard": "Dashboard",
+  "tabs.map": "Map",
+  "tabs.scouting": "Scouting",
+  "tabs.alerts": "Alerts",
+  "tabs.settings": "Settings",
+  "common.loading": "Loading…",
+  "common.save": "Save",
+  "common.cancel": "Cancel",
+  "common.retry": "Retry",
+  "common.offline": "Offline",
+  "common.decision_support": "All guidance is decision support and does not constitute an agronomic prescription."
+}
