@@ -12,6 +12,7 @@ export const colors = {
   warning: '#EF6C00',
   info: '#1565C0',
   success: '#2E7D32',
+  onPrimary: '#FFFFFF',
 };
 
 export const spacing = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32 };
