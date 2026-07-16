@@ -182,7 +182,8 @@ export function GlyphCard({
         pointerEvents="none"
         style={[
           styles.glyphBleed,
-          { opacity: glyphOpacity, right: -size * 0.22, bottom: -size * 0.28 },
+          // subtle bleed (~10–12% off each edge): the glyph stays ~three-quarters visible
+          { opacity: glyphOpacity, right: -size * 0.1, bottom: -size * 0.12 },
         ]}
       >
         <Glyph name={glyph} size={size} color={glyphColor} />

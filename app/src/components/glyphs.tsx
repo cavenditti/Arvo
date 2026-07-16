@@ -54,17 +54,17 @@ function Cloud({ color }: { color: string }) {
 function Rain({ color }: { color: string }) {
   return (
     <G>
-      <CloudShape color={color} lift={14} />
-      {[30, 50, 70].map((x, i) => (
+      <CloudShape color={color} lift={18} />
+      {[27, 47, 67].map((x, i) => (
         <Rect
           key={i}
           x={x}
-          y={64 + (i === 1 ? 8 : 0)}
-          width={6}
-          height={20}
-          rx={3}
+          y={i === 1 ? 64 : 56}
+          width={7}
+          height={27}
+          rx={3.5}
           fill={color}
-          transform={`rotate(18 ${x} ${64 + (i === 1 ? 8 : 0)})`}
+          transform={`rotate(16 ${x} ${i === 1 ? 64 : 56})`}
         />
       ))}
     </G>
@@ -148,10 +148,18 @@ function Wind({ color }: { color: string }) {
 }
 
 function Thermo({ color }: { color: string }) {
+  // contour (tube+bulb outline) + mercury column: reads as a thermometer even tone-on-tone,
+  // unlike a solid silhouette (which looks like a pin)
   return (
     <G>
-      <Rect x={42} y={8} width={16} height={54} rx={8} fill={color} />
-      <Circle cx={50} cy={72} r={16} fill={color} />
+      <Path
+        d="M 39 66 L 39 17 A 11 11 0 0 1 61 17 L 61 66 A 15.5 15.5 0 1 1 39 66 Z"
+        stroke={color}
+        strokeWidth={6}
+        fill="none"
+      />
+      <Rect x={46.5} y={34} width={7} height={36} rx={3.5} fill={color} />
+      <Circle cx={50} cy={77} r={8.5} fill={color} />
     </G>
   );
 }

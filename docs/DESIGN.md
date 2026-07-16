@@ -116,7 +116,9 @@ The signature Terra element: one oversized, simple vector glyph per conditioned
 card, drawn from the glyph library (sun, cloud, rain, frost, leaf, sprout, drop,
 wind, thermometer). Rendered by `GlyphCard`:
 
-- Size ≈ 1.1–1.4 × card height, anchored bottom-right, bleeding off two edges.
+- Size ≈ 1.1–1.4 × card height, anchored bottom-right with a subtle bleed (≈10–15% off
+  each edge). The glyph must stay recognizable — roughly three-quarters visible, never
+  cropped past half.
 - Tone-on-tone: same hue family as the backdrop, `opacity 0.12–0.2`. Never a
   second hue, never above the content (content wraps in a zIndex view).
 - One glyph per card, only when the card *is* the condition (a weather day, an
