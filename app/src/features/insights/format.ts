@@ -13,8 +13,8 @@ export const INDEX_DOMAIN: Record<IndexName, [number, number]> = {
   ndmi: [-0.2, 0.6],
 };
 
-// choropleth ramp: bare/stressed (brown) → yellow → vigorous (green)
-const RAMP = ['#A1442A', '#D98C3F', '#E8C443', '#7CB342', '#2E7D32'];
+// choropleth ramp: bare/stressed (terracotta) → amber → yellow-green → vigorous (forest)
+const RAMP = ['#A5432B', '#B26A3F', '#C7A34E', '#B8BF5C', '#7BA653', '#3F7D45'];
 
 function hexToRgb(h: string): [number, number, number] {
   const n = parseInt(h.slice(1), 16);

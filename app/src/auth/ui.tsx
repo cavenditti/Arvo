@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
   link: { alignItems: 'center', paddingVertical: spacing.md },
   linkText: { color: colors.primary, fontSize: 15, fontWeight: '600' },
   errorBox: {
-    backgroundColor: '#FDECEA',
+    backgroundColor: '#F7E7E2',
     borderRadius: radius.sm,
     padding: spacing.md,
     marginBottom: spacing.md,

@@ -32,15 +32,15 @@ export function cropIcon(crop: string | null | undefined): IoniconName {
 }
 
 // Fill shown when a parcel has no NDVI reading yet.
-export const NEUTRAL_FILL = '#9E9E9E';
+export const NEUTRAL_FILL = '#B6BAB2';
 
 // Latest-NDVI choropleth (docs/API.md dashboard scale). null → neutral grey.
 export function ndviColor(mean: number | null | undefined): string {
   if (mean == null) return NEUTRAL_FILL;
-  if (mean < 0.3) return '#d9534f';
-  if (mean < 0.5) return '#f0ad4e';
-  if (mean < 0.65) return '#9acd32';
-  return '#2E7D32';
+  if (mean < 0.3) return '#A5432B';
+  if (mean < 0.5) return '#C7A34E';
+  if (mean < 0.65) return '#B8BF5C';
+  return '#4F8F4A';
 }
 
 export function formatArea(ha: number | null | undefined): string {

@@ -1,23 +1,49 @@
-// OWNER: fe-dashboard — Dashboard: org greeting + parcel cards (latest NDVI, sparkline, alert badge).
+// OWNER: fe-dashboard — Fields home (Campo): header + latest-pass meta, top attention banner,
+// parcel rows with NDVI swatch, status chip (worst open alert), and 7-day delta.
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { format, parseISO } from 'date-fns';
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import Svg, { Polyline } from 'react-native-svg';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { api } from '@/api/client';
 import type { Alert, IndexName, IndexPoint, LatestIndices, Org, Parcel, Role, User } from '@/api/types';
-import { cropLabel, indexColor } from '@/features/insights/format';
-import { colors, radius, spacing } from '@/theme';
+import { Delta, MonoLabel, NdviSwatch, StatusChip } from '@/components/ui';
+import { cropLabel, dfLocale } from '@/features/insights/format';
+import { colors, radius, spacing, statusColors, statusForSeverity, type Status } from '@/theme';
 
 type Me = { user: User; org: Org; role: Role };
 type LatestBatch = Record<string, LatestIndices>;
+
+const DAY_MS = 86_400_000;
+
+/** Worst open severity per parcel ('critical' > 'warning' > 'info'). */
+function worstSeverity(alerts: Alert[]): Record<string, string> {
+  const rank: Record<string, number> = { info: 1, warning: 2, critical: 3 };
+  const out: Record<string, string> = {};
+  for (const a of alerts) {
+    if (!a.parcel_id) continue;
+    if ((rank[a.severity] ?? 0) > (rank[out[a.parcel_id]] ?? 0)) out[a.parcel_id] = a.severity;
+  }
+  return out;
+}
 
 export default function Dashboard() {
   const { t } = useTranslation();
   const router = useRouter();
   const qc = useQueryClient();
+  const insets = useSafeAreaInsets();
   const [refreshing, setRefreshing] = useState(false);
 
   const me = useQuery({ queryKey: ['auth', 'me'], queryFn: () => api.get<Me>('/auth/me') });
@@ -34,9 +60,23 @@ export default function Dashboard() {
     queryFn: () => api.get<Alert[]>('/alerts?state=open'),
   });
 
-  const alertCounts: Record<string, number> = {};
-  for (const a of openAlerts.data ?? []) {
-    if (a.parcel_id) alertCounts[a.parcel_id] = (alertCounts[a.parcel_id] ?? 0) + 1;
+  const severityByParcel = worstSeverity(openAlerts.data ?? []);
+  const parcelNames: Record<string, string> = {};
+  for (const p of parcels.data ?? []) parcelNames[p.id] = p.name;
+
+  // banner = worst open alert (critical first, then warning), newest wins ties
+  const banner = (openAlerts.data ?? [])
+    .filter((a) => a.severity !== 'info')
+    .sort((a, b) => {
+      const rank: Record<string, number> = { warning: 1, critical: 2 };
+      return (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0) || b.created_at.localeCompare(a.created_at);
+    })[0];
+
+  // latest acquisition across parcels → "14 JUL PASS"
+  let lastPass: string | null = null;
+  for (const li of Object.values(latest.data ?? {})) {
+    const at = li.ndvi?.observed_at;
+    if (at && (!lastPass || at > lastPass)) lastPass = at;
   }
 
   const onRefresh = useCallback(async () => {
@@ -45,14 +85,42 @@ export default function Dashboard() {
     setRefreshing(false);
   }, [qc]);
 
-  const name = me.data?.user.full_name?.split(' ')[0] ?? '';
+  const list = parcels.data ?? [];
+  const metaParts = [t('dashboard.parcel_count', { count: list.length })];
+  if (lastPass) {
+    metaParts.push(
+      t('dashboard.last_pass', { date: format(parseISO(lastPass), 'd MMM', { locale: dfLocale() }) }),
+    );
+  }
 
   const header = (
     <View style={styles.header}>
-      <Text style={styles.org}>{me.data?.org.name ?? '—'}</Text>
-      <Text style={styles.greeting}>
-        {name ? t('dashboard.greeting', { name }) : t('dashboard.greeting_generic')}
-      </Text>
+      <View style={styles.headerRow}>
+        <View style={styles.flex1}>
+          <Text style={styles.title}>{t('dashboard.title')}</Text>
+          <Text style={styles.org}>{me.data?.org.name ?? '—'}</Text>
+        </View>
+        <Pressable
+          onPress={() => router.push('/alerts')}
+          style={styles.bell}
+          accessibilityLabel={t('tabs.alerts')}
+        >
+          <Ionicons name="notifications-outline" size={20} color={colors.text} />
+          {(openAlerts.data?.length ?? 0) > 0 ? <View style={styles.bellDot} /> : null}
+        </Pressable>
+      </View>
+
+      {banner ? (
+        <BannerCard
+          alert={banner}
+          parcelName={banner.parcel_id ? parcelNames[banner.parcel_id] : undefined}
+          onPress={() =>
+            banner.parcel_id ? router.push(`/parcel/${banner.parcel_id}`) : router.push('/alerts')
+          }
+        />
+      ) : null}
+
+      {list.length > 0 ? <MonoLabel style={styles.listMeta}>{metaParts.join(' · ')}</MonoLabel> : null}
     </View>
   );
 
@@ -76,9 +144,9 @@ export default function Dashboard() {
   }
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { paddingTop: insets.top }]}>
       <FlatList
-        data={parcels.data ?? []}
+        data={list}
         keyExtractor={(p) => p.id}
         contentContainerStyle={styles.content}
         ListHeaderComponent={header}
@@ -86,10 +154,10 @@ export default function Dashboard() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
         renderItem={({ item }) => (
-          <ParcelCard
+          <ParcelRow
             parcel={item}
             ndvi={latest.data?.[item.id]?.ndvi ?? null}
-            alertCount={alertCounts[item.id] ?? 0}
+            status={statusForSeverity(severityByParcel[item.id])}
             onPress={() => router.push(`/parcel/${item.id}`)}
           />
         )}
@@ -107,104 +175,164 @@ export default function Dashboard() {
   );
 }
 
-function ParcelCard({
+function BannerCard({
+  alert,
+  parcelName,
+  onPress,
+}: {
+  alert: Alert;
+  parcelName?: string;
+  onPress: () => void;
+}) {
+  const status: Status = statusForSeverity(alert.severity);
+  const c = statusColors[status];
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.banner, { backgroundColor: c.bg }, pressed && styles.pressed]}
+    >
+      <View style={[styles.bannerDot, { backgroundColor: c.fg }]} />
+      <View style={styles.flex1}>
+        <Text style={styles.bannerTitle} numberOfLines={1}>
+          {alert.title}
+          {parcelName ? ` — ${parcelName}` : ''}
+        </Text>
+        <Text style={styles.bannerBody} numberOfLines={1}>
+          {alert.message}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+    </Pressable>
+  );
+}
+
+function ParcelRow({
   parcel,
   ndvi,
-  alertCount,
+  status,
   onPress,
 }: {
   parcel: Parcel;
   ndvi: IndexPoint | null;
-  alertCount: number;
+  status: Status;
   onPress: () => void;
 }) {
   const { t } = useTranslation();
   const crop = cropLabel(parcel.crop);
-  return (
-    <Pressable style={({ pressed }) => [styles.card, pressed && styles.cardPressed]} onPress={onPress}>
-      <View style={styles.cardTop}>
-        <View style={styles.cardInfo}>
-          <Text style={styles.cardName} numberOfLines={1}>
-            {parcel.name}
-          </Text>
-          <Text style={styles.cardMeta}>
-            {[crop, `${parcel.area_ha.toFixed(2)} ha`].filter(Boolean).join(' · ')}
-          </Text>
-        </View>
-        {alertCount > 0 && (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{alertCount}</Text>
-          </View>
-        )}
-      </View>
 
-      <View style={styles.cardBottom}>
-        <View style={styles.ndviWrap}>
-          <View style={[styles.dot, { backgroundColor: indexColor('ndvi', ndvi?.mean) }]} />
-          <View>
-            <Text style={styles.ndviLabel}>{t('dashboard.ndvi')}</Text>
-            <Text style={styles.ndviValue}>{ndvi ? ndvi.mean.toFixed(2) : '—'}</Text>
-          </View>
-        </View>
-        <Sparkline parcelId={parcel.id} />
+  // 7-day delta from the cached series (shared with the parcel detail chart)
+  const { data } = useQuery({
+    queryKey: ['indices', parcel.id, 'ndvi', 'spark'],
+    queryFn: () =>
+      api.get<{ index: IndexName; series: IndexPoint[] }>(`/parcels/${parcel.id}/indices?index=ndvi`),
+    staleTime: 5 * 60 * 1000,
+  });
+  let delta: number | null = null;
+  const series = data?.series ?? [];
+  if (series.length >= 2) {
+    const last = series[series.length - 1];
+    const lastT = parseISO(last.observed_at).getTime();
+    // closest observation at least ~7 days before the latest one
+    const ref = [...series]
+      .reverse()
+      .find((p) => lastT - parseISO(p.observed_at).getTime() >= 6.5 * DAY_MS);
+    if (ref) delta = last.mean - ref.mean;
+  }
+
+  return (
+    <Pressable style={({ pressed }) => [styles.row, pressed && styles.pressed]} onPress={onPress}>
+      <NdviSwatch value={ndvi?.mean ?? null} size={46} />
+      <View style={styles.rowInfo}>
+        <Text style={styles.rowName} numberOfLines={1}>
+          {parcel.name}
+        </Text>
+        <Text style={styles.rowMeta} numberOfLines={1}>
+          {[crop, `${parcel.area_ha.toFixed(1)} ha`].filter(Boolean).join(' · ')}
+        </Text>
+      </View>
+      <View style={styles.rowRight}>
+        <StatusChip status={status} label={t(`status.${status}`)} />
+        <Delta value={delta} />
       </View>
     </Pressable>
   );
 }
 
-function Sparkline({ parcelId }: { parcelId: string }) {
-  const { data } = useQuery({
-    queryKey: ['indices', parcelId, 'ndvi', 'spark'],
-    queryFn: () =>
-      api.get<{ index: IndexName; series: IndexPoint[] }>(`/parcels/${parcelId}/indices?index=ndvi`),
-    staleTime: 5 * 60 * 1000,
-  });
-  const vals = (data?.series ?? []).slice(-8).map((p) => p.mean);
-  const W = 84;
-  const H = 30;
-  const pad = 3;
-  if (vals.length < 2) return <View style={{ width: W, height: H }} />;
-  const min = Math.min(...vals);
-  const max = Math.max(...vals);
-  const range = max - min || 1;
-  const points = vals
-    .map((v, i) => {
-      const x = pad + (i / (vals.length - 1)) * (W - 2 * pad);
-      const y = pad + (1 - (v - min) / range) * (H - 2 * pad);
-      return `${x},${y}`;
-    })
-    .join(' ');
-  return (
-    <Svg width={W} height={H}>
-      <Polyline points={points} fill="none" stroke={indexColor('ndvi', vals[vals.length - 1])} strokeWidth={2} />
-    </Svg>
-  );
-}
-
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg, gap: spacing.md },
-  content: { padding: spacing.md, gap: spacing.md, flexGrow: 1 },
-  header: { marginBottom: spacing.xs },
-  org: { fontSize: 22, fontWeight: '800', color: colors.text },
-  greeting: { fontSize: 14, color: colors.textMuted, marginTop: 2 },
-  card: { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border },
-  cardPressed: { opacity: 0.7 },
-  cardTop: { flexDirection: 'row', alignItems: 'flex-start' },
-  cardInfo: { flex: 1 },
-  cardName: { fontSize: 17, fontWeight: '700', color: colors.text },
-  cardMeta: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
-  badge: { minWidth: 24, height: 24, borderRadius: 12, paddingHorizontal: 6, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center' },
-  badgeText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
-  cardBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.md },
-  ndviWrap: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  dot: { width: 18, height: 18, borderRadius: 9 },
-  ndviLabel: { fontSize: 11, color: colors.textMuted },
-  ndviValue: { fontSize: 18, fontWeight: '700', color: colors.text },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.bg,
+    gap: spacing.md,
+  },
+  content: { padding: spacing.md, gap: spacing.sm, flexGrow: 1 },
+  flex1: { flex: 1 },
+  header: { marginBottom: spacing.xs, gap: spacing.md },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  title: { fontSize: 28, fontWeight: '800', color: colors.text, letterSpacing: -0.5 },
+  org: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  bell: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bellDot: {
+    position: 'absolute',
+    top: 9,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.accent,
+    borderWidth: 1.5,
+    borderColor: colors.card,
+  },
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  bannerDot: { width: 8, height: 8, borderRadius: 4 },
+  bannerTitle: { fontSize: 13, fontWeight: '700', color: colors.text },
+  bannerBody: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
+  listMeta: { marginTop: spacing.xs },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  pressed: { opacity: 0.7 },
+  rowInfo: { flex: 1 },
+  rowName: { fontSize: 16, fontWeight: '700', color: colors.text },
+  rowMeta: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  rowRight: { alignItems: 'flex-end', gap: 6 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
   emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
   emptyBody: { fontSize: 14, color: colors.textMuted, textAlign: 'center' },
-  cta: { backgroundColor: colors.primary, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.md, marginTop: spacing.sm },
-  ctaText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  cta: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    marginTop: spacing.sm,
+  },
+  ctaText: { color: colors.onPrimary, fontSize: 15, fontWeight: '700' },
   errorText: { color: colors.danger, fontSize: 14 },
 });

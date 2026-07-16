@@ -4,7 +4,7 @@ import { format, parseISO } from 'date-fns';
 import type { Locale } from 'date-fns';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import Svg, {
   Circle,
   G,
@@ -177,13 +177,16 @@ function Chart({
             stroke={colors.primary}
             strokeWidth={1.5}
           />
-          {/* enlarged transparent hit target for tap */}
+          {/* enlarged transparent hit target for tap; rnsvg-web needs a DOM onClick —
+              onPress would leak onResponder* props to the DOM and never fire */}
           <Circle
             cx={d.x}
             cy={d.yMean}
             r={14}
             fill="transparent"
-            onPress={() => onSelect(selected === i ? null : i)}
+            {...(Platform.OS === 'web'
+              ? ({ onClick: () => onSelect(selected === i ? null : i) } as object)
+              : { onPress: () => onSelect(selected === i ? null : i) })}
           />
         </G>
       ))}

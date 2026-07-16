@@ -1,65 +1,69 @@
-// OWNER: fe-dashboard — severity-bordered alert cards with kind icon, relative time, state chip,
-// and ack/snooze/dismiss actions (snooze expands to inline 1g/3g/7g choices).
-import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+// OWNER: fe-dashboard — Campo insight cards: severity dot + title + priority tag, mono meta line,
+// message, state pill, and ack/snooze/dismiss actions (snooze expands to inline 1g/3g/7g choices)
+// plus an optional "Open parcel →" link.
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { Alert, AlertState } from '@/api/types';
+import type { Alert, AlertState, Severity } from '@/api/types';
+import { Dot, MonoLabel, Pill } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
 import { setSnoozeDays } from '@/features/insights/snooze';
 import { colors, radius, severityColor, spacing } from '@/theme';
 import type { AlertListProps } from './types';
 
-const KIND_ICON: Record<string, keyof typeof MaterialCommunityIcons.glyphMap> = {
-  index_drop: 'leaf-off',
-  frost_risk: 'snowflake',
-  heat_stress: 'thermometer',
-};
-
 const SNOOZE_CHOICES = [1, 3, 7];
 
-const STATE_STYLE: Record<AlertState, string> = {
-  open: colors.warning,
-  acked: colors.success,
-  snoozed: colors.info,
-  dismissed: colors.textMuted,
+const SEVERITY_TINT: Record<Severity, { fg: string; bg: string }> = {
+  critical: { fg: '#A5432B', bg: '#F7E7E2' },
+  warning: { fg: '#9A6A1E', bg: '#F6EFDD' },
+  info: { fg: '#5B8F8A', bg: '#E5EEED' },
 };
 
-export default function AlertList({ alerts, onAction, parcelNames }: AlertListProps) {
+const STATE_TINT: Record<AlertState, { fg: string; bg: string }> = {
+  open: { fg: colors.primary, bg: colors.primarySoft },
+  acked: { fg: colors.textMuted, bg: colors.borderSoft },
+  snoozed: { fg: '#5B8F8A', bg: '#E5EEED' },
+  dismissed: { fg: colors.textFaint, bg: colors.borderSoft },
+};
+
+export default function AlertList({ alerts, onAction, parcelNames, onOpenParcel }: AlertListProps) {
   const { t } = useTranslation();
   const [snoozing, setSnoozing] = useState<string | null>(null);
 
   return (
     <View style={styles.list}>
       {alerts.map((a) => {
-        const border = severityColor[a.severity] ?? colors.info;
+        const sev = SEVERITY_TINT[a.severity] ?? SEVERITY_TINT.info;
+        const state = STATE_TINT[a.state];
         const actionable = a.state === 'open' || a.state === 'snoozed';
+        const parcelName = a.parcel_id ? parcelNames?.[a.parcel_id] : undefined;
+        const ago = formatDistanceToNow(parseISO(a.created_at), {
+          addSuffix: true,
+          locale: dfLocale(),
+        });
         return (
-          <View key={a.id} style={[styles.card, { borderLeftColor: border }]}>
-            <View style={styles.row}>
-              <MaterialCommunityIcons
-                name={KIND_ICON[a.kind] ?? 'alert-circle-outline'}
-                size={22}
-                color={border}
-                style={styles.icon}
-              />
-              <View style={styles.body}>
-                <Text style={styles.title}>{a.title}</Text>
-                <Text style={styles.message}>{a.message}</Text>
-                <View style={styles.meta}>
-                  {a.parcel_id && parcelNames?.[a.parcel_id] && (
-                    <Text style={styles.metaText}>{parcelNames[a.parcel_id]}</Text>
-                  )}
-                  <Text style={styles.metaText}>
-                    {formatDistanceToNow(parseISO(a.created_at), { addSuffix: true, locale: dfLocale() })}
-                  </Text>
-                  <View style={[styles.stateChip, { backgroundColor: STATE_STYLE[a.state] }]}>
-                    <Text style={styles.stateChipText}>{t(`alerts.state.${a.state}`)}</Text>
-                  </View>
-                </View>
-              </View>
+          <View key={a.id} style={styles.card}>
+            <View style={styles.titleRow}>
+              <Dot color={severityColor[a.severity] ?? colors.info} />
+              <Text style={styles.title} numberOfLines={2}>
+                {a.title}
+              </Text>
+              <Pill label={t(`severity.${a.severity}`)} fg={sev.fg} bg={sev.bg} />
+            </View>
+            <MonoLabel style={styles.meta}>
+              {[parcelName, ago].filter(Boolean).join(' · ')}
+            </MonoLabel>
+            <Text style={styles.message}>{a.message}</Text>
+
+            <View style={styles.footer}>
+              <Pill label={t(`alerts.state.${a.state}`)} fg={state.fg} bg={state.bg} />
+              {a.parcel_id && onOpenParcel ? (
+                <Pressable onPress={() => onOpenParcel(a.parcel_id!)} hitSlop={8}>
+                  <Text style={styles.openLink}>{t('alerts.open_parcel')} →</Text>
+                </Pressable>
+              ) : null}
             </View>
 
             {actionable && (
@@ -81,9 +85,9 @@ export default function AlertList({ alerts, onAction, parcelNames }: AlertListPr
                   </>
                 ) : (
                   <>
-                    <ActionButton icon="check" label={t('alerts.ack')} onPress={() => onAction(a.id, 'ack')} />
-                    <ActionButton icon="clock-outline" label={t('alerts.snooze')} onPress={() => setSnoozing(a.id)} />
-                    <ActionButton icon="close" label={t('alerts.dismiss')} onPress={() => onAction(a.id, 'dismiss')} />
+                    <ActionButton label={t('alerts.ack')} onPress={() => onAction(a.id, 'ack')} />
+                    <ActionButton label={t('alerts.snooze')} onPress={() => setSnoozing(a.id)} />
+                    <ActionButton label={t('alerts.dismiss')} onPress={() => onAction(a.id, 'dismiss')} />
                   </>
                 )}
               </View>
@@ -95,18 +99,9 @@ export default function AlertList({ alerts, onAction, parcelNames }: AlertListPr
   );
 }
 
-function ActionButton({
-  icon,
-  label,
-  onPress,
-}: {
-  icon?: keyof typeof MaterialCommunityIcons.glyphMap;
-  label: string;
-  onPress: () => void;
-}) {
+function ActionButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.action, pressed && styles.actionPressed]}>
-      {icon && <MaterialCommunityIcons name={icon} size={16} color={colors.primaryDark} />}
       <Text style={styles.actionText}>{label}</Text>
     </Pressable>
   );
@@ -116,32 +111,38 @@ const styles = StyleSheet.create({
   list: { gap: spacing.sm },
   card: {
     backgroundColor: colors.card,
-    borderLeftWidth: 4,
-    borderRadius: radius.md,
+    borderRadius: radius.lg,
     padding: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  row: { flexDirection: 'row' },
-  icon: { marginRight: spacing.sm, marginTop: 2 },
-  body: { flex: 1 },
-  title: { fontSize: 15, fontWeight: '700', color: colors.text },
-  message: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
-  meta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
-  metaText: { fontSize: 11, color: colors.textMuted },
-  stateChip: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm },
-  stateChipText: { fontSize: 10, fontWeight: '700', color: '#FFFFFF', textTransform: 'uppercase' },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
-  action: {
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  title: { flex: 1, fontSize: 15, fontWeight: '700', color: colors.text },
+  meta: { marginTop: 6 },
+  message: { fontSize: 13, color: colors.textMuted, marginTop: 6, lineHeight: 18 },
+  footer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+  },
+  openLink: { fontSize: 13, fontWeight: '600', color: colors.primary },
+  actions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+    paddingTop: spacing.sm,
+  },
+  action: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: 6,
     borderRadius: radius.sm,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.bg,
+    backgroundColor: colors.cardAlt,
   },
   actionPressed: { opacity: 0.6 },
   actionText: { fontSize: 13, fontWeight: '600', color: colors.primaryDark },

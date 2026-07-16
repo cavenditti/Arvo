@@ -14,6 +14,8 @@ import {
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
+import { format, parseISO } from 'date-fns';
+import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
@@ -22,6 +24,7 @@ import { INDEX_NAMES, type IndexName, type Meta } from '@/api/types';
 import AlertList from '@/components/AlertList';
 import IndexChart from '@/components/IndexChart';
 import MapView from '@/components/MapView';
+import { Delta, MonoLabel, MonoValue, Pill, StatusChip } from '@/components/ui';
 import WeatherPanel from '@/components/WeatherPanel';
 import {
   CROP_OPTIONS,
@@ -45,7 +48,9 @@ import {
   useWeather,
 } from '@/features/parcels/hooks';
 import { confirmDestructive, notify } from '@/features/parcels/dialog';
-import { colors, radius, spacing } from '@/theme';
+import { useParcelObservations } from '@/features/scouting/byParcel';
+import { dfLocale } from '@/features/insights/format';
+import { colors, radius, spacing, statusColors, statusForSeverity } from '@/theme';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -64,6 +69,7 @@ export default function ParcelDetailScreen() {
   const agroQ = useAgro(id);
   const advisoriesQ = useAdvisories(id);
   const alertsQ = useParcelAlerts(id);
+  const observations = useParcelObservations(id);
 
   const update = useUpdateParcel(id);
   const archive = useArchiveParcel();
@@ -111,6 +117,13 @@ export default function ParcelDetailScreen() {
   const farmName = farmsQ.data?.find((f) => f.id === parcel.farm_id)?.name ?? '—';
   // Narrowed alias: TS control-flow narrowing from the guard above doesn't reach into the callbacks.
   const p = parcel;
+
+  // health status = worst open alert on this parcel
+  const rank: Record<string, number> = { info: 1, warning: 2, critical: 3 };
+  const worstOpen = (alertsQ.data ?? [])
+    .filter((a) => a.state === 'open')
+    .sort((a, b) => (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0))[0];
+  const status = statusForSeverity(worstOpen?.severity);
 
   // Index-raster overlay gate: backend build must serve imagery AND the selected index's latest
   // observation must be scene-backed (has scene_id). series is asc by time → last point is latest.
@@ -191,7 +204,12 @@ export default function ParcelDetailScreen() {
             <Ionicons name={cropIcon(parcel.crop)} size={22} color={colors.primary} />
           </View>
           <View style={styles.flex1}>
-            <Text style={styles.title}>{parcel.name}</Text>
+            <View style={styles.titleRow}>
+              <Text style={styles.title} numberOfLines={1}>
+                {parcel.name}
+              </Text>
+              <StatusChip status={status} label={t(`status.${status}`)} />
+            </View>
             <Text style={styles.subtitle}>
               {t(cropLabelKey(parcel.crop))} · {formatArea(parcel.area_ha)} · {farmName}
             </Text>
@@ -250,6 +268,37 @@ export default function ParcelDetailScreen() {
             height={220}
           />
         </View>
+
+        {/* index hero: latest value, delta vs previous pass, spread stats */}
+        {latestPoint ? (
+          <View style={styles.section}>
+            <View style={styles.heroRow}>
+              <MonoValue size={44} style={styles.heroValue}>
+                {latestPoint.mean.toFixed(2)}
+              </MonoValue>
+              <View style={styles.heroDelta}>
+                <Delta
+                  value={
+                    series.length > 1 ? latestPoint.mean - series[series.length - 2].mean : null
+                  }
+                  size={14}
+                />
+                {series.length > 1 ? (
+                  <Text style={styles.heroDeltaHint}>{t('parcel.vs_prev')}</Text>
+                ) : null}
+              </View>
+              <MonoLabel style={styles.heroMeta}>
+                {index.toUpperCase()} ·{' '}
+                {format(parseISO(latestPoint.observed_at), 'd MMM', { locale: dfLocale() })}
+              </MonoLabel>
+            </View>
+            <View style={styles.statRow}>
+              <StatTile label={t('parcel.stat_mean')} value={latestPoint.mean} />
+              <StatTile label={t('parcel.stat_p10')} value={latestPoint.p10} />
+              <StatTile label={t('parcel.stat_p90')} value={latestPoint.p90} />
+            </View>
+          </View>
+        ) : null}
 
         {/* index chart + switcher */}
         <View style={styles.section}>
@@ -334,7 +383,55 @@ export default function ParcelDetailScreen() {
           )}
         </View>
 
-        {/* report + archive */}
+        {/* recent scouting */}
+        {observations.length > 0 ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>
+              {t('parcel.recent_scouting', { defaultValue: 'Recent scouting' })}
+            </Text>
+            {observations.slice(0, 3).map((o) => {
+              const thumb = o.photos[0];
+              const tag = o.tags[0];
+              return (
+                <View key={o.id} style={styles.obsRow}>
+                  {thumb ? (
+                    <Image
+                      source={{ uri: `${API_URL}${thumb.path}` }}
+                      style={styles.obsThumb}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <View style={[styles.obsThumb, styles.obsThumbEmpty]} />
+                  )}
+                  <View style={styles.flex1}>
+                    <View style={styles.obsMetaRow}>
+                      <MonoValue size={12} weight="700">
+                        {format(parseISO(o.taken_at), 'd MMM', { locale: dfLocale() })}
+                      </MonoValue>
+                      {tag ? (
+                        <Pill
+                          label={t(`tags.${tag}`, { defaultValue: tag })}
+                          fg={statusColors.watch.fg}
+                          bg={statusColors.watch.bg}
+                        />
+                      ) : null}
+                    </View>
+                    <Text style={styles.obsNote} numberOfLines={2}>
+                      {o.note}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        ) : null}
+
+        {/* record observation + report + archive */}
+        <Pressable style={styles.observeBtn} onPress={() => router.push('/observation/new')}>
+          <Ionicons name="add" size={20} color={colors.onPrimary} />
+          <Text style={styles.observeTxt}>{t('parcel.record_observation')}</Text>
+        </Pressable>
+
         <Pressable style={styles.reportBtn} onPress={openReport}>
           <Ionicons name="document-text" size={18} color={colors.primary} />
           <Text style={styles.reportTxt}>{t('parcel.report')}</Text>
@@ -352,17 +449,57 @@ export default function ParcelDetailScreen() {
   );
 }
 
+function StatTile({ label, value }: { label: string; value: number | null | undefined }) {
+  return (
+    <View style={styles.statTile}>
+      <MonoLabel>{label}</MonoLabel>
+      <MonoValue size={18} style={styles.statValue}>
+        {value == null ? '—' : value.toFixed(2)}
+      </MonoValue>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   content: { padding: spacing.md, gap: spacing.md, paddingBottom: spacing.xl },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md, backgroundColor: colors.bg },
   flex1: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  heroRow: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, flexWrap: 'wrap' },
+  heroValue: { lineHeight: 48, letterSpacing: -1 },
+  heroDelta: { paddingBottom: 8 },
+  heroDeltaHint: { fontSize: 10, color: colors.textFaint, marginTop: 1 },
+  heroMeta: { marginLeft: 'auto', paddingBottom: 12 },
+  statRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
+  statTile: {
+    flex: 1,
+    backgroundColor: colors.cardAlt,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    gap: 2,
+  },
+  statValue: { marginTop: 2 },
+  observeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.primary,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    minHeight: 52,
+  },
+  observeTxt: { color: colors.onPrimary, fontWeight: '700', fontSize: 16 },
   cropBadge: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#E6F0E6',
+    backgroundColor: colors.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -380,6 +517,11 @@ const styles = StyleSheet.create({
   },
   sectionHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: colors.text },
+  obsRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start', marginTop: spacing.xs },
+  obsThumb: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: colors.cardAlt },
+  obsThumbEmpty: { borderWidth: 1, borderColor: colors.borderSoft },
+  obsMetaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' },
+  obsNote: { fontSize: 13, color: colors.textMuted, marginTop: 2, lineHeight: 18 },
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.md,

@@ -8,11 +8,13 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  View,
 } from 'react-native';
 
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorBanner, Field, LinkButton, PrimaryButton } from '../auth/ui';
+import Logo from '../components/Logo';
 import { colors, spacing } from '../theme';
 
 export default function RegisterScreen() {
@@ -55,7 +57,10 @@ export default function RegisterScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.brand}>Arvo</Text>
+        <View style={styles.brandRow}>
+          <Logo size={56} />
+          <Text style={styles.brand}>Arvo</Text>
+        </View>
         <Text style={styles.title}>{t('auth.register_title')}</Text>
         <Text style={styles.subtitle}>{t('auth.register_subtitle')}</Text>
 
@@ -113,7 +118,8 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
   },
-  brand: { fontSize: 34, fontWeight: '800', color: colors.primary, marginBottom: spacing.lg },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.lg },
+  brand: { fontSize: 34, fontWeight: '800', color: colors.primary, letterSpacing: -0.5 },
   title: { fontSize: 24, fontWeight: '700', color: colors.text },
   subtitle: { fontSize: 15, color: colors.textMuted, marginBottom: spacing.lg, marginTop: spacing.xs },
   hint: { fontSize: 13, color: colors.textMuted, marginTop: -spacing.sm, marginBottom: spacing.sm },

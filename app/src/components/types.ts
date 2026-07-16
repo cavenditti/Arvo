@@ -54,4 +54,6 @@ export interface AlertListProps {
   alerts: Alert[];
   onAction: (id: string, action: AlertAction) => void;
   parcelNames?: Record<string, string>;
+  /** when set, cards with a parcel show an "Open parcel →" link */
+  onOpenParcel?: (parcelId: string) => void;
 }

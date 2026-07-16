@@ -200,7 +200,7 @@ const styles = StyleSheet.create({
   },
   aboutValue: { fontSize: 14, fontWeight: '600', color: colors.text },
   badge: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm },
-  badgeOn: { backgroundColor: '#E6F4EA' },
+  badgeOn: { backgroundColor: colors.primarySoft },
   badgeOff: { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border },
   badgeText: { fontSize: 13, fontWeight: '700' },
   badgeTextOn: { color: colors.success },

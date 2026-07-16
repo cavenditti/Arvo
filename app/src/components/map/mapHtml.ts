@@ -51,20 +51,20 @@ export const mapHtml = `<!DOCTYPE html>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   html, body, #map { height: 100%; margin: 0; padding: 0; }
-  #map { background: #aadaff; }
+  #map { background: #DFE6DF; }
   .leaflet-container { font-family: system-ui, -apple-system, sans-serif; }
   .parcel-label { background: rgba(255,255,255,0.85); border: none; box-shadow: none;
-    font: 600 12px system-ui, sans-serif; color: #1C2321; padding: 1px 6px; border-radius: 6px; }
+    font: 600 12px system-ui, sans-serif; color: #1B1E1A; padding: 1px 6px; border-radius: 6px; }
   #hint { position: absolute; left: 12px; right: 12px; top: 12px; display: none; z-index: 1000;
-    text-align: center; background: rgba(28,35,33,0.88); color: #fff; font: 500 13px system-ui, sans-serif;
+    text-align: center; background: rgba(27,30,26,0.88); color: #fff; font: 500 13px system-ui, sans-serif;
     padding: 8px 12px; border-radius: 8px; }
   #drawbar { position: absolute; left: 0; right: 0; bottom: 18px; display: none; justify-content: center;
     gap: 12px; z-index: 1000; pointer-events: none; }
   #drawbar button { pointer-events: auto; border: none; border-radius: 24px; padding: 12px 24px;
     font: 600 15px system-ui, sans-serif; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
-  #btnFinish { background: #2E7D32; }
-  #btnFinish:disabled { background: #9bb99d; }
-  #btnCancel { background: #8a8f89; }
+  #btnFinish { background: #234B34; }
+  #btnFinish:disabled { background: #9AA69B; }
+  #btnCancel { background: #8A8F86; }
 </style>
 </head>
 <body>
@@ -73,7 +73,7 @@ export const mapHtml = `<!DOCTYPE html>
 <div id="drawbar"><button id="btnCancel"></button><button id="btnFinish"></button></div>
 <script>
 (function(){
-  var DEFAULT_FILL = '#2E7D32';
+  var DEFAULT_FILL = '#4F8F4A';
   var map, parcelLayer, markerLayer, mode = 'view';
   var drawPts = [], drawLine = null, drawPoly = null, drawDots = [];
   var overlayLayer = null, overlayKey = null;
@@ -89,20 +89,25 @@ export const mapHtml = `<!DOCTYPE html>
 
   function ready(){
     if (typeof L === 'undefined') { setTimeout(ready, 60); return; }
-    map = L.map('map', { zoomControl: true, attributionControl: true });
+    // zoom buttons off per Campo mock (they'd sit under the floating search bar);
+    // scroll-wheel, pinch, and double-click zoom all remain active
+    map = L.map('map', { zoomControl: false, attributionControl: true });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19, attribution: '&copy; OpenStreetMap'
     }).addTo(map);
     parcelLayer = L.layerGroup().addTo(map);
     markerLayer = L.layerGroup().addTo(map);
     map.setView([41.9, 12.5], 5);
+    // container can be sized late (flex layout, portal shell) — keep Leaflet's size current
+    window.addEventListener('resize', function(){ map.invalidateSize(); });
     map.on('click', onMapClick);
     document.getElementById('btnFinish').addEventListener('click', finishDraw);
     document.getElementById('btnCancel').addEventListener('click', cancelDraw);
-    post({ type: 'ready' });
+    announce();
   }
 
   window.__update = function(p){
+    gotInit = true; // both bridges (postMessage and injected JS) land here — stop re-announcing
     if (!map) { setTimeout(function(){ window.__update(p); }, 60); return; }
     mode = p.mode || 'view';
     if (p.labels) {
@@ -116,7 +121,7 @@ export const mapHtml = `<!DOCTYPE html>
     (p.parcels || []).forEach(function(pc){
       try {
         var gj = L.geoJSON(pc.geometry, { style: {
-          color: '#1B5E20', weight: 2, opacity: 0.9,
+          color: '#1F4430', weight: 2, opacity: 0.9,
           fillColor: pc.color || DEFAULT_FILL, fillOpacity: 0.5
         } });
         gj.eachLayer(function(layer){
@@ -130,7 +135,7 @@ export const mapHtml = `<!DOCTYPE html>
     });
     (p.markers || []).forEach(function(m){
       var cm = L.circleMarker([m.lat, m.lon], {
-        radius: 6, color: '#fff', weight: 2, fillColor: '#8D6E63', fillOpacity: 1
+        radius: 6, color: '#FBFAF7', weight: 2, fillColor: '#A5432B', fillOpacity: 1
       });
       if (m.label) cm.bindTooltip(m.label);
       cm.addTo(markerLayer);
@@ -186,14 +191,14 @@ export const mapHtml = `<!DOCTYPE html>
     drawDots = [];
     if (drawPts.length >= 3) {
       drawPoly = L.polygon(drawPts, {
-        color: '#2E7D32', weight: 2, fillColor: '#2E7D32', fillOpacity: 0.25, dashArray: '5,5'
+        color: '#234B34', weight: 2, fillColor: '#234B34', fillOpacity: 0.25, dashArray: '5,5'
       }).addTo(map);
     } else if (drawPts.length >= 2) {
-      drawLine = L.polyline(drawPts, { color: '#2E7D32', weight: 2, dashArray: '5,5' }).addTo(map);
+      drawLine = L.polyline(drawPts, { color: '#234B34', weight: 2, dashArray: '5,5' }).addTo(map);
     }
     drawPts.forEach(function(ll){
       drawDots.push(L.circleMarker(ll, {
-        radius: 5, color: '#fff', weight: 2, fillColor: '#2E7D32', fillOpacity: 1
+        radius: 5, color: '#FBFAF7', weight: 2, fillColor: '#234B34', fillOpacity: 1
       }).addTo(map));
     });
     document.getElementById('btnFinish').disabled = drawPts.length < 3;
@@ -227,6 +232,14 @@ export const mapHtml = `<!DOCTYPE html>
   }
   window.addEventListener('message', function(e){ onMessage(e.data); });
   document.addEventListener('message', function(e){ onMessage(e.data); });
+
+  // The host may attach its message listener after our first 'ready' (srcDoc iframes can boot
+  // before parent effects flush) — keep announcing until an init actually lands.
+  var gotInit = false;
+  function announce(){
+    post({ type: 'ready' });
+    if (!gotInit) setTimeout(announce, 250);
+  }
 
   ready();
 })();
