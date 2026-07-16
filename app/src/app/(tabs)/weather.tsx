@@ -1,7 +1,9 @@
-// OWNER: web-weather — Campo desktop portal "Weather" page (mock screen 04). One file for both
-// platforms: desktop-first wrapping flex rows that degrade to stacked cards on narrow native
-// screens. Hidden from the native tab bar (href:null in the tabs layout). Sections: 7-day
-// forecast strip, three advisory cards, ET₀/water-balance grouped-bar chart, and a GDD card.
+// OWNER: web-weather — Campo desktop portal "Weather" page (mock screen 04), Terra design language
+// (docs/DESIGN.md). One file for both platforms: desktop-first wrapping flex rows that degrade to
+// stacked cards on narrow native screens. Hidden from the native tab bar (href:null in the tabs
+// layout). Sections: illustrated 7-day forecast strip, three advisory glyph cards, ET₀/water-balance
+// grouped-bar chart, and a GDD growth card. Condition & severity are painted by semantic gradients +
+// bleed glyphs — never bare dots (docs/DESIGN.md §5).
 import { format, parseISO } from 'date-fns';
 import type { Locale } from 'date-fns';
 import { useState } from 'react';
@@ -11,10 +13,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { G, Line, Rect, Text as SvgText } from 'react-native-svg';
 
 import type { Advisory, AdvisoryKind, AgroSummary, Parcel, WeatherDaily } from '@/api/types';
-import { Card, Dot, MonoLabel, MonoValue, Pill } from '@/components/ui';
+import { kindGlyph, weatherGlyph, type GlyphName } from '@/components/glyphs';
+import { Card, GlyphCard, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
 import { useAdvisories, useAgro, useParcels, useWeather } from '@/features/parcels/hooks';
 import { dfLocale } from '@/features/insights/format';
-import { colors, fonts, radius, spacing, statusColors } from '@/theme';
+import {
+  colors,
+  fonts,
+  gradients,
+  radius,
+  severityGradient,
+  spacing,
+  statusColors,
+  weatherGradient,
+} from '@/theme';
 
 const ADVISORY_KINDS: AdvisoryKind[] = ['frost_risk', 'heat_stress', 'spray_window'];
 
@@ -30,11 +42,18 @@ function fmtTemp(v: number | null | undefined): string {
   return v == null ? '—' : `${Math.round(v)}°`;
 }
 
-/** Condition dot color + legend bucket from precip/heat heuristics (no cloud field in the API). */
-function condition(d: WeatherDaily): string {
-  if ((d.precip_mm ?? 0) >= 1) return colors.info; // rain
-  if ((d.t_max ?? 0) >= 30) return colors.warning; // clear / hot
-  return colors.textFaint; // cloud
+/** Deeper tone of a weather-day backdrop, keyed by glyph family (docs/DESIGN.md §5). */
+function weatherGlyphTone(glyph: GlyphName): string {
+  if (glyph === 'sun') return colors.warning; // hot / clear
+  if (glyph === 'rain' || glyph === 'frost') return colors.info; // wet / cold
+  return colors.textFaint; // cloud / mild
+}
+
+/** Deeper tone of a severity backdrop (clay→accent, straw→warning, eucalyptus→info). */
+function severityGlyphTone(severity?: string | null): string {
+  if (severity === 'critical') return colors.accent;
+  if (severity === 'warning') return colors.warning;
+  return colors.info;
 }
 
 /** Coordinate label like "43.4°N 11.2°E" (1 decimal, hemisphere-aware). */
@@ -138,35 +157,48 @@ export default function WeatherScreen() {
       </View>
 
       <ScrollView style={styles.body} contentContainerStyle={styles.content}>
-        {/* 7-day forecast strip + legend */}
-        <View>
-          <Card style={styles.stripCard}>
-            {strip.length > 0 ? (
-              strip.map((d, i) => (
-                <View key={d.date} style={[styles.dayCell, i === 0 && styles.dayCellFirst]}>
-                  <MonoLabel size={11} color={colors.textFaint}>
-                    {format(parseISO(d.date), 'EEE d', { locale })}
-                  </MonoLabel>
-                  <Dot color={condition(d)} size={22} />
-                  <Text style={styles.tmax}>{fmtTemp(d.t_max)}</Text>
-                  <Text style={styles.tmin}>{fmtTemp(d.t_min)}</Text>
-                  <MonoValue size={10} weight="600" color={colors.info}>
-                    {(d.precip_mm ?? 0) > 0 ? `${Math.round(d.precip_mm as number)} mm` : '–'}
-                  </MonoValue>
-                </View>
-              ))
-            ) : weatherQ.isLoading ? (
-              <ActivityIndicator color={colors.primary} style={styles.stripLoading} />
-            ) : (
-              <Text style={styles.muted}>{t('weather.no_forecast')}</Text>
-            )}
-          </Card>
-          <View style={styles.legend}>
-            <LegendDot color={colors.warning} label={t('weather.cond_clear', { defaultValue: 'Clear' })} />
-            <LegendDot color={colors.textFaint} label={t('weather.cond_cloud', { defaultValue: 'Cloud' })} />
-            <LegendDot color={colors.info} label={t('weather.cond_rain', { defaultValue: 'Rain' })} />
+        {/* illustrated 7-day forecast strip */}
+        {strip.length > 0 ? (
+          <View style={styles.stripRow}>
+            {strip.map((d, i) => {
+              const glyph = weatherGlyph(d.t_min, d.t_max, d.precip_mm);
+              return (
+                <GlyphCard
+                  key={d.date}
+                  gradient={weatherGradient(d.t_min, d.t_max, d.precip_mm)}
+                  glyph={glyph}
+                  glyphColor={weatherGlyphTone(glyph)}
+                  glyphOpacity={0.18}
+                  glyphSize={140}
+                  style={[styles.dayCell, i === 0 && styles.dayCellToday]}
+                >
+                  <View style={styles.dayInner}>
+                    <MonoLabel size={11} color={colors.textFaint}>
+                      {format(parseISO(d.date), 'EEE d', { locale })}
+                    </MonoLabel>
+                    <MonoValue size={20} weight="600">
+                      {fmtTemp(d.t_max)}
+                    </MonoValue>
+                    <MonoValue size={13} weight="400" color={colors.textMuted}>
+                      {fmtTemp(d.t_min)}
+                    </MonoValue>
+                    <MonoValue size={10} weight="600" color={colors.info}>
+                      {(d.precip_mm ?? 0) > 0 ? `${Math.round(d.precip_mm as number)} mm` : '–'}
+                    </MonoValue>
+                  </View>
+                </GlyphCard>
+              );
+            })}
           </View>
-        </View>
+        ) : weatherQ.isLoading ? (
+          <Card style={styles.stripPlaceholder}>
+            <ActivityIndicator color={colors.primary} />
+          </Card>
+        ) : (
+          <Card style={styles.stripPlaceholder}>
+            <Text style={styles.muted}>{t('weather.no_forecast')}</Text>
+          </Card>
+        )}
 
         {/* advisory cards */}
         <View style={styles.cardRow}>
@@ -253,32 +285,50 @@ function AdvisoryCard({
 }) {
   const { t } = useTranslation();
   const label = t(KIND_LABEL[kind].key, { defaultValue: KIND_LABEL[kind].def });
+  const glyph = kindGlyph(kind);
 
   if (!advisory) {
     return (
-      <Card style={styles.advCard}>
-        <View style={styles.advTop}>
+      <GlyphCard
+        gradient={gradients.paper}
+        glyph={glyph}
+        glyphColor={colors.textFaint}
+        glyphOpacity={0.08}
+        glyphSize={128}
+        style={styles.advCard}
+      >
+        <View style={styles.advInner}>
           <MonoLabel size={10}>{label}</MonoLabel>
+          <Text style={styles.advHeadline}>—</Text>
+          <Text style={styles.advMuted}>
+            {t('weather.no_advisory', { defaultValue: 'No advisory' })}
+          </Text>
         </View>
-        <Text style={styles.advHeadline}>—</Text>
-        <Text style={styles.advMuted}>{t('weather.no_advisory', { defaultValue: 'No advisory' })}</Text>
-      </Card>
+      </GlyphCard>
     );
   }
 
   const pill = advisoryPill(advisory);
-  const tinted = kind === 'heat_stress' && advisory.severity === 'warning';
   return (
-    <Card style={[styles.advCard, tinted && { backgroundColor: statusColors.watch.bg }]}>
-      <View style={styles.advTop}>
-        <MonoLabel size={10}>{label}</MonoLabel>
-        <Pill label={t(pill.key, { defaultValue: pill.def })} fg={pill.fg} bg={pill.bg} />
+    <GlyphCard
+      gradient={severityGradient(advisory.severity)}
+      glyph={glyph}
+      glyphColor={severityGlyphTone(advisory.severity)}
+      glyphOpacity={0.16}
+      glyphSize={130}
+      style={styles.advCard}
+    >
+      <View style={styles.advInner}>
+        <View style={styles.advTop}>
+          <MonoLabel size={10}>{label}</MonoLabel>
+          <Pill label={t(pill.key, { defaultValue: pill.def })} fg={pill.fg} bg={pill.bg} />
+        </View>
+        <Text style={styles.advHeadline}>
+          {format(parseISO(advisory.date), 'EEE d MMM', { locale })}
+        </Text>
+        <Text style={styles.advBody}>{advisory.message}</Text>
       </View>
-      <Text style={styles.advHeadline}>
-        {format(parseISO(advisory.date), 'EEE d MMM', { locale })}
-      </Text>
-      <Text style={styles.advBody}>{advisory.message}</Text>
-    </Card>
+    </GlyphCard>
   );
 }
 
@@ -329,11 +379,11 @@ function EtCard({
             color={balanceNeg ? colors.accent : colors.text}
           />
           {agro.notes.length > 0 ? (
-            <View style={styles.noteChip}>
-              <Text style={styles.noteChipText} numberOfLines={2}>
+            <TintCard gradient={gradients.eucalyptus} style={styles.noteCard}>
+              <Text style={styles.noteCardText} numberOfLines={2}>
                 {agro.notes[0]}
               </Text>
-            </View>
+            </TintCard>
           ) : null}
         </View>
       ) : null}
@@ -446,14 +496,21 @@ function GddCard({ agro, locale }: { agro: AgroSummary | undefined; locale: Loca
 
   if (!agro) {
     return (
-      <Card style={styles.gddCard}>
+      <GlyphCard
+        gradient={gradients.meadow}
+        glyph="sprout"
+        glyphColor={colors.success}
+        glyphOpacity={0.16}
+        glyphSize={140}
+        style={styles.gddCard}
+      >
         <View style={styles.cardHead}>
           <Text style={styles.cardTitle}>
             {t('weather.gdd_title', { defaultValue: 'Growing degree days' })}
           </Text>
         </View>
         <Text style={styles.muted}>{t('chart.no_data')}</Text>
-      </Card>
+      </GlyphCard>
     );
   }
 
@@ -461,7 +518,14 @@ function GddCard({ agro, locale }: { agro: AgroSummary | undefined; locale: Loca
   const extraNotes = agro.notes.slice(1); // notes[0] is shown on the ET card
 
   return (
-    <Card style={styles.gddCard}>
+    <GlyphCard
+      gradient={gradients.meadow}
+      glyph="sprout"
+      glyphColor={colors.success}
+      glyphOpacity={0.16}
+      glyphSize={140}
+      style={styles.gddCard}
+    >
       <View style={styles.cardHead}>
         <Text style={styles.cardTitle}>
           {t('weather.gdd_title', { defaultValue: 'Growing degree days' })}
@@ -472,10 +536,12 @@ function GddCard({ agro, locale }: { agro: AgroSummary | undefined; locale: Loca
       </View>
 
       <View style={styles.gddValueRow}>
-        <MonoValue size={40} weight="500">
+        <MonoValue size={44} weight="600">
           {Math.round(agro.gdd.sum)}
         </MonoValue>
-        <Text style={styles.gddUnit}>GDD</Text>
+        <MonoLabel size={11} color={colors.textMuted} style={styles.gddUnit}>
+          GDD
+        </MonoLabel>
       </View>
       <Text style={styles.gddSince}>
         {t('weather.gdd_since', {
@@ -495,27 +561,15 @@ function GddCard({ agro, locale }: { agro: AgroSummary | undefined; locale: Loca
       {extraNotes.length > 0 ? (
         <View style={styles.noteList}>
           {extraNotes.map((n, i) => (
-            <View key={i} style={styles.noteRow}>
-              <Dot color={colors.success} size={7} />
-              <Text style={styles.noteText}>{n}</Text>
-            </View>
+            <Text key={i} style={styles.noteText}>{`– ${n}`}</Text>
           ))}
         </View>
       ) : null}
-    </Card>
+    </GlyphCard>
   );
 }
 
 // ── small pieces ─────────────────────────────────────────────────────────────
-
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <View style={styles.legendItem}>
-      <Dot color={color} size={9} />
-      <MonoLabel size={10}>{label}</MonoLabel>
-    </View>
-  );
-}
 
 function LegendSquare({ color, label }: { color: string; label: string }) {
   return (
@@ -551,15 +605,15 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.xl,
   },
-  errorText: { color: colors.danger, fontSize: 14 },
-  mutedLarge: { color: colors.textMuted, fontSize: 15 },
+  errorText: { color: colors.danger, fontSize: 14, fontFamily: fonts.body },
+  mutedLarge: { color: colors.textMuted, fontSize: 15, fontFamily: fonts.body },
   cta: {
     backgroundColor: colors.primary,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     borderRadius: radius.md,
   },
-  ctaText: { color: colors.onPrimary, fontSize: 15, fontWeight: '700' },
+  ctaText: { color: colors.onPrimary, fontSize: 15, fontFamily: fonts.bodyBold },
 
   // header
   header: {
@@ -573,8 +627,8 @@ const styles = StyleSheet.create({
   },
   headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   flex1: { flex: 1, minWidth: 0 },
-  h1: { fontSize: 24, fontWeight: '800', color: colors.text, letterSpacing: -0.5 },
-  subtitle: { fontSize: 13, color: colors.textMuted, marginTop: 3 },
+  h1: { fontSize: 28, fontFamily: fonts.displayBold, color: colors.text },
+  subtitle: { fontSize: 13, color: colors.textMuted, marginTop: 3, fontFamily: fonts.body },
 
   // parcel selector
   selectorWrap: { position: 'relative', zIndex: 30 },
@@ -590,8 +644,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     maxWidth: 240,
   },
-  selectorText: { fontSize: 13, fontWeight: '600', color: colors.textMuted, flexShrink: 1 },
-  selectorCaret: { fontSize: 12, color: colors.textFaint },
+  selectorText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted, flexShrink: 1 },
+  selectorCaret: { fontSize: 12, color: colors.textFaint, fontFamily: fonts.body },
   dropdown: {
     position: 'absolute',
     top: 44,
@@ -611,8 +665,8 @@ const styles = StyleSheet.create({
   },
   dropItem: { paddingHorizontal: spacing.md, paddingVertical: 9 },
   dropItemPressed: { backgroundColor: colors.cardAlt },
-  dropText: { fontSize: 13, color: colors.text },
-  dropTextActive: { color: colors.primary, fontWeight: '700' },
+  dropText: { fontSize: 13, color: colors.text, fontFamily: fonts.body },
+  dropTextActive: { color: colors.primary, fontFamily: fonts.bodyBold },
 
   // body
   body: { flex: 1, zIndex: 0 },
@@ -620,34 +674,29 @@ const styles = StyleSheet.create({
   cardRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
 
   // forecast strip
-  stripCard: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, padding: 6 },
+  stripRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  stripPlaceholder: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.xl },
   dayCell: {
     flexGrow: 1,
-    flexBasis: 64,
-    minWidth: 64,
+    flexBasis: 66,
+    minWidth: 66,
+    minHeight: 120,
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'center',
     paddingVertical: 14,
-    paddingHorizontal: 6,
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: 'transparent',
+    paddingHorizontal: 8,
+    borderRadius: 14,
   },
-  dayCellFirst: { backgroundColor: colors.cardAlt, borderColor: colors.border },
-  tmax: { fontSize: 18, fontWeight: '700', color: colors.text },
-  tmin: { fontSize: 13, color: colors.textFaint },
-  stripLoading: { marginVertical: spacing.lg, marginHorizontal: 'auto' },
-  legend: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.sm, paddingLeft: spacing.xs },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  legendSquare: { width: 10, height: 10, borderRadius: 2 },
-  legendSquareLabel: { fontSize: 11, color: colors.textMuted },
+  dayCellToday: { borderColor: colors.primary, borderWidth: 1.5 },
+  dayInner: { alignItems: 'center', gap: 6 },
 
   // advisory cards
-  advCard: { flexGrow: 1, flexBasis: 220, minWidth: 200, gap: spacing.sm },
+  advCard: { flexGrow: 1, flexBasis: 220, minWidth: 200, padding: spacing.md, borderRadius: radius.lg },
+  advInner: { gap: spacing.sm },
   advTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
-  advHeadline: { fontSize: 16, fontWeight: '700', color: colors.text, letterSpacing: -0.2 },
-  advBody: { fontSize: 13, color: colors.textMuted, lineHeight: 19 },
-  advMuted: { fontSize: 13, color: colors.textFaint },
+  advHeadline: { fontSize: 17, fontFamily: fonts.display, color: colors.text },
+  advBody: { fontSize: 13, color: colors.textMuted, lineHeight: 19, fontFamily: fonts.body },
+  advMuted: { fontSize: 13, color: colors.textFaint, fontFamily: fonts.body },
 
   // ET card
   etCard: { flexGrow: 1.5, flexBasis: 360, minWidth: 300 },
@@ -658,7 +707,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginBottom: spacing.xs,
   },
-  cardTitle: { fontSize: 14, fontWeight: '700', color: colors.text, flexShrink: 1 },
+  cardTitle: { fontSize: 16, fontFamily: fonts.display, color: colors.text, flexShrink: 1, lineHeight: 21 },
   legendInline: { flexDirection: 'row', gap: spacing.md },
   statRow: {
     flexDirection: 'row',
@@ -672,23 +721,20 @@ const styles = StyleSheet.create({
   },
   stat: { flexDirection: 'row', alignItems: 'baseline' },
   statLabel: { marginLeft: 5 },
-  noteChip: {
+  noteCard: {
     marginLeft: 'auto',
     maxWidth: 260,
-    backgroundColor: colors.primarySoft,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
   },
-  noteChipText: { fontSize: 11.5, color: colors.primary },
+  noteCardText: { fontSize: 11.5, color: colors.text, lineHeight: 15, fontFamily: fonts.body },
 
   // GDD card
-  gddCard: { flexGrow: 1, flexBasis: 240, minWidth: 220 },
+  gddCard: { flexGrow: 1, flexBasis: 240, minWidth: 220, padding: spacing.md, borderRadius: radius.lg },
   gddValueRow: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, marginTop: spacing.xs },
-  gddUnit: { fontSize: 12, color: colors.textMuted, paddingBottom: 5 },
-  gddSince: { fontSize: 12, color: colors.textMuted, marginTop: 2, marginBottom: spacing.md },
+  gddUnit: { paddingBottom: 7 },
+  gddSince: { fontSize: 12, color: colors.textMuted, marginTop: 2, marginBottom: spacing.md, fontFamily: fonts.body },
   track: {
     height: 12,
     borderRadius: 6,
@@ -697,10 +743,12 @@ const styles = StyleSheet.create({
   },
   fill: { height: '100%', backgroundColor: colors.success, borderRadius: 6 },
   scaleRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.xs },
-  noteList: { gap: spacing.sm, marginTop: spacing.md },
-  noteRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  noteText: { fontSize: 12, color: colors.textMuted, flex: 1 },
+  noteList: { gap: spacing.xs, marginTop: spacing.md },
+  noteText: { fontSize: 12, color: colors.textMuted, lineHeight: 17, fontFamily: fonts.body },
 
   // shared
-  muted: { color: colors.textMuted, padding: spacing.md },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendSquare: { width: 10, height: 10, borderRadius: 2 },
+  legendSquareLabel: { fontSize: 11, color: colors.textMuted, fontFamily: fonts.bodyMedium },
+  muted: { color: colors.textMuted, padding: spacing.md, fontFamily: fonts.body },
 });

@@ -24,7 +24,7 @@ import { INDEX_NAMES, type IndexName, type Meta } from '@/api/types';
 import AlertList from '@/components/AlertList';
 import IndexChart from '@/components/IndexChart';
 import MapView from '@/components/MapView';
-import { Delta, MonoLabel, MonoValue, Pill, StatusChip } from '@/components/ui';
+import { Delta, MonoLabel, MonoValue, Pill, StatusChip, TintCard } from '@/components/ui';
 import WeatherPanel from '@/components/WeatherPanel';
 import {
   CROP_OPTIONS,
@@ -50,7 +50,7 @@ import {
 import { confirmDestructive, notify } from '@/features/parcels/dialog';
 import { useParcelObservations } from '@/features/scouting/byParcel';
 import { dfLocale } from '@/features/insights/format';
-import { colors, radius, spacing, statusColors, statusForSeverity } from '@/theme';
+import { colors, fonts, gradients, radius, spacing, statusColors, statusForSeverity } from '@/theme';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -427,9 +427,11 @@ export default function ParcelDetailScreen() {
         ) : null}
 
         {/* record observation + report + archive */}
-        <Pressable style={styles.observeBtn} onPress={() => router.push('/observation/new')}>
-          <Ionicons name="add" size={20} color={colors.onPrimary} />
-          <Text style={styles.observeTxt}>{t('parcel.record_observation')}</Text>
+        <Pressable onPress={() => router.push('/observation/new')}>
+          <TintCard gradient={gradients.forest} style={styles.observeBtn}>
+            <Ionicons name="add" size={20} color={colors.onPrimary} />
+            <Text style={styles.observeTxt}>{t('parcel.record_observation')}</Text>
+          </TintCard>
         </Pressable>
 
         <Pressable style={styles.reportBtn} onPress={openReport}>
@@ -470,7 +472,7 @@ const styles = StyleSheet.create({
   heroRow: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, flexWrap: 'wrap' },
   heroValue: { lineHeight: 48, letterSpacing: -1 },
   heroDelta: { paddingBottom: 8 },
-  heroDeltaHint: { fontSize: 10, color: colors.textFaint, marginTop: 1 },
+  heroDeltaHint: { fontSize: 10, fontFamily: fonts.body, color: colors.textFaint, marginTop: 1 },
   heroMeta: { marginLeft: 'auto', paddingBottom: 12 },
   statRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
   statTile: {
@@ -489,12 +491,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.xs,
-    backgroundColor: colors.primary,
     borderRadius: radius.lg,
+    borderWidth: 0,
     paddingVertical: spacing.md,
     minHeight: 52,
   },
-  observeTxt: { color: colors.onPrimary, fontWeight: '700', fontSize: 16 },
+  observeTxt: { color: colors.onPrimary, fontFamily: fonts.bodyBold, fontSize: 16 },
   cropBadge: {
     width: 44,
     height: 44,
@@ -503,8 +505,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  title: { fontSize: 20, fontWeight: '700', color: colors.text },
-  subtitle: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  title: { fontSize: 21, fontFamily: fonts.display, color: colors.text },
+  subtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
   iconBtn: { padding: spacing.sm },
   mapBox: { borderRadius: radius.md, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
   section: {
@@ -516,12 +518,12 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   sectionHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: colors.text },
+  sectionTitle: { fontSize: 17, fontFamily: fonts.display, color: colors.text },
   obsRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start', marginTop: spacing.xs },
   obsThumb: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: colors.cardAlt },
   obsThumbEmpty: { borderWidth: 1, borderColor: colors.borderSoft },
   obsMetaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' },
-  obsNote: { fontSize: 13, color: colors.textMuted, marginTop: 2, lineHeight: 18 },
+  obsNote: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2, lineHeight: 18 },
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.md,
@@ -530,7 +532,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  fieldLabel: { fontSize: 13, fontWeight: '600', color: colors.textMuted },
+  fieldLabel: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -538,6 +540,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     fontSize: 16,
+    fontFamily: fonts.body,
     color: colors.text,
     backgroundColor: colors.bg,
   },
@@ -560,11 +563,11 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  chipTxt: { fontSize: 13, color: colors.text },
-  chipTxtActive: { color: '#fff', fontWeight: '600' },
+  chipTxt: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
+  chipTxtActive: { color: colors.onPrimary },
   refreshBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  refreshTxt: { color: colors.primary, fontSize: 13, fontWeight: '600' },
-  muted: { color: colors.textMuted, fontSize: 14, paddingVertical: spacing.sm },
+  refreshTxt: { color: colors.primary, fontSize: 13, fontFamily: fonts.bodySemiBold },
+  muted: { color: colors.textMuted, fontFamily: fonts.body, fontSize: 14, paddingVertical: spacing.sm },
   pad: { paddingVertical: spacing.md },
   primaryBtn: {
     backgroundColor: colors.primary,
@@ -574,7 +577,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 48,
   },
-  primaryTxt: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  primaryTxt: { color: colors.onPrimary, fontFamily: fonts.bodyBold, fontSize: 16 },
   retry: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
@@ -591,7 +594,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.primary,
   },
-  reportTxt: { color: colors.primary, fontWeight: '600', fontSize: 15 },
+  reportTxt: { color: colors.primary, fontFamily: fonts.bodySemiBold, fontSize: 15 },
   archiveBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -599,13 +602,13 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingVertical: spacing.md,
   },
-  archiveTxt: { color: colors.danger, fontWeight: '600', fontSize: 15 },
-  error: { color: colors.danger, fontSize: 14 },
+  archiveTxt: { color: colors.danger, fontFamily: fonts.bodySemiBold, fontSize: 15 },
+  error: { color: colors.danger, fontFamily: fonts.bodyMedium, fontSize: 14 },
   disabled: { opacity: 0.5 },
   disclaimer: {
-    color: colors.textMuted,
+    color: colors.textFaint,
+    fontFamily: fonts.body,
     fontSize: 11,
-    fontStyle: 'italic',
     textAlign: 'center',
     marginTop: spacing.sm,
   },

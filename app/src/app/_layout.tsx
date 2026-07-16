@@ -1,6 +1,15 @@
-// OWNER: fe-shell — providers + auth gate. Wraps the app in QueryClient + Auth, and
-// redirects to /login once restore finishes with no token.
+// OWNER: fe-shell — providers + auth gate + Terra font loading. Wraps the app in
+// QueryClient + Auth, and redirects to /login once restore finishes with no token.
+import { Fraunces_600SemiBold, Fraunces_700Bold } from '@expo-google-fonts/fraunces';
+import { IBMPlexMono_400Regular, IBMPlexMono_600SemiBold } from '@expo-google-fonts/ibm-plex-mono';
+import {
+  Manrope_400Regular,
+  Manrope_500Medium,
+  Manrope_600SemiBold,
+  Manrope_700Bold,
+} from '@expo-google-fonts/manrope';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
@@ -49,6 +58,27 @@ function RootNavigator() {
 }
 
 export default function RootLayout() {
+  // Terra voices (docs/DESIGN.md §3). On a load error we render anyway — RN falls
+  // back to system fonts rather than blanking the app.
+  const [fontsLoaded, fontsError] = useFonts({
+    Fraunces_600SemiBold,
+    Fraunces_700Bold,
+    Manrope_400Regular,
+    Manrope_500Medium,
+    Manrope_600SemiBold,
+    Manrope_700Bold,
+    IBMPlexMono_400Regular,
+    IBMPlexMono_600SemiBold,
+  });
+
+  if (!fontsLoaded && !fontsError) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg }}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>

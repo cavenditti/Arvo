@@ -14,9 +14,10 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { api } from '@/api/client';
 import { INDEX_NAMES } from '@/api/types';
 import type { Alert, IndexName, IndexPoint, LatestIndices, Org, Parcel, Role, User } from '@/api/types';
+import { kindGlyph } from '@/components/glyphs';
 import MapView from '@/components/MapView';
 import type { ParcelFeature } from '@/components/types';
-import { Card, Delta, Dot, MonoLabel, MonoValue, Pill, StatusChip } from '@/components/ui';
+import { Card, Delta, GlyphBadge, GlyphCard, MonoLabel, MonoValue, Pill, StatusChip } from '@/components/ui';
 import { INDEX_DOMAIN, cropLabel, dfLocale, indexColor } from '@/features/insights/format';
 import { NEUTRAL_FILL } from '@/features/parcels/crops';
 import { useLatestIndices, useParcels } from '@/features/parcels/hooks';
@@ -24,10 +25,11 @@ import {
   colors,
   fonts,
   radius,
-  severityColor,
+  severityTint,
   spacing,
   statusColors,
   statusForSeverity,
+  statusGradient,
   type Status,
 } from '@/theme';
 
@@ -197,6 +199,17 @@ export default function FieldsWeb() {
   }
   const totalCount = parcels.length;
 
+  // dominant status = the one with most parcels; ties resolve to the worse status.
+  const worseRank: Record<Status, number> = { healthy: 0, watch: 1, attention: 2 };
+  let dominantStatus: Status = 'healthy';
+  for (const s of STATUS_ORDER) {
+    const cnt = statusAgg[s].count;
+    const best = statusAgg[dominantStatus].count;
+    if (cnt > best || (cnt === best && cnt > 0 && worseRank[s] > worseRank[dominantStatus])) {
+      dominantStatus = s;
+    }
+  }
+
   // parcels table: filter by search, sort by the selected index value (nulls last)
   const q = search.trim().toLowerCase();
   const filtered = parcels.filter((p) => {
@@ -253,7 +266,7 @@ export default function FieldsWeb() {
           </View>
           {dateStr ? (
             <View style={styles.passChip}>
-              <Dot color={colors.success} size={6} />
+              <Ionicons name="leaf" size={12} color={colors.success} />
               <MonoLabel size={11} color={colors.primaryDark}>
                 {`${t('fields.latest_pass', { defaultValue: 'Latest pass' })} · ${dateStr}`}
               </MonoLabel>
@@ -346,7 +359,7 @@ export default function FieldsWeb() {
             ) : (
               <View style={styles.attnList}>
                 {topAlerts.map((a) => {
-                  const c = severityColor[a.severity] ?? colors.info;
+                  const tint = severityTint[a.severity];
                   const where = a.parcel_id
                     ? (parcelNames[a.parcel_id] ??
                       t('fields.all_parcels', { defaultValue: 'All parcels' }))
@@ -358,9 +371,7 @@ export default function FieldsWeb() {
                       onPress={() => router.push('/alerts')}
                       style={styles.attnRow}
                     >
-                      <View style={styles.attnDotWrap}>
-                        <Dot color={c} size={9} />
-                      </View>
+                      <GlyphBadge glyph={kindGlyph(a.kind)} fg={tint.fg} bg={tint.bg} size={26} />
                       <View style={styles.flex1}>
                         <Text style={styles.attnTitle} numberOfLines={1}>
                           {a.title}
@@ -382,7 +393,13 @@ export default function FieldsWeb() {
           </Card>
 
           {/* field health */}
-          <Card style={[styles.railCard, styles.healthCard]}>
+          <GlyphCard
+            gradient={statusGradient(dominantStatus)}
+            glyph="sprout"
+            glyphColor={statusColors[dominantStatus].fg}
+            glyphSize={110}
+            style={[styles.railCard, styles.healthCard]}
+          >
             <Text style={styles.cardTitle}>
               {t('fields.field_health', { defaultValue: 'Field health' })}
             </Text>
@@ -415,15 +432,14 @@ export default function FieldsWeb() {
             <View style={styles.healthLegend}>
               {STATUS_ORDER.map((s) => (
                 <View key={s} style={styles.healthLegendRow}>
-                  <Dot color={statusColors[s].fg} size={8} />
-                  <Text style={styles.healthLegendLabel}>{t(`status.${s}`)}</Text>
-                  <Text style={styles.healthLegendVal}>
+                  <StatusChip status={s} label={t(`status.${s}`)} />
+                  <MonoValue size={12} weight="500" color={colors.textMuted} style={styles.healthLegendVal}>
                     {`${statusAgg[s].count} · ${statusAgg[s].area.toFixed(1)} ha`}
-                  </Text>
+                  </MonoValue>
                 </View>
               ))}
             </View>
-          </Card>
+          </GlyphCard>
         </View>
       </View>
 
@@ -477,7 +493,6 @@ export default function FieldsWeb() {
                 style={(state) => [styles.row, (state as HoverState).hovered && styles.rowHover]}
               >
                 <View style={[styles.cParcel, styles.parcelCell]}>
-                  <Dot color={statusColors[status].fg} size={10} />
                   <Text style={styles.parcelName} numberOfLines={1}>
                     {p.name}
                   </Text>
@@ -533,12 +548,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
   },
-  ctaText: { color: colors.onPrimary, fontSize: 15, fontWeight: '700' },
+  ctaText: { fontFamily: fonts.bodyBold, color: colors.onPrimary, fontSize: 15 },
 
   // header
   pageHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  h1: { fontSize: 26, fontWeight: '800', color: colors.text, letterSpacing: -0.5 },
-  subtitle: { fontSize: 13, color: colors.textMuted, marginTop: 3 },
+  h1: { fontFamily: fonts.display, fontSize: 28, color: colors.text },
+  subtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 3 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   search: {
     flexDirection: 'row',
@@ -552,7 +567,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.md,
   },
-  searchInput: { flex: 1, fontSize: 13, color: colors.text },
+  searchInput: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text },
   passChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -572,7 +587,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: { fontSize: 12.5, fontWeight: '700', color: colors.primaryDark },
+  avatarText: { fontFamily: fonts.bodyBold, fontSize: 12.5, color: colors.primaryDark },
 
   // top row
   topRow: { flexDirection: 'row', gap: spacing.lg, alignItems: 'stretch' },
@@ -600,7 +615,7 @@ const styles = StyleSheet.create({
   indexTab: { paddingHorizontal: 11, paddingVertical: 5, borderRadius: radius.sm },
   indexTabActive: { backgroundColor: colors.primary },
   indexTabIdle: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
-  indexTabText: { fontFamily: fonts.mono, fontSize: 11.5, fontWeight: '600', letterSpacing: 0.4 },
+  indexTabText: { fontFamily: fonts.monoSemiBold, fontSize: 11.5, letterSpacing: 0.4 },
   indexTabTextActive: { color: colors.onPrimary },
   indexTabTextIdle: { color: colors.textMuted },
   mapWrap: { position: 'relative', height: MAP_HEIGHT },
@@ -630,17 +645,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.md,
   },
-  cardTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
+  cardTitle: { fontFamily: fonts.display, fontSize: 17, color: colors.text },
   attnList: { gap: spacing.md, marginBottom: spacing.md },
-  attnRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
-  attnDotWrap: { marginTop: 4 },
-  attnTitle: { fontSize: 13, fontWeight: '700', color: colors.text },
+  attnRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  attnTitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.text },
   attnMeta: { fontFamily: fonts.mono, fontSize: 10.5, color: colors.textFaint, marginTop: 3 },
-  muted: { fontSize: 13, color: colors.textMuted, marginBottom: spacing.md },
-  link: { fontSize: 12.5, fontWeight: '700', color: colors.primary },
+  muted: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginBottom: spacing.md },
+  link: { fontFamily: fonts.bodyBold, fontSize: 12.5, color: colors.primary },
 
   // field health
-  healthCard: { flex: 1 },
+  healthCard: { flex: 1, borderRadius: radius.lg },
   healthTop: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -650,7 +664,7 @@ const styles = StyleSheet.create({
   },
   healthMeta: { paddingBottom: 4, gap: 3 },
   healthDeltaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  mutedSmall: { fontSize: 11, color: colors.textFaint },
+  mutedSmall: { fontFamily: fonts.body, fontSize: 11, color: colors.textFaint },
   stack: {
     flexDirection: 'row',
     height: 8,
@@ -661,13 +675,7 @@ const styles = StyleSheet.create({
   },
   healthLegend: { gap: spacing.sm },
   healthLegendRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  healthLegendLabel: { fontSize: 12.5, color: colors.text },
-  healthLegendVal: {
-    marginLeft: 'auto',
-    fontFamily: fonts.mono,
-    fontSize: 11.5,
-    color: colors.textMuted,
-  },
+  healthLegendVal: { marginLeft: 'auto' },
 
   // table
   tableCard: {
@@ -710,11 +718,11 @@ const styles = StyleSheet.create({
   },
   rowHover: { backgroundColor: colors.cardAlt },
   parcelCell: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  parcelName: { flex: 1, fontSize: 13.5, fontWeight: '700', color: colors.text },
-  cropText: { fontSize: 12.5, color: colors.textMuted },
+  parcelName: { flex: 1, fontFamily: fonts.display, fontSize: 15, color: colors.text },
+  cropText: { fontFamily: fonts.body, fontSize: 12.5, color: colors.textMuted },
   areaText: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted },
   indexCell: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  indexVal: { fontFamily: fonts.mono, fontSize: 13, fontWeight: '600', color: colors.text, minWidth: 36 },
+  indexVal: { fontFamily: fonts.monoSemiBold, fontSize: 13, color: colors.text, minWidth: 36 },
   trackOuter: {
     width: 64,
     height: 6,

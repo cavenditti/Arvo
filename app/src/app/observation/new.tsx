@@ -18,10 +18,11 @@ import {
 } from 'react-native';
 
 import type { Observation } from '@/api/types';
+import { TintCard } from '@/components/ui';
 import { nearestParcel, useParcels } from '@/features/scouting/parcels';
 import { OBSERVATION_TAGS } from '@/features/scouting/tags';
 import { queuePhoto, upsertLocal } from '@/offline/queue';
-import { colors, radius, spacing } from '@/theme';
+import { colors, fonts, gradients, radius, spacing } from '@/theme';
 
 type LocStatus = 'pending' | 'ok' | 'denied' | 'unavailable';
 interface LocalPhoto {
@@ -327,8 +328,10 @@ export default function Screen() {
           onPress={save}
           disabled={!canSave}
         >
-          <Ionicons name="checkmark" size={20} color="#fff" />
-          <Text style={styles.saveBtnText}>{t('observation.save')}</Text>
+          <TintCard gradient={gradients.forest} style={styles.saveBtnInner}>
+            <Ionicons name="checkmark" size={20} color={colors.onPrimary} />
+            <Text style={styles.saveBtnText}>{t('observation.save')}</Text>
+          </TintCard>
         </Pressable>
       </View>
     </View>
@@ -339,12 +342,12 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   content: { padding: spacing.md, gap: spacing.lg, paddingBottom: spacing.xl },
   section: { gap: spacing.sm },
-  label: { fontSize: 13, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase' },
+  label: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  autoTag: { fontSize: 12, color: colors.primary, fontWeight: '600' },
+  autoTag: { fontSize: 12, color: colors.primary, fontFamily: fonts.bodySemiBold },
   locRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  locText: { fontSize: 15, color: colors.text },
-  hint: { fontSize: 13, color: colors.textMuted },
+  locText: { fontSize: 15, fontFamily: fonts.body, color: colors.text },
+  hint: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
   selector: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -356,7 +359,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
   },
-  selectorText: { fontSize: 15, color: colors.text },
+  selectorText: { fontSize: 15, fontFamily: fonts.body, color: colors.text },
   options: {
     backgroundColor: colors.card,
     borderWidth: 1,
@@ -373,7 +376,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  optionText: { fontSize: 15, color: colors.text },
+  optionText: { fontSize: 15, fontFamily: fonts.body, color: colors.text },
   noteInput: {
     backgroundColor: colors.card,
     borderWidth: 1,
@@ -382,6 +385,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     minHeight: 96,
     fontSize: 15,
+    fontFamily: fonts.body,
     color: colors.text,
   },
   tagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
@@ -397,8 +401,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   tagChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
-  tagChipText: { fontSize: 14, color: colors.text },
-  tagChipTextOn: { color: '#fff', fontWeight: '600' },
+  tagChipText: { fontSize: 14, fontFamily: fonts.body, color: colors.text },
+  tagChipTextOn: { color: colors.onPrimary, fontFamily: fonts.bodySemiBold },
   addTagRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
   addTagInput: {
     flex: 1,
@@ -409,6 +413,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     fontSize: 15,
+    fontFamily: fonts.body,
     color: colors.text,
   },
   addTagBtn: {
@@ -417,7 +422,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  addTagBtnText: { color: '#fff', fontWeight: '600' },
+  addTagBtnText: { color: '#fff', fontFamily: fonts.bodySemiBold },
   photoBtns: { flexDirection: 'row', gap: spacing.sm },
   photoBtn: {
     flex: 1,
@@ -431,7 +436,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingVertical: spacing.md,
   },
-  photoBtnText: { color: colors.primary, fontWeight: '600', fontSize: 15 },
+  photoBtnText: { color: colors.primary, fontFamily: fonts.bodySemiBold, fontSize: 15 },
   thumbs: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
   thumbWrap: { width: 84, height: 84 },
   thumb: { width: 84, height: 84, borderRadius: radius.sm },
@@ -452,15 +457,15 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     backgroundColor: colors.card,
   },
-  saveBtn: {
+  saveBtn: {},
+  saveBtnInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
     paddingVertical: spacing.md,
+    borderColor: 'transparent',
   },
   saveBtnDisabled: { opacity: 0.5 },
-  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  saveBtnText: { color: colors.onPrimary, fontFamily: fonts.bodyBold, fontSize: 16 },
 });

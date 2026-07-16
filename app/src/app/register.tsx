@@ -15,7 +15,7 @@ import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorBanner, Field, LinkButton, PrimaryButton } from '../auth/ui';
 import Logo from '../components/Logo';
-import { colors, spacing } from '../theme';
+import { colors, fonts, spacing } from '../theme';
 
 export default function RegisterScreen() {
   const { t } = useTranslation();
@@ -58,7 +58,7 @@ export default function RegisterScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.brandRow}>
-          <Logo size={56} />
+          <Logo variant="plain" size={64} />
           <Text style={styles.brand}>Arvo</Text>
         </View>
         <Text style={styles.title}>{t('auth.register_title')}</Text>
@@ -119,8 +119,20 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.lg },
-  brand: { fontSize: 34, fontWeight: '800', color: colors.primary, letterSpacing: -0.5 },
-  title: { fontSize: 24, fontWeight: '700', color: colors.text },
-  subtitle: { fontSize: 15, color: colors.textMuted, marginBottom: spacing.lg, marginTop: spacing.xs },
-  hint: { fontSize: 13, color: colors.textMuted, marginTop: -spacing.sm, marginBottom: spacing.sm },
+  brand: { fontSize: 34, fontFamily: fonts.displayBold, color: colors.primary, letterSpacing: -0.5 },
+  title: { fontSize: 24, fontFamily: fonts.display, color: colors.text },
+  subtitle: {
+    fontSize: 15,
+    fontFamily: fonts.body,
+    color: colors.textMuted,
+    marginBottom: spacing.lg,
+    marginTop: spacing.xs,
+  },
+  hint: {
+    fontSize: 13,
+    fontFamily: fonts.body,
+    color: colors.textMuted,
+    marginTop: -spacing.sm,
+    marginBottom: spacing.sm,
+  },
 });

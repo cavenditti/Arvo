@@ -15,11 +15,12 @@ import type { TextStyle } from 'react-native';
 
 import { api } from '@/api/client';
 import type { Alert, AlertState, Parcel, Severity, User } from '@/api/types';
+import { kindGlyph } from '@/components/glyphs';
 import type { AlertAction } from '@/components/types';
-import { Dot, MonoValue, Pill, TintCard } from '@/components/ui';
+import { GlyphBadge, MonoValue, Pill, TintCard } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
 import { readSnoozeDays, setSnoozeDays } from '@/features/insights/snooze';
-import { colors, fonts, radius, severityColor, severityTint, spacing } from '@/theme';
+import { colors, fonts, radius, severityGradient, severityTint, spacing } from '@/theme';
 
 type Me = { user: User };
 type Segment = 'open' | 'snoozed' | 'resolved';
@@ -34,7 +35,7 @@ const ALERTS_ALL_KEY = ['alerts', 'all'] as const;
 const WEB_INPUT_RESET = { outlineStyle: 'none' } as unknown as TextStyle;
 
 // State tints are web-card-local; severity tag/gradient tints come from the shared
-// severityTint map in '@/theme' (dots use severityColor).
+// severityTint map in '@/theme' (title badge glyph via kindGlyph, backdrop via severityGradient).
 const STATE_TINT: Record<AlertState, { fg: string; bg: string }> = {
   open: { fg: colors.primary, bg: colors.primarySoft },
   acked: { fg: colors.textMuted, bg: colors.borderSoft },
@@ -203,7 +204,7 @@ export default function AlertsWebScreen() {
             <SeverityChip
               key={s.key}
               label={t(s.labelKey, { defaultValue: s.fallback })}
-              dotColor={severityColor[s.key]}
+              fg={severityTint[s.key].fg}
               active={sevFilter === s.key}
               onPress={() => setSevFilter(s.key)}
             />
@@ -308,17 +309,21 @@ function SeverityChip({
   label,
   active,
   onPress,
-  dotColor,
+  fg,
 }: {
   label: string;
   active: boolean;
   onPress: () => void;
-  dotColor?: string;
+  /** inactive label color — the severity's severityTint fg, a subtle cue (omit for "All") */
+  fg?: string;
 }) {
   return (
     <Pressable onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
-      {dotColor ? <Dot color={dotColor} size={7} /> : null}
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+      <Text
+        style={[styles.chipText, !active && fg ? { color: fg } : null, active && styles.chipTextActive]}
+      >
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -349,11 +354,11 @@ function AlertCard({
     alert.state === 'open' ? t('alerts.new', { defaultValue: 'New' }) : t(`alerts.state.${alert.state}`);
 
   return (
-    <TintCard tint={sev.bg} style={[styles.card, dimmed && styles.cardDim]}>
+    <TintCard gradient={severityGradient(alert.severity)} style={[styles.card, dimmed && styles.cardDim]}>
       <View style={styles.cardTop}>
         <View style={styles.flex1}>
           <View style={styles.titleRow}>
-            <Dot color={severityColor[alert.severity] ?? colors.info} size={9} />
+            <GlyphBadge glyph={kindGlyph(alert.kind)} fg={sev.fg} bg={sev.bg} size={28} />
             <Text style={styles.title} numberOfLines={2}>
               {alert.title}
             </Text>
@@ -440,8 +445,8 @@ const styles = StyleSheet.create({
 
   // Header
   header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  h1: { fontSize: 22, fontWeight: '700', color: colors.text, letterSpacing: -0.3 },
-  subtitle: { fontSize: 12.5, color: colors.textFaint, marginTop: 2 },
+  h1: { fontFamily: fonts.displayBold, fontSize: 22, color: colors.text, letterSpacing: -0.3 },
+  subtitle: { fontFamily: fonts.body, fontSize: 12.5, color: colors.textFaint, marginTop: 2 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   search: {
     flexDirection: 'row',
@@ -455,7 +460,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.md,
   },
-  searchInput: { flex: 1, fontSize: 13, color: colors.text },
+  searchInput: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text },
   rulesBtn: {
     height: 34,
     justifyContent: 'center',
@@ -465,7 +470,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.md,
   },
-  rulesBtnText: { fontSize: 12.5, fontWeight: '600', color: colors.textMuted },
+  rulesBtnText: { fontFamily: fonts.bodySemiBold, fontSize: 12.5, color: colors.textMuted },
   avatar: {
     width: 34,
     height: 34,
@@ -474,7 +479,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: { fontSize: 12.5, fontWeight: '700', color: colors.primary },
+  avatarText: { fontFamily: fonts.bodyBold, fontSize: 12.5, color: colors.primary },
 
   // Filters
   filterRow: {
@@ -498,8 +503,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  chipText: { fontSize: 12, fontWeight: '600', color: colors.textMuted },
-  chipTextActive: { color: colors.onPrimary },
+  chipText: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.textMuted },
+  chipTextActive: { fontFamily: fonts.bodyBold, color: colors.onPrimary },
 
   filterRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   segment: {
@@ -515,7 +520,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  segText: { fontSize: 12, fontWeight: '600', color: colors.textMuted },
+  segText: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.textMuted },
   segTextActive: { color: colors.text },
 
   parcelWrap: { position: 'relative', zIndex: 20 },
@@ -531,8 +536,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.md,
   },
-  parcelTriggerText: { flexShrink: 1, fontSize: 12.5, color: colors.textMuted },
-  caret: { fontSize: 12, color: colors.textFaint },
+  parcelTriggerText: { flexShrink: 1, fontFamily: fonts.body, fontSize: 12.5, color: colors.textMuted },
+  caret: { fontFamily: fonts.body, fontSize: 12, color: colors.textFaint },
   parcelMenu: {
     position: 'absolute',
     top: 40,
@@ -551,7 +556,7 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   parcelItem: { paddingHorizontal: spacing.sm + 4, paddingVertical: 7, borderRadius: radius.sm },
-  parcelItemText: { fontSize: 12.5, color: colors.text },
+  parcelItemText: { fontFamily: fonts.body, fontSize: 12.5, color: colors.text },
 
   // Banner
   banner: {
@@ -565,12 +570,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm + 2,
   },
-  bannerText: { flex: 1, fontSize: 12.5, color: colors.primaryDark, lineHeight: 18 },
+  bannerText: { flex: 1, fontFamily: fonts.body, fontSize: 12.5, color: colors.primaryDark, lineHeight: 18 },
 
   // List
   list: { gap: spacing.sm },
   center: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.xl * 2 },
-  emptyText: { fontSize: 14, color: colors.textMuted },
+  emptyText: { fontFamily: fonts.body, fontSize: 14, color: colors.textMuted },
 
   card: {
     borderWidth: 1,
@@ -581,17 +586,16 @@ const styles = StyleSheet.create({
   cardDim: { opacity: 0.65 },
   cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  title: { flexShrink: 1, fontSize: 15, fontWeight: '700', color: colors.text },
+  title: { flexShrink: 1, fontFamily: fonts.display, fontSize: 15, color: colors.text },
   sevTag: { borderRadius: radius.sm - 2, paddingHorizontal: 7, paddingVertical: 2 },
   sevTagText: {
-    fontFamily: fonts.mono,
+    fontFamily: fonts.monoSemiBold,
     fontSize: 9.5,
-    fontWeight: '700',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
   },
   meta: { marginTop: 6 },
-  message: { fontSize: 13, color: colors.textMuted, lineHeight: 19, marginTop: 8, maxWidth: 640 },
+  message: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, lineHeight: 19, marginTop: 8, maxWidth: 640 },
 
   actions: {
     flexDirection: 'row',
@@ -610,9 +614,9 @@ const styles = StyleSheet.create({
   actionBtnPrimary: { backgroundColor: colors.primarySoft, borderColor: colors.primarySoft },
   actionBtnDefault: { backgroundColor: colors.card, borderColor: colors.border },
   pressed: { opacity: 0.6 },
-  actionText: { fontSize: 12, fontWeight: '600' },
+  actionText: { fontFamily: fonts.bodySemiBold, fontSize: 12 },
   actionTextPrimary: { color: colors.primaryDark },
   actionTextDefault: { color: colors.textMuted },
   openLinkWrap: { marginLeft: 'auto' },
-  openLink: { fontSize: 12.5, fontWeight: '600', color: colors.primary },
+  openLink: { fontFamily: fonts.bodySemiBold, fontSize: 12.5, color: colors.primary },
 });

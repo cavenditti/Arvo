@@ -14,11 +14,11 @@ import { api } from '@/api/client';
 import { INDEX_NAMES, type Alert, type IndexName } from '@/api/types';
 import MapView from '@/components/MapView';
 import type { ParcelFeature } from '@/components/types';
-import { MonoLabel, MonoValue, NdviSwatch, StatusChip } from '@/components/ui';
+import { MonoLabel, MonoValue, NdviSwatch, StatusChip, TintCard } from '@/components/ui';
 import { INDEX_DOMAIN, cropLabel, indexColor } from '@/features/insights/format';
 import { NEUTRAL_FILL, formatArea, ndviColor } from '@/features/parcels/crops';
 import { useLatestIndices, useParcels } from '@/features/parcels/hooks';
-import { colors, radius, spacing, statusForSeverity } from '@/theme';
+import { colors, fonts, gradients, radius, spacing, statusForSeverity } from '@/theme';
 
 const LEGEND: { color: string; label: string }[] = [
   { color: ndviColor(0.2), label: '< 0.3' },
@@ -222,9 +222,11 @@ export default function MapScreen() {
               style={({ pressed }) => [styles.detailBtn, pressed && styles.pressed]}
               onPress={() => router.push(`/parcel/${selected.id}`)}
             >
-              <Text style={styles.detailBtnTxt}>
-                {t('map.open_detail', { defaultValue: 'Open detail' })}
-              </Text>
+              <TintCard gradient={gradients.forest} style={styles.detailBtnInner}>
+                <Text style={styles.detailBtnTxt}>
+                  {t('map.open_detail', { defaultValue: 'Open detail' })}
+                </Text>
+              </TintCard>
             </Pressable>
             <Pressable
               style={({ pressed }) => [styles.scoutBtn, pressed && styles.pressed]}
@@ -282,14 +284,14 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
-  msg: { color: colors.textMuted, fontSize: 15 },
+  msg: { color: colors.textMuted, fontSize: 15, fontFamily: fonts.body },
   retry: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     backgroundColor: colors.primary,
     borderRadius: radius.md,
   },
-  retryTxt: { color: '#fff', fontWeight: '600' },
+  retryTxt: { color: colors.onPrimary, fontFamily: fonts.bodySemiBold },
   topRow: {
     position: 'absolute',
     left: spacing.md,
@@ -317,7 +319,13 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
   },
-  searchInput: { flex: 1, fontSize: 14, color: colors.text, paddingVertical: 0 },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: fonts.body,
+    color: colors.text,
+    paddingVertical: 0,
+  },
   indexChip: {
     height: 40,
     paddingHorizontal: spacing.md,
@@ -353,7 +361,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  emptyTxt: { color: colors.textMuted, fontSize: 15, textAlign: 'center' },
+  emptyTxt: { color: colors.textMuted, fontSize: 15, fontFamily: fonts.body, textAlign: 'center' },
   legend: {
     position: 'absolute',
     left: spacing.md,
@@ -365,11 +373,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  legendTitle: { fontSize: 11, fontWeight: '700', color: colors.text, marginBottom: 2 },
+  legendTitle: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.text, marginBottom: 2 },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, maxWidth: 230 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   swatch: { width: 10, height: 10, borderRadius: 2 },
-  legendLabel: { fontSize: 10, color: colors.textMuted },
+  legendLabel: { fontSize: 10, fontFamily: fonts.mono, color: colors.textMuted },
   legendGradientRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   gradientBar: { flexDirection: 'row', borderRadius: 2, overflow: 'hidden' },
   gradientCell: { width: 13, height: 10 },
@@ -392,18 +400,17 @@ const styles = StyleSheet.create({
   },
   selRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   selInfo: { flex: 1 },
-  selName: { fontSize: 16, fontWeight: '700', color: colors.text },
-  selMeta: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  selName: { fontSize: 16, fontFamily: fonts.display, color: colors.text },
+  selMeta: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
   selButtons: { flexDirection: 'row', gap: spacing.sm },
-  detailBtn: {
-    flex: 1,
+  detailBtn: { flex: 1 },
+  detailBtnInner: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: spacing.sm + spacing.xs,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
+    borderColor: 'transparent',
   },
-  detailBtnTxt: { color: colors.onPrimary, fontSize: 14, fontWeight: '700' },
+  detailBtnTxt: { color: colors.onPrimary, fontSize: 14, fontFamily: fonts.bodyBold },
   scoutBtn: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -414,7 +421,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.md,
   },
-  scoutBtnTxt: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  scoutBtnTxt: { color: colors.text, fontSize: 14, fontFamily: fonts.bodySemiBold },
   fab: {
     position: 'absolute',
     right: spacing.md,

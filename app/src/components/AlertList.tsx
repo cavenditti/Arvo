@@ -1,16 +1,17 @@
-// OWNER: fe-dashboard — Campo insight cards: severity dot + title + priority tag, mono meta line,
-// message, state pill, and ack/snooze/dismiss actions (snooze expands to inline 1g/3g/7g choices)
-// plus an optional "Open parcel →" link.
+// OWNER: fe-dashboard — Campo insight cards: severity glyph badge + title + priority tag, mono meta
+// line, message, state pill, and ack/snooze/dismiss actions (snooze expands to inline 1g/3g/7g
+// choices) plus an optional "Open parcel →" link.
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Alert, AlertState } from '@/api/types';
-import { Dot, MonoLabel, Pill, TintCard } from '@/components/ui';
+import { kindGlyph } from '@/components/glyphs';
+import { GlyphBadge, MonoLabel, Pill, TintCard } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
 import { setSnoozeDays } from '@/features/insights/snooze';
-import { colors, radius, severityColor, severityTint, spacing } from '@/theme';
+import { colors, fonts, radius, severityGradient, severityTint, spacing } from '@/theme';
 import type { AlertListProps } from './types';
 
 const SNOOZE_CHOICES = [1, 3, 7];
@@ -38,9 +39,9 @@ export default function AlertList({ alerts, onAction, parcelNames, onOpenParcel 
           locale: dfLocale(),
         });
         return (
-          <TintCard key={a.id} tint={sev.bg} style={styles.card}>
+          <TintCard key={a.id} gradient={severityGradient(a.severity)} style={styles.card}>
             <View style={styles.titleRow}>
-              <Dot color={severityColor[a.severity] ?? colors.info} />
+              <GlyphBadge glyph={kindGlyph(a.kind)} fg={sev.fg} bg={sev.bg} size={28} />
               <Text style={styles.title} numberOfLines={2}>
                 {a.title}
               </Text>
@@ -110,16 +111,16 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  title: { flex: 1, fontSize: 15, fontWeight: '700', color: colors.text },
+  title: { flex: 1, fontFamily: fonts.display, fontSize: 15, color: colors.text },
   meta: { marginTop: 6 },
-  message: { fontSize: 13, color: colors.textMuted, marginTop: 6, lineHeight: 18 },
+  message: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 6, lineHeight: 18 },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginTop: spacing.sm,
   },
-  openLink: { fontSize: 13, fontWeight: '600', color: colors.primary },
+  openLink: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.primary },
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -138,5 +139,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardAlt,
   },
   actionPressed: { opacity: 0.6 },
-  actionText: { fontSize: 13, fontWeight: '600', color: colors.primaryDark },
+  actionText: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.primaryDark },
 });

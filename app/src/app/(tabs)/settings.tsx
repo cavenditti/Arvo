@@ -18,7 +18,7 @@ import type { Meta } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { setLang, type Lang } from '../../auth/storage';
 import i18n from '../../i18n';
-import { colors, radius, spacing } from '../../theme';
+import { colors, fonts, radius, spacing } from '../../theme';
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -156,16 +156,19 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   cardTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontSize: 17,
+    fontFamily: fonts.display,
+    color: colors.text,
     marginBottom: spacing.sm,
   },
-  primaryLine: { fontSize: 18, fontWeight: '600', color: colors.text },
-  muted: { fontSize: 14, color: colors.textMuted },
-  subLabel: { fontSize: 13, fontWeight: '600', color: colors.textMuted, marginBottom: spacing.xs },
+  primaryLine: { fontSize: 18, fontFamily: fonts.bodySemiBold, color: colors.text },
+  muted: { fontSize: 14, fontFamily: fonts.body, color: colors.textMuted },
+  subLabel: {
+    fontSize: 13,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.textMuted,
+    marginBottom: spacing.xs,
+  },
   switchBlock: { marginTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md },
   orgRow: {
     minHeight: 48,
@@ -176,8 +179,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   rowPressed: { backgroundColor: colors.bg },
-  orgName: { fontSize: 16, color: colors.text },
-  orgNameActive: { fontWeight: '700', color: colors.primary },
+  orgName: { fontSize: 16, fontFamily: fonts.body, color: colors.text },
+  orgNameActive: { fontFamily: fonts.bodyBold, color: colors.primary },
   langRow: { flexDirection: 'row', gap: spacing.sm },
   langChip: {
     flex: 1,
@@ -190,7 +193,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   langChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  langText: { fontSize: 16, fontWeight: '600', color: colors.text },
+  langText: { fontSize: 16, fontFamily: fonts.bodySemiBold, color: colors.text },
   langTextActive: { color: colors.onPrimary },
   aboutRow: {
     flexDirection: 'row',
@@ -198,14 +201,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: spacing.xs,
   },
-  aboutValue: { fontSize: 14, fontWeight: '600', color: colors.text },
+  aboutValue: { fontSize: 14, fontFamily: fonts.monoSemiBold, color: colors.text },
   badge: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm },
   badgeOn: { backgroundColor: colors.primarySoft },
   badgeOff: { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border },
-  badgeText: { fontSize: 13, fontWeight: '700' },
+  badgeText: { fontSize: 13, fontFamily: fonts.bodyBold },
   badgeTextOn: { color: colors.success },
   badgeTextOff: { color: colors.textMuted },
-  disclaimer: { fontSize: 12, color: colors.textMuted, marginTop: spacing.sm, fontStyle: 'italic' },
+  disclaimer: { fontSize: 12, fontFamily: fonts.body, color: colors.textFaint, marginTop: spacing.sm },
   logout: {
     minHeight: 52,
     flexDirection: 'row',
@@ -217,5 +220,5 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  logoutText: { fontSize: 16, fontWeight: '700', color: colors.danger },
+  logoutText: { fontSize: 16, fontFamily: fonts.bodyBold, color: colors.danger },
 });

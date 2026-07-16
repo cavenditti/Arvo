@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next';
 
 import type { ParcelGeometry } from '@/api/types';
 import MapView from '@/components/MapView';
+import { TintCard } from '@/components/ui';
 import { CROP_OPTIONS, type CropKey, draftParcel, isValidDate } from '@/features/parcels/crops';
 import { notify } from '@/features/parcels/dialog';
 import {
@@ -29,7 +30,7 @@ import {
   useFarms,
   useImportParcels,
 } from '@/features/parcels/hooks';
-import { colors, radius, spacing } from '@/theme';
+import { colors, fonts, gradients, radius, spacing } from '@/theme';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -227,13 +228,15 @@ export default function NewParcelScreen() {
               onPress={onBulkImport}
               disabled={!selectedFarm || busy}
             >
-              {importParcels.isPending ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.primaryTxt}>
-                  {t('parcel.import_action', { count: pendingFcCount })}
-                </Text>
-              )}
+              <TintCard gradient={gradients.forest} style={styles.primaryInner}>
+                {importParcels.isPending ? (
+                  <ActivityIndicator color={colors.onPrimary} />
+                ) : (
+                  <Text style={styles.primaryTxt}>
+                    {t('parcel.import_action', { count: pendingFcCount })}
+                  </Text>
+                )}
+              </TintCard>
             </Pressable>
             <Pressable style={styles.linkBtn} onPress={() => setPendingFc(null)}>
               <Text style={styles.linkTxt}>{t('common.cancel')}</Text>
@@ -329,11 +332,13 @@ export default function NewParcelScreen() {
               onPress={onSubmit}
               disabled={busy}
             >
-              {createParcel.isPending ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.primaryTxt}>{t('common.save')}</Text>
-              )}
+              <TintCard gradient={gradients.forest} style={styles.primaryInner}>
+                {createParcel.isPending ? (
+                  <ActivityIndicator color={colors.onPrimary} />
+                ) : (
+                  <Text style={styles.primaryTxt}>{t('common.save')}</Text>
+                )}
+              </TintCard>
             </Pressable>
           </View>
         )}
@@ -405,7 +410,7 @@ function FarmPicker(props: {
             disabled={props.creatingBusy}
           >
             {props.creatingBusy ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.onPrimary} />
             ) : (
               <Text style={styles.primaryTxt}>{t('common.save')}</Text>
             )}
@@ -427,7 +432,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  hint: { color: colors.textMuted, fontSize: 13, flex: 1 },
+  hint: { color: colors.textMuted, fontSize: 13, fontFamily: fonts.body, flex: 1 },
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.md,
@@ -436,10 +441,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  cardTitle: { fontSize: 16, fontWeight: '700', color: colors.text },
+  cardTitle: { fontSize: 16, fontFamily: fonts.display, color: colors.text },
   form: { gap: spacing.md },
   field: { gap: spacing.xs },
-  fieldLabel: { fontSize: 13, fontWeight: '600', color: colors.textMuted },
+  fieldLabel: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -447,6 +452,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     fontSize: 16,
+    fontFamily: fonts.body,
     color: colors.text,
     backgroundColor: colors.card,
   },
@@ -464,19 +470,19 @@ const styles = StyleSheet.create({
   },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipAdd: { borderStyle: 'dashed', borderColor: colors.primary },
-  chipTxt: { fontSize: 14, color: colors.text },
-  chipTxtActive: { color: '#fff', fontWeight: '600' },
+  chipTxt: { fontSize: 14, fontFamily: fonts.body, color: colors.text },
+  chipTxtActive: { color: colors.onPrimary, fontFamily: fonts.bodySemiBold },
   newFarmRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm, alignItems: 'center' },
   flex1: { flex: 1 },
-  primaryBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
+  primaryBtn: {},
+  primaryInner: {
     paddingVertical: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 48,
+    borderColor: 'transparent',
   },
-  primaryTxt: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  primaryTxt: { color: colors.onPrimary, fontFamily: fonts.bodyBold, fontSize: 16 },
   smallBtn: {
     backgroundColor: colors.primary,
     borderRadius: radius.md,
@@ -495,9 +501,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.primary,
   },
-  secondaryTxt: { color: colors.primary, fontWeight: '600', fontSize: 14 },
+  secondaryTxt: { color: colors.primary, fontFamily: fonts.bodySemiBold, fontSize: 14 },
   linkBtn: { alignItems: 'center', paddingVertical: spacing.xs },
-  linkTxt: { color: colors.textMuted, fontSize: 14 },
+  linkTxt: { color: colors.textMuted, fontSize: 14, fontFamily: fonts.body },
   disabled: { opacity: 0.5 },
-  error: { color: colors.danger, fontSize: 14, textAlign: 'center' },
+  error: { color: colors.danger, fontSize: 14, fontFamily: fonts.body, textAlign: 'center' },
 });

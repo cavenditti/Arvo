@@ -17,7 +17,7 @@ import { INDEX_NAMES, type IndexName, type Meta, type Observation } from '@/api/
 import AlertList from '@/components/AlertList';
 import IndexChart from '@/components/IndexChart';
 import MapView from '@/components/MapView';
-import { MonoLabel, MonoValue, Pill, StatusChip } from '@/components/ui';
+import { MonoLabel, MonoValue, Pill, StatusChip, TintCard } from '@/components/ui';
 import PortalShell from '@/components/web/PortalShell';
 import WeatherPanel from '@/components/WeatherPanel';
 import { confirmDestructive, notify } from '@/features/parcels/dialog';
@@ -36,7 +36,7 @@ import {
 } from '@/features/parcels/hooks';
 import { useParcelObservations } from '@/features/scouting/byParcel';
 import { dfLocale } from '@/features/insights/format';
-import { colors, fonts, radius, spacing, statusColors, statusForSeverity } from '@/theme';
+import { colors, fonts, gradients, radius, spacing, statusColors, statusForSeverity } from '@/theme';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const fmt2 = (v: number | null | undefined) => (v == null ? '—' : v.toFixed(2));
@@ -228,9 +228,11 @@ export default function ParcelDetailWeb() {
               <Ionicons name="add" size={16} color={colors.primary} />
               <Text style={styles.outlineBtnTxt}>{t('parcel.record_note', { defaultValue: 'Record note' })}</Text>
             </Pressable>
-            <Pressable style={styles.exportBtn} onPress={() => openReport(p.id)}>
-              <Ionicons name="document-text-outline" size={16} color={colors.onPrimary} />
-              <Text style={styles.exportBtnTxt}>{t('parcel.export_report', { defaultValue: 'Export report' })}</Text>
+            <Pressable onPress={() => openReport(p.id)}>
+              <TintCard gradient={gradients.forest} style={styles.exportBtn}>
+                <Ionicons name="document-text-outline" size={16} color={colors.onPrimary} />
+                <Text style={styles.exportBtnTxt}>{t('parcel.export_report', { defaultValue: 'Export report' })}</Text>
+              </TintCard>
             </Pressable>
           </View>
         </View>
@@ -546,9 +548,9 @@ const styles = StyleSheet.create({
   },
   crumbLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 1, minWidth: 0 },
   crumbLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  crumbLinkTxt: { fontSize: 13, fontWeight: '600', color: colors.textMuted },
-  crumbSep: { fontSize: 13, color: colors.textFaint },
-  crumbCurrent: { fontSize: 13, fontWeight: '600', color: colors.text, flexShrink: 1 },
+  crumbLinkTxt: { fontSize: 13, fontFamily: fonts.bodyMedium, color: colors.textMuted },
+  crumbSep: { fontSize: 13, fontFamily: fonts.body, color: colors.textFaint },
+  crumbCurrent: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text, flexShrink: 1 },
   crumbActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   dateChip: {
     paddingHorizontal: spacing.sm,
@@ -568,7 +570,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.primary,
   },
-  outlineBtnTxt: { fontSize: 13, fontWeight: '600', color: colors.primary },
+  outlineBtnTxt: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.primary },
   exportBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -576,9 +578,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: colors.primary,
+    borderWidth: 0,
   },
-  exportBtnTxt: { fontSize: 13, fontWeight: '700', color: colors.onPrimary },
+  exportBtnTxt: { fontSize: 13, fontFamily: fonts.bodyBold, color: colors.onPrimary },
 
   // title block
   titleBlock: {
@@ -590,8 +592,8 @@ const styles = StyleSheet.create({
   },
   titleLeft: { gap: spacing.xs, flexShrink: 1, minWidth: 0 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  h1: { fontSize: 28, fontWeight: '800', color: colors.text, letterSpacing: -0.5 },
-  metaLine: { fontSize: 13, color: colors.textMuted },
+  h1: { fontSize: 28, fontFamily: fonts.displayBold, color: colors.text, letterSpacing: -0.5 },
+  metaLine: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
   indexTabs: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
   indexTab: {
     paddingHorizontal: spacing.md,
@@ -602,7 +604,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   indexTabActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  indexTabTxt: { fontSize: 12, fontWeight: '700', color: colors.textMuted, fontFamily: fonts.mono },
+  indexTabTxt: { fontSize: 12, fontFamily: fonts.monoSemiBold, color: colors.textMuted },
   indexTabTxtActive: { color: colors.onPrimary },
 
   // grid
@@ -620,8 +622,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
-  linkTxt: { fontSize: 13, fontWeight: '600', color: colors.primary },
+  cardTitle: { fontSize: 15, fontFamily: fonts.display, color: colors.text },
+  linkTxt: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.primary },
 
   // chart
   chartHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: spacing.sm },
@@ -649,8 +651,8 @@ const styles = StyleSheet.create({
   obsThumb: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: colors.cardAlt },
   obsThumbEmpty: { borderWidth: 1, borderColor: colors.borderSoft },
   obsMetaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' },
-  obsAuthor: { fontSize: 12, color: colors.textMuted },
-  obsNote: { fontSize: 13, color: colors.textMuted, marginTop: 2, lineHeight: 18 },
+  obsAuthor: { fontSize: 12, fontFamily: fonts.bodyMedium, color: colors.textMuted },
+  obsNote: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2, lineHeight: 18 },
 
   // minimap
   mapCard: {
@@ -687,7 +689,7 @@ const styles = StyleSheet.create({
     borderColor: colors.primary,
   },
   overlayChipOn: { backgroundColor: colors.primary },
-  overlayChipTxt: { fontSize: 12, fontWeight: '600', color: colors.primary },
+  overlayChipTxt: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.primary },
   overlayChipTxtOn: { color: colors.onPrimary },
 
   // manage
@@ -703,12 +705,12 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.cardAlt,
   },
-  manageBtnTxt: { fontSize: 14, fontWeight: '600', color: colors.primary },
+  manageBtnTxt: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.primary },
   dangerTxt: { color: colors.danger },
 
   // edit form
   editForm: { gap: spacing.sm, paddingVertical: spacing.xs },
-  fieldLabel: { fontSize: 13, fontWeight: '600', color: colors.textMuted },
+  fieldLabel: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -716,6 +718,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     fontSize: 15,
+    fontFamily: fonts.body,
     color: colors.text,
     backgroundColor: colors.bg,
   },
@@ -731,11 +734,11 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  chipTxt: { fontSize: 13, color: colors.text },
-  chipTxtActive: { color: colors.onPrimary, fontWeight: '600' },
+  chipTxt: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
+  chipTxtActive: { color: colors.onPrimary },
 
   // shared
-  muted: { color: colors.textMuted, fontSize: 14, paddingVertical: spacing.xs },
+  muted: { color: colors.textMuted, fontFamily: fonts.body, fontSize: 14, paddingVertical: spacing.xs },
   pad: { paddingVertical: spacing.md },
   primaryBtn: {
     backgroundColor: colors.primary,
@@ -745,19 +748,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 46,
   },
-  primaryTxt: { color: colors.onPrimary, fontWeight: '700', fontSize: 15 },
+  primaryTxt: { color: colors.onPrimary, fontFamily: fonts.bodyBold, fontSize: 15 },
   retry: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     backgroundColor: colors.primary,
     borderRadius: radius.md,
   },
-  error: { color: colors.danger, fontSize: 14 },
+  error: { color: colors.danger, fontFamily: fonts.bodyMedium, fontSize: 14 },
   disabled: { opacity: 0.5 },
   disclaimer: {
-    color: colors.textMuted,
+    color: colors.textFaint,
+    fontFamily: fonts.body,
     fontSize: 11,
-    fontStyle: 'italic',
     marginTop: spacing.sm,
   },
 });

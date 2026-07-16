@@ -19,9 +19,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { api } from '@/api/client';
 import type { Alert, IndexName, IndexPoint, LatestIndices, Org, Parcel, Role, User } from '@/api/types';
-import { Delta, MonoLabel, NdviSwatch, StatusChip } from '@/components/ui';
+import { kindGlyph } from '@/components/glyphs';
+import { Delta, GlyphBadge, MonoLabel, NdviSwatch, StatusChip, TintCard } from '@/components/ui';
 import { cropLabel, dfLocale } from '@/features/insights/format';
-import { colors, radius, spacing, statusColors, statusForSeverity, type Status } from '@/theme';
+import {
+  colors,
+  fonts,
+  radius,
+  severityGradient,
+  severityTint,
+  spacing,
+  statusForSeverity,
+  type Status,
+} from '@/theme';
 
 type Me = { user: User; org: Org; role: Role };
 type LatestBatch = Record<string, LatestIndices>;
@@ -106,7 +116,13 @@ export default function Dashboard() {
           accessibilityLabel={t('tabs.alerts')}
         >
           <Ionicons name="notifications-outline" size={20} color={colors.text} />
-          {(openAlerts.data?.length ?? 0) > 0 ? <View style={styles.bellDot} /> : null}
+          {(openAlerts.data?.length ?? 0) > 0 ? (
+            <View style={styles.bellBadge}>
+              <Text style={styles.bellBadgeText}>
+                {(openAlerts.data?.length ?? 0) > 99 ? '99+' : (openAlerts.data?.length ?? 0)}
+              </Text>
+            </View>
+          ) : null}
         </Pressable>
       </View>
 
@@ -184,24 +200,22 @@ function BannerCard({
   parcelName?: string;
   onPress: () => void;
 }) {
-  const status: Status = statusForSeverity(alert.severity);
-  const c = statusColors[status];
+  const tint = severityTint[alert.severity];
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.banner, { backgroundColor: c.bg }, pressed && styles.pressed]}
-    >
-      <View style={[styles.bannerDot, { backgroundColor: c.fg }]} />
-      <View style={styles.flex1}>
-        <Text style={styles.bannerTitle} numberOfLines={1}>
-          {alert.title}
-          {parcelName ? ` — ${parcelName}` : ''}
-        </Text>
-        <Text style={styles.bannerBody} numberOfLines={1}>
-          {alert.message}
-        </Text>
-      </View>
-      <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+    <Pressable onPress={onPress} style={({ pressed }) => (pressed ? styles.pressed : null)}>
+      <TintCard gradient={severityGradient(alert.severity)} style={styles.banner}>
+        <GlyphBadge glyph={kindGlyph(alert.kind)} fg={tint.fg} bg={tint.bg} size={26} />
+        <View style={styles.flex1}>
+          <Text style={styles.bannerTitle} numberOfLines={1}>
+            {alert.title}
+            {parcelName ? ` — ${parcelName}` : ''}
+          </Text>
+          <Text style={styles.bannerBody} numberOfLines={1}>
+            {alert.message}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+      </TintCard>
     </Pressable>
   );
 }
@@ -271,8 +285,8 @@ const styles = StyleSheet.create({
   flex1: { flex: 1 },
   header: { marginBottom: spacing.xs, gap: spacing.md },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  title: { fontSize: 28, fontWeight: '800', color: colors.text, letterSpacing: -0.5 },
-  org: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  title: { fontFamily: fonts.displayBold, fontSize: 28, color: colors.text },
+  org: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2 },
   bell: {
     width: 40,
     height: 40,
@@ -283,17 +297,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bellDot: {
+  bellBadge: {
     position: 'absolute',
-    top: 9,
-    right: 10,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    top: 4,
+    right: 4,
+    minWidth: 15,
+    height: 15,
+    borderRadius: 7.5,
+    paddingHorizontal: 3,
     backgroundColor: colors.accent,
     borderWidth: 1.5,
     borderColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  bellBadgeText: { fontFamily: fonts.bodyBold, fontSize: 9, color: '#FFFFFF' },
   banner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -304,9 +322,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  bannerDot: { width: 8, height: 8, borderRadius: 4 },
-  bannerTitle: { fontSize: 13, fontWeight: '700', color: colors.text },
-  bannerBody: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
+  bannerTitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.text },
+  bannerBody: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, marginTop: 1 },
   listMeta: { marginTop: spacing.xs },
   row: {
     flexDirection: 'row',
@@ -320,12 +337,12 @@ const styles = StyleSheet.create({
   },
   pressed: { opacity: 0.7 },
   rowInfo: { flex: 1 },
-  rowName: { fontSize: 16, fontWeight: '700', color: colors.text },
-  rowMeta: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  rowName: { fontFamily: fonts.display, fontSize: 16, color: colors.text },
+  rowMeta: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2 },
   rowRight: { alignItems: 'flex-end', gap: 6 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
-  emptyBody: { fontSize: 14, color: colors.textMuted, textAlign: 'center' },
+  emptyTitle: { fontFamily: fonts.display, fontSize: 18, color: colors.text },
+  emptyBody: { fontFamily: fonts.body, fontSize: 14, color: colors.textMuted, textAlign: 'center' },
   cta: {
     backgroundColor: colors.primary,
     paddingHorizontal: spacing.lg,
@@ -333,6 +350,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     marginTop: spacing.sm,
   },
-  ctaText: { color: colors.onPrimary, fontSize: 15, fontWeight: '700' },
-  errorText: { color: colors.danger, fontSize: 14 },
+  ctaText: { fontFamily: fonts.bodyBold, color: colors.onPrimary, fontSize: 15 },
+  errorText: { fontFamily: fonts.body, color: colors.danger, fontSize: 14 },
 });

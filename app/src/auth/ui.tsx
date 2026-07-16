@@ -10,7 +10,8 @@ import {
   View,
 } from 'react-native';
 
-import { colors, radius, spacing } from '../theme';
+import { TintCard } from '../components/ui';
+import { colors, fonts, gradients, radius, spacing } from '../theme';
 
 export function Field({ label, ...props }: { label: string } & TextInputProps) {
   return (
@@ -40,11 +41,13 @@ export function PrimaryButton({
       disabled={off}
       style={({ pressed }) => [styles.button, (pressed || off) && styles.buttonMuted]}
     >
-      {loading ? (
-        <ActivityIndicator color={colors.onPrimary} />
-      ) : (
-        <Text style={styles.buttonText}>{title}</Text>
-      )}
+      <TintCard gradient={gradients.forest} style={styles.buttonInner}>
+        {loading ? (
+          <ActivityIndicator color={colors.onPrimary} />
+        ) : (
+          <Text style={styles.buttonText}>{title}</Text>
+        )}
+      </TintCard>
     </Pressable>
   );
 }
@@ -67,7 +70,12 @@ export function ErrorBanner({ message }: { message: string }) {
 
 const styles = StyleSheet.create({
   field: { marginBottom: spacing.md },
-  label: { color: colors.textMuted, fontSize: 14, marginBottom: spacing.xs, fontWeight: '600' },
+  label: {
+    color: colors.textMuted,
+    fontSize: 14,
+    marginBottom: spacing.xs,
+    fontFamily: fonts.bodySemiBold,
+  },
   input: {
     minHeight: 52,
     backgroundColor: colors.card,
@@ -76,26 +84,26 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     fontSize: 16,
+    fontFamily: fonts.body,
     color: colors.text,
   },
-  button: {
+  button: { marginTop: spacing.sm },
+  buttonInner: {
     minHeight: 52,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
-    marginTop: spacing.sm,
+    borderColor: 'transparent',
   },
   buttonMuted: { opacity: 0.6 },
-  buttonText: { color: colors.onPrimary, fontSize: 17, fontWeight: '700' },
+  buttonText: { color: colors.onPrimary, fontSize: 17, fontFamily: fonts.bodyBold },
   link: { alignItems: 'center', paddingVertical: spacing.md },
-  linkText: { color: colors.primary, fontSize: 15, fontWeight: '600' },
+  linkText: { color: colors.primary, fontSize: 15, fontFamily: fonts.bodySemiBold },
   errorBox: {
     backgroundColor: '#F7E7E2',
     borderRadius: radius.sm,
     padding: spacing.md,
     marginBottom: spacing.md,
   },
-  errorText: { color: colors.danger, fontSize: 14 },
+  errorText: { color: colors.danger, fontSize: 14, fontFamily: fonts.body },
 });

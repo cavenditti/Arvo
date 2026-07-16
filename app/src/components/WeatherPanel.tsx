@@ -1,13 +1,15 @@
 // OWNER: fe-dashboard — 7-day forecast strip + GDD/ET0/water-balance chips + advisory badges
-// (decision-support tone; see docs/API.md §Weather).
+// (decision-support tone; see docs/API.md §Weather). Terra: weather days and advisories are
+// conditioned surfaces — each is a GlyphCard (semantic gradient + one bleed glyph, docs/DESIGN.md §5).
 import { format, parseISO } from 'date-fns';
 import { useTranslation } from 'react-i18next';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { AgroSummary } from '@/api/types';
-import { dfLocale, weatherEmoji } from '@/features/insights/format';
-import { colors, radius, severityTint, spacing } from '@/theme';
-import { TintCard } from './ui';
+import { kindGlyph, weatherGlyph } from '@/components/glyphs';
+import { dfLocale } from '@/features/insights/format';
+import { colors, fonts, radius, severityGradient, severityTint, spacing, weatherGradient } from '@/theme';
+import { GlyphCard, MonoLabel, MonoValue } from './ui';
 import type { WeatherPanelProps } from './types';
 
 export default function WeatherPanel({ daily, agro, advisories }: WeatherPanelProps) {
@@ -19,15 +21,32 @@ export default function WeatherPanel({ daily, agro, advisories }: WeatherPanelPr
       {forecast.length > 0 ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.strip}>
           {forecast.map((d) => (
-            <View key={d.date} style={styles.day}>
-              <Text style={styles.weekday}>{format(parseISO(d.date), 'EEE', { locale: dfLocale() })}</Text>
-              <Text style={styles.emoji}>{weatherEmoji(d)}</Text>
-              <Text style={styles.tmax}>{fmtTemp(d.t_max)}</Text>
-              <Text style={styles.tmin}>{fmtTemp(d.t_min)}</Text>
-              {(d.precip_mm ?? 0) > 0 && (
-                <Text style={styles.precip}>{Math.round(d.precip_mm as number)} mm</Text>
-              )}
-            </View>
+            <GlyphCard
+              key={d.date}
+              gradient={weatherGradient(d.t_min, d.t_max, d.precip_mm)}
+              glyph={weatherGlyph(d.t_min, d.t_max, d.precip_mm)}
+              glyphColor={weatherGlyphColor(d.t_min, d.t_max, d.precip_mm)}
+              glyphOpacity={0.18}
+              glyphSize={76}
+              style={styles.day}
+            >
+              <View style={styles.dayInner}>
+                <MonoLabel color={colors.textMuted}>
+                  {format(parseISO(d.date), 'EEE', { locale: dfLocale() })}
+                </MonoLabel>
+                <MonoValue size={15} weight="600" style={styles.tmax}>
+                  {fmtTemp(d.t_max)}
+                </MonoValue>
+                <MonoValue size={12} weight="400" color={colors.textMuted}>
+                  {fmtTemp(d.t_min)}
+                </MonoValue>
+                {(d.precip_mm ?? 0) > 0 ? (
+                  <MonoValue size={10} weight="400" color={colors.info}>
+                    {Math.round(d.precip_mm as number)} mm
+                  </MonoValue>
+                ) : null}
+              </View>
+            </GlyphCard>
           ))}
         </ScrollView>
       ) : (
@@ -38,18 +57,25 @@ export default function WeatherPanel({ daily, agro, advisories }: WeatherPanelPr
 
       {advisories && advisories.length > 0 && (
         <View style={styles.advisories}>
-          {advisories.map((a, i) => (
-            <TintCard
-              key={`${a.kind}-${a.date}-${i}`}
-              tint={(severityTint[a.severity] ?? severityTint.info).bg}
-              style={styles.advisory}
-            >
-              <Text style={styles.advisoryDate}>
-                {format(parseISO(a.date), 'd MMM', { locale: dfLocale() })}
-              </Text>
-              <Text style={styles.advisoryMsg}>{a.message}</Text>
-            </TintCard>
-          ))}
+          {advisories.map((a, i) => {
+            const tint = severityTint[a.severity] ?? severityTint.info;
+            return (
+              <GlyphCard
+                key={`${a.kind}-${a.date}-${i}`}
+                gradient={severityGradient(a.severity)}
+                glyph={kindGlyph(a.kind)}
+                glyphColor={tint.fg}
+                glyphOpacity={0.14}
+                glyphSize={84}
+                style={styles.advisory}
+              >
+                <View style={styles.advisoryInner}>
+                  <MonoLabel>{format(parseISO(a.date), 'd MMM', { locale: dfLocale() })}</MonoLabel>
+                  <Text style={styles.advisoryMsg}>{a.message}</Text>
+                </View>
+              </GlyphCard>
+            );
+          })}
         </View>
       )}
 
@@ -75,10 +101,25 @@ function Chip({ label, value, balance }: { label: string; value: string; balance
     balance == null ? colors.text : balance < 0 ? colors.danger : colors.info;
   return (
     <View style={styles.chip}>
-      <Text style={styles.chipLabel}>{label}</Text>
-      <Text style={[styles.chipValue, { color: valueColor }]}>{value}</Text>
+      <MonoLabel>{label}</MonoLabel>
+      <MonoValue size={16} color={valueColor} style={styles.chipValue}>
+        {value}
+      </MonoValue>
     </View>
   );
+}
+
+/** Weather-day glyph tone, matched to the backdrop family (mirrors theme.weatherGradient). */
+function weatherGlyphColor(
+  tMin: number | null,
+  tMax: number | null,
+  precipMm: number | null,
+): string {
+  if (tMin != null && tMin <= 0) return colors.info; // frost
+  if ((precipMm ?? 0) >= 1) return colors.info; // rain
+  if (tMax != null && tMax >= 32) return colors.warning; // hot
+  if (tMax != null && tMax >= 20) return colors.warning; // clear
+  return colors.textFaint; // cloud / mild
 }
 
 function fmtTemp(v: number | null): string {
@@ -92,37 +133,31 @@ function fmtBalance(v: number): string {
 
 const styles = StyleSheet.create({
   root: { paddingVertical: spacing.sm },
-  strip: { paddingHorizontal: spacing.xs, gap: spacing.xs },
-  day: {
-    width: 54,
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.bg,
-  },
-  weekday: { fontSize: 12, fontWeight: '600', color: colors.text, textTransform: 'capitalize' },
-  emoji: { fontSize: 20, marginVertical: 2 },
-  tmax: { fontSize: 13, fontWeight: '700', color: colors.text },
-  tmin: { fontSize: 12, color: colors.textMuted },
-  precip: { fontSize: 11, color: colors.info, marginTop: 2 },
-  muted: { color: colors.textMuted, paddingHorizontal: spacing.sm },
+  strip: { paddingHorizontal: spacing.xs, gap: spacing.xs, paddingVertical: 2 },
+  day: { width: 64, height: 92 },
+  dayInner: { alignItems: 'center', gap: 1 },
+  tmax: { marginTop: 2 },
+  muted: { color: colors.textMuted, fontFamily: fonts.body, paddingHorizontal: spacing.sm },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md, paddingHorizontal: spacing.xs },
   chip: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: colors.bg,
+    backgroundColor: colors.cardAlt,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
     minWidth: 78,
   },
-  chipLabel: { fontSize: 11, color: colors.textMuted },
-  chipValue: { fontSize: 16, fontWeight: '700', color: colors.text },
+  chipValue: { marginTop: 2 },
   advisories: { marginTop: spacing.md, gap: spacing.sm },
-  advisory: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
+  advisory: { padding: spacing.md },
+  advisoryInner: { gap: 3 },
+  advisoryMsg: { fontSize: 13, color: colors.text, fontFamily: fonts.body, lineHeight: 18 },
+  caption: {
+    fontSize: 11,
+    color: colors.textFaint,
+    fontFamily: fonts.body,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.xs,
   },
-  advisoryDate: { fontSize: 11, color: colors.textMuted, textTransform: 'capitalize' },
-  advisoryMsg: { fontSize: 13, color: colors.text },
-  caption: { fontSize: 11, color: colors.textMuted, marginTop: spacing.md, paddingHorizontal: spacing.xs, fontStyle: 'italic' },
 });

@@ -8,7 +8,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { api } from '@/api/client';
 import type { Alert } from '@/api/types';
-import { colors } from '@/theme';
+import { colors, fonts } from '@/theme';
 
 export default function TabsLayout() {
   const { t } = useTranslation();
@@ -88,14 +88,14 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     borderTopWidth: 1,
   },
-  tabLabel: { fontSize: 11, fontWeight: '600' },
+  tabLabel: { fontSize: 11, fontFamily: fonts.bodySemiBold },
   header: { backgroundColor: colors.bg },
-  headerTitle: { color: colors.text, fontWeight: '700' },
+  headerTitle: { color: colors.text, fontFamily: fonts.display },
   badge: {
     backgroundColor: colors.accent,
-    color: '#FFFFFF',
+    color: colors.onPrimary,
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: fonts.bodyBold,
   },
   fab: {
     width: 52,

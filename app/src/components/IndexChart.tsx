@@ -17,7 +17,7 @@ import Svg, {
 
 import type { IndexPoint } from '@/api/types';
 import { INDEX_DOMAIN, dfLocale, indexColor } from '@/features/insights/format';
-import { colors, spacing } from '@/theme';
+import { colors, fonts, spacing } from '@/theme';
 import type { IndexChartProps } from './types';
 
 const PAD = { top: 12, right: 12, bottom: 22, left: 30 };
@@ -142,6 +142,7 @@ function Chart({
               x={PAD.left - 4}
               y={y + 3}
               fontSize={9}
+              fontFamily={fonts.mono}
               fill={colors.textMuted}
               textAnchor="end"
             >
@@ -160,6 +161,7 @@ function Chart({
           x={Math.max(PAD.left + 12, Math.min(width - PAD.right - 12, pts[i].x))}
           y={height - 6}
           fontSize={9}
+          fontFamily={fonts.mono}
           fill={colors.textMuted}
           textAnchor="middle"
         >
@@ -209,7 +211,14 @@ function Label({ pt, width, locale }: { pt: Pt; width: number; locale: Locale })
   return (
     <G>
       <Rect x={x} y={y} width={boxW} height={boxH} rx={4} fill={colors.text} opacity={0.92} />
-      <SvgText x={x + boxW / 2} y={y + 12} fontSize={10} fill="#FFFFFF" textAnchor="middle">
+      <SvgText
+        x={x + boxW / 2}
+        y={y + 12}
+        fontSize={10}
+        fontFamily={fonts.mono}
+        fill="#FFFFFF"
+        textAnchor="middle"
+      >
         {text}
       </SvgText>
     </G>
@@ -218,5 +227,5 @@ function Label({ pt, width, locale }: { pt: Pt; width: number; locale: Locale })
 
 const styles = StyleSheet.create({
   empty: { alignItems: 'center', justifyContent: 'center', padding: spacing.md },
-  emptyText: { color: colors.textMuted },
+  emptyText: { color: colors.textMuted, fontFamily: fonts.body },
 });

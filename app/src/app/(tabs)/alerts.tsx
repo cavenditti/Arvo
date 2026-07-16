@@ -12,7 +12,7 @@ import type { Alert, AlertState, Parcel } from '@/api/types';
 import AlertList from '@/components/AlertList';
 import type { AlertAction } from '@/components/types';
 import { readSnoozeDays } from '@/features/insights/snooze';
-import { colors, radius, spacing } from '@/theme';
+import { colors, fonts, radius, spacing } from '@/theme';
 import { useRouter } from 'expo-router';
 
 type Filter = 'open' | 'all';
@@ -137,8 +137,8 @@ function SegBtn({ label, active, onPress }: { label: string; active: boolean; on
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   header: { paddingHorizontal: spacing.md, paddingTop: spacing.md },
-  title: { fontSize: 28, fontWeight: '800', color: colors.text, letterSpacing: -0.5 },
-  subtitle: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  title: { fontFamily: fonts.displayBold, fontSize: 28, color: colors.text, letterSpacing: -0.5 },
+  subtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2 },
   segment: {
     flexDirection: 'row',
     margin: spacing.md,
@@ -152,7 +152,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  segText: { fontSize: 14, fontWeight: '600', color: colors.textMuted },
+  segText: { fontFamily: fonts.bodySemiBold, fontSize: 14, color: colors.textMuted },
   segTextActive: { color: colors.text },
   content: { padding: spacing.md, paddingTop: 0, gap: spacing.sm },
   note: {
@@ -166,7 +166,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  noteText: { flex: 1, fontSize: 12, color: colors.primaryDark },
+  noteText: { flex: 1, fontFamily: fonts.body, fontSize: 12, color: colors.primaryDark },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
-  emptyText: { color: colors.textMuted, fontSize: 14 },
+  emptyText: { fontFamily: fonts.body, color: colors.textMuted, fontSize: 14 },
 });

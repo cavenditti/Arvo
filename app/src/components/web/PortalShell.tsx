@@ -11,6 +11,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { api } from '@/api/client';
 import type { Alert, Org, Parcel, Role, User } from '@/api/types';
 import Logo from '@/components/Logo';
+import { GlyphBadge, MonoLabel } from '@/components/ui';
 import { colors, fonts, radius, spacing } from '@/theme';
 
 type Me = { user: User; org: Org; role: Role };
@@ -83,7 +84,7 @@ export default function PortalShell({ children }: { children: ReactNode }) {
 
         {/* Org selector — display only; org switching lives in /settings. */}
         <View style={styles.orgCard}>
-          <View style={styles.orgDot} />
+          <GlyphBadge glyph="sprout" fg={colors.success} bg={colors.primarySoft} size={22} />
           <View style={styles.flex1}>
             <Text style={styles.orgName} numberOfLines={1}>
               {me.data?.org.name ?? '—'}
@@ -160,9 +161,7 @@ export default function PortalShell({ children }: { children: ReactNode }) {
               <Text style={styles.userName} numberOfLines={1}>
                 {fullName}
               </Text>
-              <Text style={styles.userRole} numberOfLines={1}>
-                {me.data?.role ? t(`roles.${me.data.role}`) : ''}
-              </Text>
+              <MonoLabel size={10}>{me.data?.role ? t(`roles.${me.data.role}`) : ''}</MonoLabel>
             </View>
             <Ionicons name="settings-outline" size={14} color={colors.textFaint} />
           </Pressable>
@@ -199,7 +198,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     paddingBottom: spacing.md,
   },
-  brand: { fontSize: 17, fontWeight: '700', color: colors.text, letterSpacing: -0.2 },
+  brand: { fontSize: 17, fontFamily: fonts.displayBold, color: colors.text, letterSpacing: -0.2 },
   orgCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -212,8 +211,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.card,
   },
-  orgDot: { width: 8, height: 8, borderRadius: 2, backgroundColor: colors.success },
-  orgName: { fontSize: 13, fontWeight: '600', color: colors.text },
+  orgName: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
   orgMeta: { fontFamily: fonts.mono, fontSize: 10, color: colors.textFaint, marginTop: 2 },
   nav: { marginTop: spacing.lg, gap: 2 },
   navItem: {
@@ -226,8 +224,8 @@ const styles = StyleSheet.create({
   },
   navItemActive: { backgroundColor: colors.primarySoft },
   navItemHover: { backgroundColor: colors.cardAlt },
-  navLabel: { fontSize: 13.5, fontWeight: '500', color: colors.textMuted, flex: 1 },
-  navLabelActive: { color: colors.primary, fontWeight: '600' },
+  navLabel: { fontSize: 13.5, fontFamily: fonts.bodyMedium, color: colors.textMuted, flex: 1 },
+  navLabelActive: { color: colors.primary, fontFamily: fonts.bodySemiBold },
   navLabelDisabled: { color: colors.textFaint },
   badge: {
     minWidth: 18,
@@ -238,7 +236,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  badgeText: { fontFamily: fonts.mono, color: colors.onPrimary, fontSize: 10, fontWeight: '600' },
+  badgeText: { fontFamily: fonts.bodyBold, color: colors.onPrimary, fontSize: 10 },
   soonChip: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -274,9 +272,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: { fontSize: 12, fontWeight: '600', color: colors.primary },
-  userName: { fontSize: 13, fontWeight: '600', color: colors.text },
-  userRole: { fontSize: 11, color: colors.textFaint },
+  avatarText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.primary },
+  userName: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
   main: { flex: 1 },
   mainFull: { flex: 1 },
   mainContent: { padding: spacing.lg, maxWidth: 1280, width: '100%', alignSelf: 'center' },

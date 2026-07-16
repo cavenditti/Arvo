@@ -21,7 +21,7 @@ import type { Observation } from '@/api/types';
 import { useParcels } from '@/features/scouting/parcels';
 import { useScouting, useSync } from '@/offline/hooks';
 import { ensureStarted, sync } from '@/offline/queue';
-import { colors, radius, spacing } from '@/theme';
+import { colors, fonts, radius, spacing } from '@/theme';
 
 export default function Screen() {
   const { t } = useTranslation();
@@ -189,7 +189,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 1 },
-  headerText: { color: colors.textMuted, fontSize: 14 },
+  headerText: { color: colors.textMuted, fontSize: 14, fontFamily: fonts.body },
   badge: {
     minWidth: 22,
     height: 22,
@@ -199,7 +199,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  badgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  badgeText: { color: '#fff', fontSize: 12, fontFamily: fonts.bodyBold },
   syncBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -210,7 +210,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   syncBtnDisabled: { opacity: 0.5 },
-  syncBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  syncBtnText: { color: '#fff', fontFamily: fonts.bodySemiBold, fontSize: 14 },
   banner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -220,11 +220,17 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   bannerError: { backgroundColor: colors.danger },
-  bannerText: { color: '#fff', fontSize: 13, flexShrink: 1 },
+  bannerText: { color: '#fff', fontSize: 13, fontFamily: fonts.body, flexShrink: 1 },
   list: { padding: spacing.md, paddingBottom: 96, gap: spacing.sm, flexGrow: 1 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: spacing.xl * 2, gap: spacing.sm },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.text },
-  emptyHint: { fontSize: 14, color: colors.textMuted, textAlign: 'center', paddingHorizontal: spacing.xl },
+  emptyTitle: { fontSize: 18, fontFamily: fonts.display, color: colors.text },
+  emptyHint: {
+    fontSize: 14,
+    fontFamily: fonts.body,
+    color: colors.textMuted,
+    textAlign: 'center',
+    paddingHorizontal: spacing.xl,
+  },
   card: {
     flexDirection: 'row',
     backgroundColor: colors.card,
@@ -237,8 +243,8 @@ const styles = StyleSheet.create({
   thumbEmpty: { backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' },
   cardBody: { flex: 1, padding: spacing.sm, gap: 4 },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
-  parcel: { fontWeight: '700', color: colors.text, fontSize: 15, flexShrink: 1 },
-  note: { color: colors.text, fontSize: 14, lineHeight: 19 },
+  parcel: { fontFamily: fonts.display, color: colors.text, fontSize: 15, flexShrink: 1 },
+  note: { color: colors.text, fontSize: 14, fontFamily: fonts.body, lineHeight: 19 },
   cardMeta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.xs, marginTop: 2 },
   chip: {
     backgroundColor: colors.bg,
@@ -248,8 +254,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
   },
-  chipText: { fontSize: 12, color: colors.textMuted },
-  when: { fontSize: 12, color: colors.textMuted, marginLeft: 'auto' },
+  chipText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
+  when: { fontSize: 12, fontFamily: fonts.mono, color: colors.textMuted, marginLeft: 'auto' },
   fab: {
     position: 'absolute',
     right: spacing.lg,
