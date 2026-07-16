@@ -2,7 +2,7 @@
 import { enUS, it } from 'date-fns/locale';
 
 import i18n from '@/i18n';
-import type { IndexName, WeatherDaily } from '@/api/types';
+import type { IndexName, LatestIndices, WeatherDaily } from '@/api/types';
 
 /** y-axis domain per index (spec: veg indices 0..1, ndmi -0.2..0.6). */
 export const INDEX_DOMAIN: Record<IndexName, [number, number]> = {
@@ -12,6 +12,86 @@ export const INDEX_DOMAIN: Record<IndexName, [number, number]> = {
   ndre: [0, 1],
   ndmi: [-0.2, 0.6],
 };
+
+/**
+ * Practical satellite-signal ranges used by the Arvo Score. These are deliberately
+ * narrower than the mathematical index domains so the score remains useful in real
+ * field conditions. The score is a simple orientation aid, not a crop-stage model.
+ */
+const SCORE_RANGE: Record<IndexName, [number, number]> = {
+  ndvi: [0.15, 0.85],
+  ndre: [0.05, 0.5],
+  gndvi: [0.1, 0.75],
+  ndmi: [-0.2, 0.5],
+  savi: [0.1, 0.7],
+};
+
+const SCORE_WEIGHT: Record<IndexName, number> = {
+  ndvi: 0.3,
+  ndre: 0.2,
+  gndvi: 0.15,
+  ndmi: 0.2,
+  savi: 0.15,
+};
+
+export type ScoreBand = 'strong' | 'good' | 'watch' | 'attention';
+export type TrendBand = 'improving' | 'stable' | 'declining' | 'unknown';
+
+export interface ArvoScore {
+  value: number;
+  /** Share of the five weighted signals available, from 0 to 1. */
+  coverage: number;
+  signalCount: number;
+  observedAt: string | null;
+}
+
+/** Weighted 0–100 summary of all available vegetation and moisture signals. */
+export function arvoScore(latest: LatestIndices | null | undefined): ArvoScore | null {
+  if (!latest) return null;
+  let weighted = 0;
+  let usedWeight = 0;
+  let signalCount = 0;
+  let observedAt: string | null = null;
+
+  for (const index of Object.keys(SCORE_WEIGHT) as IndexName[]) {
+    const point = latest[index];
+    if (!point || !Number.isFinite(point.mean)) continue;
+    const [min, max] = SCORE_RANGE[index];
+    const normalized = Math.max(0, Math.min(1, (point.mean - min) / (max - min)));
+    weighted += normalized * SCORE_WEIGHT[index];
+    usedWeight += SCORE_WEIGHT[index];
+    signalCount += 1;
+    if (!observedAt || point.observed_at > observedAt) observedAt = point.observed_at;
+  }
+
+  if (usedWeight === 0) return null;
+  return {
+    value: Math.round((weighted / usedWeight) * 100),
+    coverage: usedWeight,
+    signalCount,
+    observedAt,
+  };
+}
+
+export function scoreBand(score: number): ScoreBand {
+  if (score >= 75) return 'strong';
+  if (score >= 55) return 'good';
+  if (score >= 35) return 'watch';
+  return 'attention';
+}
+
+export function scoreColor(score: number | null | undefined): string {
+  if (score == null || Number.isNaN(score)) return '#B8C2BC';
+  return indexColor('ndvi', Math.max(0, Math.min(100, score)) / 100);
+}
+
+/** Human-readable movement from NDVI; raw values stay available in advanced detail. */
+export function trendBand(delta: number | null | undefined): TrendBand {
+  if (delta == null || Number.isNaN(delta)) return 'unknown';
+  if (delta > 0.025) return 'improving';
+  if (delta < -0.025) return 'declining';
+  return 'stable';
+}
 
 // choropleth ramp: bare/stressed (terracotta) → amber → yellow-green → vigorous (forest)
 const RAMP = ['#A5432B', '#B26A3F', '#C7A34E', '#B8BF5C', '#7BA653', '#3F7D45'];

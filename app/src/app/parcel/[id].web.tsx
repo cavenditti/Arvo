@@ -28,6 +28,7 @@ import {
   useAlertAction,
   useArchiveParcel,
   useIndexSeries,
+  useLatestIndices,
   useParcel,
   useParcelAlerts,
   useRefreshImagery,
@@ -35,7 +36,7 @@ import {
   useWeather,
 } from '@/features/parcels/hooks';
 import { useParcelObservations } from '@/features/scouting/byParcel';
-import { dfLocale } from '@/features/insights/format';
+import { arvoScore, dfLocale, scoreBand, scoreColor, trendBand } from '@/features/insights/format';
 import { colors, fonts, gradients, radius, spacing, statusColors, statusForSeverity } from '@/theme';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -49,7 +50,9 @@ export default function ParcelDetailWeb() {
   const parcelQ = useParcel(id);
   const [index, setIndex] = useState<IndexName>('ndvi');
   const [showOverlay, setShowOverlay] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const seriesQ = useIndexSeries(id, index);
+  const latestQ = useLatestIndices(id ? [id] : []);
   const metaQ = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/meta') });
   const weatherQ = useWeather(id);
   const agroQ = useAgro(id);
@@ -85,6 +88,10 @@ export default function ParcelDetailWeb() {
   const locale = dfLocale();
   const series = seriesQ.data?.series ?? [];
   const latestPoint = series.length > 0 ? series[series.length - 1] : undefined;
+  const score = arvoScore(latestQ.data?.[id]);
+  const latestDelta = series.length > 1 && index === 'ndvi'
+    ? latestPoint!.mean - series[series.length - 2].mean
+    : null;
   const latestDate = latestPoint
     ? format(parseISO(latestPoint.observed_at), 'd MMM', { locale })
     : null;
@@ -237,7 +244,7 @@ export default function ParcelDetailWeb() {
           </View>
         </View>
 
-        {/* title + index switcher */}
+        {/* title + plain-language condition summary */}
         <View style={styles.titleBlock}>
           <View style={styles.titleLeft}>
             <View style={styles.titleRow}>
@@ -248,40 +255,57 @@ export default function ParcelDetailWeb() {
             </View>
             <Text style={styles.metaLine}>{metaLine}</Text>
           </View>
-          <View style={styles.indexTabs}>
-            {INDEX_NAMES.map((ix) => {
-              const active = ix === index;
-              return (
-                <Pressable
-                  key={ix}
-                  onPress={() => setIndex(ix)}
-                  style={[styles.indexTab, active && styles.indexTabActive]}
-                >
-                  <Text style={[styles.indexTabTxt, active && styles.indexTabTxtActive]}>
-                    {ix.toUpperCase()}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          {score ? (
+            <View style={styles.scoreSummary}>
+              <View style={[styles.scoreRing, { borderColor: scoreColor(score.value) }]}>
+                <MonoValue size={28}>{score.value}</MonoValue>
+              </View>
+              <View>
+                <MonoLabel>{t('score.name')}</MonoLabel>
+                <Text style={styles.scoreBand}>{t(`score.band.${scoreBand(score.value)}`)}</Text>
+                <Text style={styles.scoreTrend}>{t(`trend.${trendBand(latestDelta)}`)}</Text>
+              </View>
+            </View>
+          ) : null}
         </View>
 
         {/* two-column grid */}
         <View style={styles.grid}>
           {/* LEFT */}
           <View style={styles.colLeft}>
-            {/* chart card */}
+            {/* score explanation + advanced chart, collapsed by default */}
             <View style={styles.card}>
               <View style={styles.chartHead}>
-                <Text style={styles.cardTitle}>
-                  {index.toUpperCase()} · {t('parcel.last_90d', { defaultValue: 'last 90 days' })}
-                </Text>
+                <View style={styles.flex1}>
+                  <Text style={styles.cardTitle}>{t('parcel.current_condition')}</Text>
+                  <Text style={styles.scoreExplanation}>{t('score.explanation')}</Text>
+                  {score ? <MonoLabel>{t('score.based_on', { count: score.signalCount })}</MonoLabel> : null}
+                </View>
+                <Pressable style={styles.advancedButton} onPress={() => setShowAdvanced((v) => !v)}>
+                  <Ionicons name="options-outline" size={15} color={colors.primary} />
+                  <Text style={styles.linkTxt}>{t(showAdvanced ? 'indices.hide_advanced' : 'indices.advanced')}</Text>
+                  <Ionicons name={showAdvanced ? 'chevron-up' : 'chevron-down'} size={15} color={colors.primary} />
+                </Pressable>
+              </View>
+              {showAdvanced ? <>
+                <View style={styles.indexTabs}>
+                  {INDEX_NAMES.map((ix) => {
+                    const active = ix === index;
+                    return (
+                      <Pressable key={ix} onPress={() => setIndex(ix)} style={[styles.indexTab, active && styles.indexTabActive]}>
+                        <Text style={[styles.indexTabTxt, active && styles.indexTabTxtActive]}>
+                          {t(`index.${ix}.name`)} · {ix.toUpperCase()}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Text style={styles.indexDescription}>{t(`index.${index}.description`)}</Text>
                 <View style={styles.legend}>
                   <MonoLabel color={colors.primary}>— {t('parcel.legend_mean', { defaultValue: 'field mean' })}</MonoLabel>
                   <MonoLabel color={colors.textFaint}>p10–p90</MonoLabel>
                   <MonoLabel color={colors.textFaint}>✕ {t('parcel.legend_cloud', { defaultValue: 'cloud-flagged' })}</MonoLabel>
                 </View>
-              </View>
               {seriesQ.isLoading ? (
                 <View style={[styles.chartLoading, { height: 320 }]}>
                   <ActivityIndicator color={colors.primary} />
@@ -289,10 +313,11 @@ export default function ParcelDetailWeb() {
               ) : (
                 <IndexChart series={last90} index={index} height={320} />
               )}
+              </> : null}
             </View>
 
             {/* stat tiles */}
-            {latestPoint ? (
+            {showAdvanced && latestPoint ? (
               <View style={styles.statsRow}>
                 <StatTile label={t('parcel.stat_mean')} value={fmt2(latestPoint.mean)} />
                 <StatTile label={t('parcel.stat_median', { defaultValue: 'Median' })} value={fmt2(latestPoint.median)} />
@@ -594,6 +619,18 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   h1: { fontSize: 28, fontFamily: fonts.displayBold, color: colors.text, letterSpacing: -0.5 },
   metaLine: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
+  scoreSummary: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  scoreRing: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.card,
+  },
+  scoreBand: { fontSize: 15, fontFamily: fonts.bodyBold, color: colors.text, marginTop: 2 },
+  scoreTrend: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginTop: 1 },
   indexTabs: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
   indexTab: {
     paddingHorizontal: spacing.md,
@@ -627,6 +664,9 @@ const styles = StyleSheet.create({
 
   // chart
   chartHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: spacing.sm },
+  scoreExplanation: { maxWidth: 620, fontSize: 13, lineHeight: 19, fontFamily: fonts.body, color: colors.textMuted, marginVertical: 3 },
+  advancedButton: { flexDirection: 'row', alignItems: 'center', gap: 5, padding: spacing.sm },
+  indexDescription: { fontSize: 12.5, lineHeight: 18, fontFamily: fonts.body, color: colors.textMuted },
   legend: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flexWrap: 'wrap' },
   chartLoading: { alignItems: 'center', justifyContent: 'center' },
 

@@ -14,8 +14,8 @@ import { api } from '@/api/client';
 import { INDEX_NAMES, type Alert, type IndexName } from '@/api/types';
 import MapView from '@/components/MapView';
 import type { ParcelFeature } from '@/components/types';
-import { MonoLabel, MonoValue, NdviSwatch, StatusChip, TintCard } from '@/components/ui';
-import { INDEX_DOMAIN, cropLabel, indexColor } from '@/features/insights/format';
+import { MonoLabel, MonoValue, StatusChip, TintCard } from '@/components/ui';
+import { INDEX_DOMAIN, arvoScore, cropLabel, indexColor, scoreColor } from '@/features/insights/format';
 import { NEUTRAL_FILL, formatArea, ndviColor } from '@/features/parcels/crops';
 import { useLatestIndices, useParcels } from '@/features/parcels/hooks';
 import { colors, fonts, gradients, radius, spacing, statusForSeverity } from '@/theme';
@@ -52,7 +52,7 @@ export default function MapScreen() {
   const parcelsQ = useParcels();
 
   const [query, setQuery] = useState('');
-  const [selectedIndex, setSelectedIndex] = useState<IndexName>('ndvi');
+  const [selectedIndex, setSelectedIndex] = useState<IndexName | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focus, setFocus] = useState<[number, number, number?] | undefined>(undefined);
   const [cardHeight, setCardHeight] = useState(0);
@@ -77,6 +77,10 @@ export default function MapScreen() {
     const q = query.trim().toLowerCase();
     const visible = q ? parcels.filter((p) => p.name.toLowerCase().includes(q)) : parcels;
     return visible.map((parcel) => {
+      if (!selectedIndex) {
+        const score = arvoScore(latest[parcel.id])?.value ?? null;
+        return { parcel, color: score == null ? NEUTRAL_FILL : scoreColor(score) };
+      }
       const mean = latest[parcel.id]?.[selectedIndex]?.mean ?? null;
       return { parcel, color: mean == null ? NEUTRAL_FILL : indexColor(selectedIndex, mean) };
     });
@@ -101,18 +105,24 @@ export default function MapScreen() {
   const selectedStatus = statusForSeverity(
     selected ? worstOpenSeverity(openAlertsQ.data ?? [], selected.id) : null,
   );
-  const selectedMean = selected
+  const selectedScore = selected ? arvoScore(latestQ.data?.[selected.id]) : null;
+  const selectedMean = selected && selectedIndex
     ? (latestQ.data?.[selected.id]?.[selectedIndex]?.mean ?? null)
-    : null;
+    : selectedScore?.value ?? null;
 
-  const cycleIndex = () =>
-    setSelectedIndex(INDEX_NAMES[(INDEX_NAMES.indexOf(selectedIndex) + 1) % INDEX_NAMES.length]);
+  const mapViews: (IndexName | null)[] = [null, ...INDEX_NAMES];
+  const cycleIndex = () => {
+    const current = mapViews.findIndex((v) => v === selectedIndex);
+    setSelectedIndex(mapViews[(current + 1) % mapViews.length]);
+  };
 
-  const [domainMin, domainMax] = INDEX_DOMAIN[selectedIndex];
+  const [domainMin, domainMax] = selectedIndex ? INDEX_DOMAIN[selectedIndex] : [0, 100];
   const gradientStops = useMemo(
     () =>
       Array.from({ length: 5 }, (_, i) =>
-        indexColor(selectedIndex, domainMin + ((domainMax - domainMin) * i) / 4),
+        selectedIndex
+          ? indexColor(selectedIndex, domainMin + ((domainMax - domainMin) * i) / 4)
+          : scoreColor(domainMin + ((domainMax - domainMin) * i) / 4),
       ),
     [selectedIndex, domainMin, domainMax],
   );
@@ -153,14 +163,26 @@ export default function MapScreen() {
       {parcels.length > 0 ? (
         <View style={styles.legend} pointerEvents="none">
           <Text style={styles.legendTitle}>
-            {selectedIndex === 'ndvi'
+            {!selectedIndex
+              ? t('map.score_legend')
+              : selectedIndex === 'ndvi'
               ? t('map.ndvi_legend')
               : t('map.index_legend', {
                   defaultValue: '{{index}} (latest)',
                   index: selectedIndex.toUpperCase(),
                 })}
           </Text>
-          {selectedIndex === 'ndvi' ? (
+          {!selectedIndex ? (
+            <View style={styles.legendGradientRow}>
+              <Text style={styles.legendLabel}>{t('map.score_low')}</Text>
+              <View style={styles.gradientBar}>
+                {gradientStops.map((c, i) => (
+                  <View key={i} style={[styles.gradientCell, { backgroundColor: c }]} />
+                ))}
+              </View>
+              <Text style={styles.legendLabel}>{t('map.score_high')}</Text>
+            </View>
+          ) : selectedIndex === 'ndvi' ? (
             <View style={styles.legendRow}>
               {LEGEND.map((l) => (
                 <View key={l.label} style={styles.legendItem}>
@@ -197,7 +219,9 @@ export default function MapScreen() {
           onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
         >
           <View style={styles.selRow}>
-            <NdviSwatch value={selectedMean} index={selectedIndex} size={44} />
+            <View style={[styles.scoreBadge, { backgroundColor: selectedIndex ? indexColor(selectedIndex, selectedMean) : scoreColor(selectedMean) }]}>
+              <Text style={styles.scoreBadgeValue}>{selectedMean == null ? '—' : selectedIndex ? selectedMean.toFixed(2) : Math.round(selectedMean)}</Text>
+            </View>
             <View style={styles.selInfo}>
               <Text style={styles.selName} numberOfLines={1}>
                 {selected.name}
@@ -260,7 +284,9 @@ export default function MapScreen() {
             onPress={cycleIndex}
             accessibilityLabel={t('map.change_index', { defaultValue: 'Change index' })}
           >
-            <MonoLabel color={colors.text} size={11}>{`${selectedIndex} ▾`}</MonoLabel>
+            <MonoLabel color={colors.text} size={11}>
+              {`${selectedIndex ? t(`index.${selectedIndex}.name`) : t('map.score_view')} ▾`}
+            </MonoLabel>
           </Pressable>
         </View>
       ) : null}
@@ -399,6 +425,14 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   selRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  scoreBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scoreBadgeValue: { fontFamily: fonts.monoSemiBold, fontSize: 12, color: '#FFFFFF' },
   selInfo: { flex: 1 },
   selName: { fontSize: 16, fontFamily: fonts.display, color: colors.text },
   selMeta: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },

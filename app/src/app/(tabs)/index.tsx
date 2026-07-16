@@ -20,8 +20,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@/api/client';
 import type { Alert, IndexName, IndexPoint, LatestIndices, Org, Parcel, Role, User } from '@/api/types';
 import { kindGlyph } from '@/components/glyphs';
-import { Delta, GlyphBadge, MonoLabel, NdviSwatch, StatusChip, TintCard } from '@/components/ui';
-import { cropLabel, dfLocale } from '@/features/insights/format';
+import { GlyphBadge, MonoLabel, StatusChip, TintCard } from '@/components/ui';
+import { arvoScore, cropLabel, dfLocale, scoreColor, trendBand } from '@/features/insights/format';
 import {
   colors,
   fonts,
@@ -136,7 +136,18 @@ export default function Dashboard() {
         />
       ) : null}
 
-      {list.length > 0 ? <MonoLabel style={styles.listMeta}>{metaParts.join(' · ')}</MonoLabel> : null}
+      {list.length > 0 ? (
+        <>
+          <MonoLabel style={styles.listMeta}>{metaParts.join(' · ')}</MonoLabel>
+          <View style={styles.scoreExplainer}>
+            <Ionicons name="sparkles-outline" size={16} color={colors.primary} />
+            <View style={styles.flex1}>
+              <Text style={styles.scoreExplainerTitle}>{t('score.name')}</Text>
+              <Text style={styles.scoreExplainerBody}>{t('score.short_explanation')}</Text>
+            </View>
+          </View>
+        </>
+      ) : null}
     </View>
   );
 
@@ -172,7 +183,7 @@ export default function Dashboard() {
         renderItem={({ item }) => (
           <ParcelRow
             parcel={item}
-            ndvi={latest.data?.[item.id]?.ndvi ?? null}
+            latest={latest.data?.[item.id]}
             status={statusForSeverity(severityByParcel[item.id])}
             onPress={() => router.push(`/parcel/${item.id}`)}
           />
@@ -222,17 +233,18 @@ function BannerCard({
 
 function ParcelRow({
   parcel,
-  ndvi,
+  latest,
   status,
   onPress,
 }: {
   parcel: Parcel;
-  ndvi: IndexPoint | null;
+  latest: LatestIndices | undefined;
   status: Status;
   onPress: () => void;
 }) {
   const { t } = useTranslation();
   const crop = cropLabel(parcel.crop);
+  const score = arvoScore(latest);
 
   // 7-day delta from the cached series (shared with the parcel detail chart)
   const { data } = useQuery({
@@ -255,7 +267,9 @@ function ParcelRow({
 
   return (
     <Pressable style={({ pressed }) => [styles.row, pressed && styles.pressed]} onPress={onPress}>
-      <NdviSwatch value={ndvi?.mean ?? null} size={46} />
+      <View style={[styles.scoreBadge, { backgroundColor: scoreColor(score?.value) }]}>
+        <Text style={styles.scoreValue}>{score?.value ?? '—'}</Text>
+      </View>
       <View style={styles.rowInfo}>
         <Text style={styles.rowName} numberOfLines={1}>
           {parcel.name}
@@ -266,7 +280,14 @@ function ParcelRow({
       </View>
       <View style={styles.rowRight}>
         <StatusChip status={status} label={t(`status.${status}`)} />
-        <Delta value={delta} />
+        <View style={styles.trendRow}>
+          <Ionicons
+            name={trendBand(delta) === 'improving' ? 'trending-up' : trendBand(delta) === 'declining' ? 'trending-down' : 'remove'}
+            size={14}
+            color={trendBand(delta) === 'declining' ? colors.accent : colors.primary}
+          />
+          <Text style={styles.trendText}>{t(`trend.${trendBand(delta)}`)}</Text>
+        </View>
       </View>
     </Pressable>
   );
@@ -325,6 +346,16 @@ const styles = StyleSheet.create({
   bannerTitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.text },
   bannerBody: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, marginTop: 1 },
   listMeta: { marginTop: spacing.xs },
+  scoreExplainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+  },
+  scoreExplainerTitle: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.primaryDark },
+  scoreExplainerBody: { fontFamily: fonts.body, fontSize: 11.5, color: colors.textMuted, marginTop: 1 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -340,6 +371,18 @@ const styles = StyleSheet.create({
   rowName: { fontFamily: fonts.display, fontSize: 16, color: colors.text },
   rowMeta: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2 },
   rowRight: { alignItems: 'flex-end', gap: 6 },
+  scoreBadge: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: colors.card,
+  },
+  scoreValue: { fontFamily: fonts.monoSemiBold, fontSize: 14, color: '#FFFFFF' },
+  trendRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  trendText: { fontFamily: fonts.bodyMedium, fontSize: 10.5, color: colors.textMuted },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
   emptyTitle: { fontFamily: fonts.display, fontSize: 18, color: colors.text },
   emptyBody: { fontFamily: fonts.body, fontSize: 14, color: colors.textMuted, textAlign: 'center' },

@@ -24,7 +24,7 @@ import { INDEX_NAMES, type IndexName, type Meta } from '@/api/types';
 import AlertList from '@/components/AlertList';
 import IndexChart from '@/components/IndexChart';
 import MapView from '@/components/MapView';
-import { Delta, MonoLabel, MonoValue, Pill, StatusChip, TintCard } from '@/components/ui';
+import { MonoLabel, MonoValue, Pill, StatusChip, TintCard } from '@/components/ui';
 import WeatherPanel from '@/components/WeatherPanel';
 import {
   CROP_OPTIONS,
@@ -41,6 +41,7 @@ import {
   useArchiveParcel,
   useFarms,
   useIndexSeries,
+  useLatestIndices,
   useParcel,
   useParcelAlerts,
   useRefreshImagery,
@@ -49,7 +50,7 @@ import {
 } from '@/features/parcels/hooks';
 import { confirmDestructive, notify } from '@/features/parcels/dialog';
 import { useParcelObservations } from '@/features/scouting/byParcel';
-import { dfLocale } from '@/features/insights/format';
+import { arvoScore, dfLocale, scoreBand, scoreColor, trendBand } from '@/features/insights/format';
 import { colors, fonts, gradients, radius, spacing, statusColors, statusForSeverity } from '@/theme';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -63,7 +64,9 @@ export default function ParcelDetailScreen() {
   const farmsQ = useFarms();
   const [index, setIndex] = useState<IndexName>('ndvi');
   const [showOverlay, setShowOverlay] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const seriesQ = useIndexSeries(id, index);
+  const latestQ = useLatestIndices(id ? [id] : []);
   const metaQ = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/meta') });
   const weatherQ = useWeather(id);
   const agroQ = useAgro(id);
@@ -129,6 +132,10 @@ export default function ParcelDetailScreen() {
   // observation must be scene-backed (has scene_id). series is asc by time → last point is latest.
   const series = seriesQ.data?.series ?? [];
   const latestPoint = series.length > 0 ? series[series.length - 1] : undefined;
+  const score = arvoScore(latestQ.data?.[id]);
+  const latestDelta = series.length > 1 && index === 'ndvi'
+    ? latestPoint!.mean - series[series.length - 2].mean
+    : null;
   const overlayAvailable =
     (metaQ.data?.features.imagery ?? false) && !!latestPoint?.scene_id;
   const overlayOn = overlayAvailable && showOverlay;
@@ -269,51 +276,55 @@ export default function ParcelDetailScreen() {
           />
         </View>
 
-        {/* index hero: latest value, delta vs previous pass, spread stats */}
-        {latestPoint ? (
+        {/* Plain-language summary. Raw satellite measurements live in advanced details. */}
+        {score ? (
           <View style={styles.section}>
             <View style={styles.heroRow}>
-              <MonoValue size={44} style={styles.heroValue}>
-                {latestPoint.mean.toFixed(2)}
-              </MonoValue>
-              <View style={styles.heroDelta}>
-                <Delta
-                  value={
-                    series.length > 1 ? latestPoint.mean - series[series.length - 2].mean : null
-                  }
-                  size={14}
-                />
-                {series.length > 1 ? (
-                  <Text style={styles.heroDeltaHint}>{t('parcel.vs_prev')}</Text>
-                ) : null}
+              <View style={[styles.heroScore, { borderColor: scoreColor(score.value) }]}>
+                <MonoValue size={40} style={styles.heroValue}>{score.value}</MonoValue>
+                <MonoLabel>{t('score.name')}</MonoLabel>
               </View>
-              <MonoLabel style={styles.heroMeta}>
-                {index.toUpperCase()} ·{' '}
-                {format(parseISO(latestPoint.observed_at), 'd MMM', { locale: dfLocale() })}
-              </MonoLabel>
+              <View style={styles.heroSummary}>
+                <Text style={styles.conditionTitle}>{t(`score.band.${scoreBand(score.value)}`)}</Text>
+                <Text style={styles.conditionBody}>{t('score.short_explanation')}</Text>
+                <View style={styles.trendSummary}>
+                  <Ionicons
+                    name={trendBand(latestDelta) === 'improving' ? 'trending-up' : trendBand(latestDelta) === 'declining' ? 'trending-down' : 'remove'}
+                    size={15}
+                    color={trendBand(latestDelta) === 'declining' ? colors.accent : colors.primary}
+                  />
+                  <Text style={styles.heroDeltaHint}>{t(`trend.${trendBand(latestDelta)}`)}</Text>
+                </View>
+              </View>
             </View>
-            <View style={styles.statRow}>
-              <StatTile label={t('parcel.stat_mean')} value={latestPoint.mean} />
-              <StatTile label={t('parcel.stat_p10')} value={latestPoint.p10} />
-              <StatTile label={t('parcel.stat_p90')} value={latestPoint.p90} />
-            </View>
+            <Text style={styles.scoreMethod}>{t('score.explanation')}</Text>
+            <MonoLabel>
+              {t('score.based_on', { count: score.signalCount })}
+              {score.observedAt ? ` · ${format(parseISO(score.observedAt), 'd MMM', { locale: dfLocale() })}` : ''}
+            </MonoLabel>
           </View>
         ) : null}
 
-        {/* index chart + switcher */}
+        {/* Advanced index chart + switcher, collapsed by default. */}
         <View style={styles.section}>
           <View style={styles.sectionHeadRow}>
-            <Text style={styles.sectionTitle}>{t('parcel.indices')}</Text>
-            <Pressable style={styles.refreshBtn} onPress={onRefreshImagery} disabled={refresh.isPending}>
-              {refresh.isPending ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <Ionicons name="refresh" size={16} color={colors.primary} />
-              )}
-              <Text style={styles.refreshTxt}>{t('parcel.refresh_imagery')}</Text>
+            <View style={styles.flex1}>
+              <Text style={styles.sectionTitle}>{t('indices.advanced')}</Text>
+              <Text style={styles.advancedHint}>{t('score.explanation')}</Text>
+            </View>
+            <Pressable style={styles.advancedButton} onPress={() => setShowAdvanced((v) => !v)}>
+              <Text style={styles.refreshTxt}>{t(showAdvanced ? 'indices.hide_advanced' : 'parcel.why_score')}</Text>
+              <Ionicons name={showAdvanced ? 'chevron-up' : 'chevron-down'} size={16} color={colors.primary} />
             </Pressable>
           </View>
-          <View style={styles.chips}>
+          {showAdvanced ? <>
+            <View style={styles.advancedActions}>
+              <Pressable style={styles.refreshBtn} onPress={onRefreshImagery} disabled={refresh.isPending}>
+                {refresh.isPending ? <ActivityIndicator size="small" color={colors.primary} /> : <Ionicons name="refresh" size={16} color={colors.primary} />}
+                <Text style={styles.refreshTxt}>{t('parcel.refresh_imagery')}</Text>
+              </Pressable>
+            </View>
+            <View style={styles.chips}>
             {INDEX_NAMES.map((ix) => {
               const active = ix === index;
               return (
@@ -322,11 +333,12 @@ export default function ParcelDetailScreen() {
                   style={[styles.indexChip, active && styles.chipActive]}
                   onPress={() => setIndex(ix)}
                 >
-                  <Text style={[styles.chipTxt, active && styles.chipTxtActive]}>{ix.toUpperCase()}</Text>
+                  <Text style={[styles.chipTxt, active && styles.chipTxtActive]}>{t(`index.${ix}.name`)} · {ix.toUpperCase()}</Text>
                 </Pressable>
               );
             })}
-          </View>
+            </View>
+            <Text style={styles.indexDescription}>{t(`index.${index}.description`)}</Text>
           {overlayAvailable ? (
             <View style={styles.chips}>
               <Pressable
@@ -345,8 +357,18 @@ export default function ParcelDetailScreen() {
           ) : (seriesQ.data?.series.length ?? 0) === 0 ? (
             <Text style={styles.muted}>{t('parcel.no_series')}</Text>
           ) : (
-            <IndexChart series={seriesQ.data?.series ?? []} index={index} />
+            <>
+              <IndexChart series={seriesQ.data?.series ?? []} index={index} />
+              {latestPoint ? (
+                <View style={styles.statRow}>
+                  <StatTile label={t('parcel.stat_mean')} value={latestPoint.mean} />
+                  <StatTile label={t('parcel.stat_p10')} value={latestPoint.p10} />
+                  <StatTile label={t('parcel.stat_p90')} value={latestPoint.p90} />
+                </View>
+              ) : null}
+            </>
           )}
+          </> : null}
         </View>
 
         {/* weather + agronomy */}
@@ -471,9 +493,20 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   heroRow: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, flexWrap: 'wrap' },
   heroValue: { lineHeight: 48, letterSpacing: -1 },
-  heroDelta: { paddingBottom: 8 },
+  heroScore: {
+    minWidth: 104,
+    alignItems: 'center',
+    padding: spacing.sm,
+    borderWidth: 3,
+    borderRadius: radius.lg,
+    backgroundColor: colors.cardAlt,
+  },
+  heroSummary: { flex: 1, minWidth: 170, paddingBottom: spacing.xs },
+  conditionTitle: { fontFamily: fonts.display, fontSize: 20, color: colors.text },
+  conditionBody: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.textMuted, marginTop: 2 },
+  trendSummary: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: spacing.xs },
   heroDeltaHint: { fontSize: 10, fontFamily: fonts.body, color: colors.textFaint, marginTop: 1 },
-  heroMeta: { marginLeft: 'auto', paddingBottom: 12 },
+  scoreMethod: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.textMuted },
   statRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
   statTile: {
     flex: 1,
@@ -519,6 +552,10 @@ const styles = StyleSheet.create({
   },
   sectionHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionTitle: { fontSize: 17, fontFamily: fonts.display, color: colors.text },
+  advancedHint: { fontFamily: fonts.body, fontSize: 11.5, lineHeight: 16, color: colors.textMuted, marginTop: 2 },
+  advancedButton: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: spacing.sm },
+  advancedActions: { alignItems: 'flex-start', paddingTop: spacing.xs },
+  indexDescription: { fontFamily: fonts.body, fontSize: 12.5, lineHeight: 18, color: colors.textMuted },
   obsRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start', marginTop: spacing.xs },
   obsThumb: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: colors.cardAlt },
   obsThumbEmpty: { borderWidth: 1, borderColor: colors.borderSoft },

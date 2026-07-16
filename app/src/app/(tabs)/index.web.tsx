@@ -17,8 +17,17 @@ import type { Alert, IndexName, IndexPoint, LatestIndices, Org, Parcel, Role, Us
 import { kindGlyph } from '@/components/glyphs';
 import MapView from '@/components/MapView';
 import type { ParcelFeature } from '@/components/types';
-import { Card, Delta, GlyphBadge, GlyphCard, MonoLabel, MonoValue, Pill, StatusChip } from '@/components/ui';
-import { INDEX_DOMAIN, cropLabel, dfLocale, indexColor } from '@/features/insights/format';
+import { Card, GlyphBadge, GlyphCard, MonoLabel, MonoValue, Pill, StatusChip } from '@/components/ui';
+import {
+  INDEX_DOMAIN,
+  arvoScore,
+  cropLabel,
+  dfLocale,
+  indexColor,
+  scoreBand,
+  scoreColor,
+  trendBand,
+} from '@/features/insights/format';
 import { NEUTRAL_FILL } from '@/features/parcels/crops';
 import { useLatestIndices, useParcels } from '@/features/parcels/hooks';
 import {
@@ -84,7 +93,8 @@ export default function FieldsWeb() {
   const { t } = useTranslation();
   const router = useRouter();
 
-  const [selectedIndex, setSelectedIndex] = useState<IndexName>('ndvi');
+  const [selectedIndex, setSelectedIndex] = useState<IndexName | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [search, setSearch] = useState('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -145,20 +155,25 @@ export default function FieldsWeb() {
     ? format(parseISO(lastPass), 'd MMM yyyy', { locale: dfLocale() })
     : null;
 
-  // map fills colored by the selected index (NEUTRAL_FILL when a parcel has no reading yet)
+  // The default map is score-first; scientific layers are an opt-in advanced view.
   const mapFeatures = useMemo<ParcelFeature[]>(() => {
     const lb = latestQ.data ?? {};
     return parcels.map((p) => {
+      if (!selectedIndex) {
+        const score = arvoScore(lb[p.id])?.value ?? null;
+        return { parcel: p, color: score == null ? NEUTRAL_FILL : scoreColor(score) };
+      }
       const v = lb[p.id]?.[selectedIndex]?.mean ?? null;
       return { parcel: p, color: v == null ? NEUTRAL_FILL : indexColor(selectedIndex, v) };
     });
   }, [parcels, latestQ.data, selectedIndex]);
 
-  // legend gradient — 6 sampled stops across the selected index domain
-  const [domainMin, domainMax] = INDEX_DOMAIN[selectedIndex];
-  const legendStops = Array.from({ length: 6 }, (_, i) =>
-    indexColor(selectedIndex, domainMin + ((domainMax - domainMin) * i) / 5),
-  );
+  // legend gradient — score by default, raw domain only in advanced mode
+  const [domainMin, domainMax] = selectedIndex ? INDEX_DOMAIN[selectedIndex] : [0, 100];
+  const legendStops = Array.from({ length: 6 }, (_, i) => {
+    const v = domainMin + ((domainMax - domainMin) * i) / 5;
+    return selectedIndex ? indexColor(selectedIndex, v) : scoreColor(v);
+  });
 
   // needs-attention: top open alerts (severity then recency); "N NEW" = created <24h
   const newCount = openAlerts.filter(
@@ -174,12 +189,12 @@ export default function FieldsWeb() {
     })
     .slice(0, 4);
 
-  // field health: avg NDVI, avg last-pass delta, status distribution by count/area
-  const ndviMeans = parcels
-    .map((p) => latest[p.id]?.ndvi?.mean)
+  // overall condition: average Arvo Score, trend, and alert-derived status distribution
+  const parcelScores = parcels
+    .map((p) => arvoScore(latest[p.id])?.value)
     .filter((v): v is number => v != null);
-  const avgNdvi = ndviMeans.length
-    ? ndviMeans.reduce((a, b) => a + b, 0) / ndviMeans.length
+  const avgScore = parcelScores.length
+    ? parcelScores.reduce((a, b) => a + b, 0) / parcelScores.length
     : null;
   const passDeltas = parcels
     .map((p) => lastPassDelta(sparkByParcel[p.id] ?? []))
@@ -210,15 +225,19 @@ export default function FieldsWeb() {
     }
   }
 
-  // parcels table: filter by search, sort by the selected index value (nulls last)
+  // parcels table: score-first; advanced users can opt into sorting by a raw index.
   const q = search.trim().toLowerCase();
   const filtered = parcels.filter((p) => {
     if (!q) return true;
     return p.name.toLowerCase().includes(q) || cropLabel(p.crop).toLowerCase().includes(q);
   });
   const sorted = [...filtered].sort((a, b) => {
-    const va = latest[a.id]?.[selectedIndex]?.mean;
-    const vb = latest[b.id]?.[selectedIndex]?.mean;
+    const va = selectedIndex
+      ? latest[a.id]?.[selectedIndex]?.mean
+      : arvoScore(latest[a.id])?.value;
+    const vb = selectedIndex
+      ? latest[b.id]?.[selectedIndex]?.mean
+      : arvoScore(latest[b.id])?.value;
     if (va == null && vb == null) return 0;
     if (va == null) return 1;
     if (vb == null) return -1;
@@ -243,7 +262,7 @@ export default function FieldsWeb() {
     );
   }
 
-  const indexLabel = selectedIndex.toUpperCase();
+  const indexLabel = selectedIndex ? selectedIndex.toUpperCase() : t('score.name');
 
   return (
     <View style={styles.page}>
@@ -282,26 +301,34 @@ export default function FieldsWeb() {
       <View style={styles.topRow}>
         <View style={styles.mapCard}>
           <View style={styles.mapHeader}>
-            <View style={styles.indexTabs}>
-              {INDEX_NAMES.map((idx) => {
+            <View style={styles.mapViewControls}>
+              <Pressable
+                onPress={() => setSelectedIndex(null)}
+                style={[styles.indexTab, selectedIndex == null ? styles.indexTabActive : styles.indexTabIdle]}
+              >
+                <Text style={[styles.indexTabText, selectedIndex == null ? styles.indexTabTextActive : styles.indexTabTextIdle]}>
+                  {t('score.name')}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setShowAdvanced((v) => !v)}
+                style={styles.advancedToggle}
+              >
+                <Ionicons name={showAdvanced ? 'chevron-up' : 'options-outline'} size={13} color={colors.textMuted} />
+                <Text style={styles.advancedToggleText}>
+                  {t(showAdvanced ? 'indices.hide_advanced' : 'indices.advanced')}
+                </Text>
+              </Pressable>
+              {showAdvanced ? INDEX_NAMES.map((idx) => {
                 const active = idx === selectedIndex;
                 return (
-                  <Pressable
-                    key={idx}
-                    onPress={() => setSelectedIndex(idx)}
-                    style={[styles.indexTab, active ? styles.indexTabActive : styles.indexTabIdle]}
-                  >
-                    <Text
-                      style={[
-                        styles.indexTabText,
-                        active ? styles.indexTabTextActive : styles.indexTabTextIdle,
-                      ]}
-                    >
-                      {idx.toUpperCase()}
+                  <Pressable key={idx} onPress={() => setSelectedIndex(idx)} style={[styles.indexTab, active ? styles.indexTabActive : styles.indexTabIdle]}>
+                    <Text style={[styles.indexTabText, active ? styles.indexTabTextActive : styles.indexTabTextIdle]}>
+                      {t(`index.${idx}.name`)} · {idx.toUpperCase()}
                     </Text>
                   </Pressable>
                 );
-              })}
+              }) : null}
             </View>
             {mapDateStr ? (
               <MonoLabel size={11} color={colors.textMuted}>
@@ -317,7 +344,7 @@ export default function FieldsWeb() {
               onSelectParcel={(id) => router.push(`/parcel/${id}`)}
             />
             <View style={styles.legend} pointerEvents="none">
-              <MonoLabel size={9}>{indexLabel}</MonoLabel>
+              <MonoLabel size={9}>{selectedIndex ? `${t(`index.${selectedIndex}.name`)} · ${indexLabel}` : t('map.score_legend')}</MonoLabel>
               <View style={styles.legendBar}>
                 {legendStops.map((c, i) => (
                   <View
@@ -332,8 +359,8 @@ export default function FieldsWeb() {
                 ))}
               </View>
               <View style={styles.legendRange}>
-                <MonoLabel size={9}>{domainMin.toFixed(1)}</MonoLabel>
-                <MonoLabel size={9}>{domainMax.toFixed(1)}</MonoLabel>
+                <MonoLabel size={9}>{selectedIndex ? domainMin.toFixed(1) : t('map.score_low')}</MonoLabel>
+                <MonoLabel size={9}>{selectedIndex ? domainMax.toFixed(1) : t('map.score_high')}</MonoLabel>
               </View>
             </View>
           </View>
@@ -405,14 +432,19 @@ export default function FieldsWeb() {
             </Text>
             <View style={styles.healthTop}>
               <MonoValue size={40} weight="500" color={colors.success}>
-                {avgNdvi == null ? '—' : avgNdvi.toFixed(2)}
+                {avgScore == null ? '—' : Math.round(avgScore)}
               </MonoValue>
               <View style={styles.healthMeta}>
                 <MonoLabel>{t('fields.avg_ndvi', { defaultValue: 'Avg NDVI' })}</MonoLabel>
+                <Text style={styles.scoreCaption}>{t('score.short_explanation')}</Text>
                 <View style={styles.healthDeltaRow}>
-                  <Delta value={avgDelta} />
+                  <Ionicons
+                    name={trendBand(avgDelta) === 'improving' ? 'trending-up' : trendBand(avgDelta) === 'declining' ? 'trending-down' : 'remove'}
+                    size={15}
+                    color={trendBand(avgDelta) === 'declining' ? colors.accent : colors.primary}
+                  />
                   <Text style={styles.mutedSmall}>
-                    {t('fields.vs_last_pass', { defaultValue: 'vs last pass' })}
+                    {t(`trend.${trendBand(avgDelta)}`)} · {t('fields.vs_last_pass', { defaultValue: 'vs last pass' })}
                   </Text>
                 </View>
               </View>
@@ -449,7 +481,7 @@ export default function FieldsWeb() {
           <Text style={styles.cardTitle}>{t('fields.parcels', { defaultValue: 'Parcels' })}</Text>
           <Pressable onPress={() => setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))}>
             <MonoLabel size={11}>
-              {`${t('fields.sorted_by', { index: indexLabel, defaultValue: 'Sorted by {{index}}' })} ${
+              {`${selectedIndex ? t('fields.sorted_by', { index: indexLabel }) : t('fields.sorted_by_score')} ${
                 sortDir === 'desc' ? '▾' : '▴'
               }`}
             </MonoLabel>
@@ -462,7 +494,7 @@ export default function FieldsWeb() {
           </MonoLabel>
           <MonoLabel style={styles.cCrop}>{t('parcel.crop')}</MonoLabel>
           <MonoLabel style={styles.cArea}>{t('fields.col_area', { defaultValue: 'Area' })}</MonoLabel>
-          <MonoLabel style={styles.cIndex}>{indexLabel}</MonoLabel>
+          <MonoLabel style={styles.cIndex}>{selectedIndex ? `${t(`index.${selectedIndex}.name`)} · ${indexLabel}` : t('score.name')}</MonoLabel>
           <MonoLabel style={styles.cTrend}>
             {t('fields.col_7day', { defaultValue: '7-day' })}
           </MonoLabel>
@@ -482,7 +514,8 @@ export default function FieldsWeb() {
         ) : (
           sorted.map((p) => {
             const status = statusForSeverity(severityByParcel[p.id]);
-            const iv = latest[p.id]?.[selectedIndex]?.mean ?? null;
+            const score = arvoScore(latest[p.id]);
+            const iv = selectedIndex ? latest[p.id]?.[selectedIndex]?.mean ?? null : score?.value ?? null;
             const seven = sevenDayDelta(sparkByParcel[p.id] ?? []);
             const ratio =
               iv == null ? 0 : Math.max(0, Math.min(1, (iv - domainMin) / (domainMax - domainMin)));
@@ -502,21 +535,31 @@ export default function FieldsWeb() {
                 </Text>
                 <Text style={[styles.cArea, styles.areaText]}>{`${p.area_ha.toFixed(1)} ha`}</Text>
                 <View style={[styles.cIndex, styles.indexCell]}>
-                  <Text style={styles.indexVal}>{iv == null ? '—' : iv.toFixed(2)}</Text>
+                  <View>
+                    <Text style={styles.indexVal}>{iv == null ? '—' : selectedIndex ? iv.toFixed(2) : Math.round(iv)}</Text>
+                    {!selectedIndex && score ? (
+                      <Text style={styles.indexMeaning}>{t(`score.band.${scoreBand(score.value)}`)}</Text>
+                    ) : null}
+                  </View>
                   <View style={styles.trackOuter}>
                     <View
                       style={[
                         styles.trackInner,
                         {
                           width: `${ratio * 100}%`,
-                          backgroundColor: iv == null ? colors.borderSoft : indexColor(selectedIndex, iv),
+                          backgroundColor: iv == null ? colors.borderSoft : selectedIndex ? indexColor(selectedIndex, iv) : scoreColor(iv),
                         },
                       ]}
                     />
                   </View>
                 </View>
-                <View style={styles.cTrend}>
-                  <Delta value={seven} />
+                <View style={[styles.cTrend, styles.trendCell]}>
+                  <Ionicons
+                    name={trendBand(seven) === 'improving' ? 'trending-up' : trendBand(seven) === 'declining' ? 'trending-down' : 'remove'}
+                    size={15}
+                    color={trendBand(seven) === 'declining' ? colors.accent : colors.primary}
+                  />
+                  <Text style={styles.trendText}>{t(`trend.${trendBand(seven)}`)}</Text>
                 </View>
                 <View style={styles.cStatus}>
                   <StatusChip status={status} label={t(`status.${status}`)} />
@@ -604,20 +647,28 @@ const styles = StyleSheet.create({
   },
   mapHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSoft,
   },
-  indexTabs: { flexDirection: 'row', gap: spacing.xs },
+  mapViewControls: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   indexTab: { paddingHorizontal: 11, paddingVertical: 5, borderRadius: radius.sm },
   indexTabActive: { backgroundColor: colors.primary },
   indexTabIdle: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   indexTabText: { fontFamily: fonts.monoSemiBold, fontSize: 11.5, letterSpacing: 0.4 },
   indexTabTextActive: { color: colors.onPrimary },
   indexTabTextIdle: { color: colors.textMuted },
+  advancedToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  advancedToggleText: { fontFamily: fonts.bodySemiBold, fontSize: 11.5, color: colors.textMuted },
   mapWrap: { position: 'relative', height: MAP_HEIGHT },
   legend: {
     position: 'absolute',
@@ -663,6 +714,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   healthMeta: { paddingBottom: 4, gap: 3 },
+  scoreCaption: { maxWidth: 190, fontFamily: fonts.body, fontSize: 11, lineHeight: 15, color: colors.textMuted },
   healthDeltaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   mutedSmall: { fontFamily: fonts.body, fontSize: 11, color: colors.textFaint },
   stack: {
@@ -723,6 +775,7 @@ const styles = StyleSheet.create({
   areaText: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted },
   indexCell: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   indexVal: { fontFamily: fonts.monoSemiBold, fontSize: 13, color: colors.text, minWidth: 36 },
+  indexMeaning: { fontFamily: fonts.body, fontSize: 10.5, color: colors.textMuted, marginTop: 1 },
   trackOuter: {
     width: 64,
     height: 6,
@@ -731,5 +784,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   trackInner: { height: 6, borderRadius: 3 },
+  trendCell: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  trendText: { fontFamily: fonts.bodyMedium, fontSize: 11.5, color: colors.textMuted },
   tableEmpty: { padding: spacing.lg, alignItems: 'center' },
 });
