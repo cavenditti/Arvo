@@ -1,5 +1,9 @@
 # Phase 0 — Tier-0 MVP implementation plan
 
+> **Status (2026-07-16): built and verified.** `scripts/smoke.sh` 28/28 green against real
+> Open-Meteo + Earth Search data; 31 unit tests passing; web portal verified in-browser
+> (login → dashboard → map choropleth → parcel detail → alerts → scouting).
+
 Target: a working, self-hostable Tier-0 slice of the platform (spec §6): multi-tenant field
 management, satellite index time series, weather + agronomic models, offline-first scouting,
 anomaly alerts, season report — one Rust backend, one Expo (React Native) app that ships to
