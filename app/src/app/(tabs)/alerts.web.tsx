@@ -16,10 +16,10 @@ import type { TextStyle } from 'react-native';
 import { api } from '@/api/client';
 import type { Alert, AlertState, Parcel, Severity, User } from '@/api/types';
 import type { AlertAction } from '@/components/types';
-import { Dot, MonoValue, Pill } from '@/components/ui';
+import { Dot, MonoValue, Pill, TintCard } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
 import { readSnoozeDays, setSnoozeDays } from '@/features/insights/snooze';
-import { colors, fonts, radius, severityColor, spacing } from '@/theme';
+import { colors, fonts, radius, severityColor, severityTint, spacing } from '@/theme';
 
 type Me = { user: User };
 type Segment = 'open' | 'snoozed' | 'resolved';
@@ -33,14 +33,8 @@ const ALERTS_ALL_KEY = ['alerts', 'all'] as const;
 // container is the focus affordance). Not part of RN's TextStyle, so cast like the repo idiom.
 const WEB_INPUT_RESET = { outlineStyle: 'none' } as unknown as TextStyle;
 
-// Severity tag/state tints — replicated from the frozen AlertList (same values) since the web
-// cards are built locally. Severity dots use the shared severityColor map from '@/theme'.
-const SEVERITY_TINT: Record<Severity, { fg: string; bg: string }> = {
-  critical: { fg: '#A5432B', bg: '#F7E7E2' },
-  warning: { fg: '#9A6A1E', bg: '#F6EFDD' },
-  info: { fg: '#5B8F8A', bg: '#E5EEED' },
-};
-
+// State tints are web-card-local; severity tag/gradient tints come from the shared
+// severityTint map in '@/theme' (dots use severityColor).
 const STATE_TINT: Record<AlertState, { fg: string; bg: string }> = {
   open: { fg: colors.primary, bg: colors.primarySoft },
   acked: { fg: colors.textMuted, bg: colors.borderSoft },
@@ -343,7 +337,7 @@ function AlertCard({
   const { t } = useTranslation();
   const [snoozeOpen, setSnoozeOpen] = useState(false);
 
-  const sev = SEVERITY_TINT[alert.severity] ?? SEVERITY_TINT.info;
+  const sev = severityTint[alert.severity] ?? severityTint.info;
   const state = STATE_TINT[alert.state];
   const actionable = alert.state === 'open' || alert.state === 'snoozed';
   const dimmed = alert.state === 'acked' || alert.state === 'dismissed';
@@ -355,7 +349,7 @@ function AlertCard({
     alert.state === 'open' ? t('alerts.new', { defaultValue: 'New' }) : t(`alerts.state.${alert.state}`);
 
   return (
-    <View style={[styles.card, dimmed && styles.cardDim]}>
+    <TintCard tint={sev.bg} style={[styles.card, dimmed && styles.cardDim]}>
       <View style={styles.cardTop}>
         <View style={styles.flex1}>
           <View style={styles.titleRow}>
@@ -406,7 +400,7 @@ function AlertCard({
           ) : null}
         </View>
       ) : null}
-    </View>
+    </TintCard>
   );
 }
 
@@ -579,7 +573,6 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 14, color: colors.textMuted },
 
   card: {
-    backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.lg,

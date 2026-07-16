@@ -42,6 +42,13 @@ export const severityColor: Record<string, string> = {
   critical: colors.danger,
 };
 
+// Severity tag/gradient tints (mock: cards fade from this toward the card color — no left borders).
+export const severityTint: Record<string, { fg: string; bg: string }> = {
+  critical: { fg: '#A5432B', bg: '#F7E7E2' },
+  warning: { fg: '#9A6A1E', bg: '#F6EFDD' },
+  info: { fg: '#5B8F8A', bg: '#E5EEED' },
+};
+
 // Parcel/alert health status: chip tint + text color pairs from the mock.
 export type Status = 'healthy' | 'watch' | 'attention';
 export const statusColors: Record<Status, { fg: string; bg: string }> = {

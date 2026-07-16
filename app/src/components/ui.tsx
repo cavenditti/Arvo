@@ -1,5 +1,6 @@
 // OWNER: fe-shell — Campo UI kit: small presentational primitives shared across screens
 // (status chips, mono micro-labels, deltas, NDVI swatches, cards). Theme tokens only.
+import { LinearGradient } from 'expo-linear-gradient';
 import type { ReactNode } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 
@@ -117,6 +118,32 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
+/**
+ * Severity-tinted card: subtle diagonal fade from `tint` into the card color (mock style).
+ * Use INSTEAD of colored left-border accents — never those.
+ */
+export function TintCard({
+  tint,
+  children,
+  style,
+}: {
+  tint: string;
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <LinearGradient
+      colors={[tint, colors.card]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 0.9, y: 1 }}
+      locations={[0, 0.65]}
+      style={[styles.tintCard, style]}
+    >
+      {children}
+    </LinearGradient>
+  );
+}
+
 /** Colored severity/status dot. */
 export function Dot({ color, size = 8 }: { color: string; size?: number }) {
   return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color }} />;
@@ -144,5 +171,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     padding: spacing.md,
+  },
+  tintCard: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    padding: spacing.sm,
+    overflow: 'hidden',
   },
 });

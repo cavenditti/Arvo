@@ -6,7 +6,8 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { AgroSummary } from '@/api/types';
 import { dfLocale, weatherEmoji } from '@/features/insights/format';
-import { colors, radius, severityColor, spacing } from '@/theme';
+import { colors, radius, severityTint, spacing } from '@/theme';
+import { TintCard } from './ui';
 import type { WeatherPanelProps } from './types';
 
 export default function WeatherPanel({ daily, agro, advisories }: WeatherPanelProps) {
@@ -38,15 +39,16 @@ export default function WeatherPanel({ daily, agro, advisories }: WeatherPanelPr
       {advisories && advisories.length > 0 && (
         <View style={styles.advisories}>
           {advisories.map((a, i) => (
-            <View
+            <TintCard
               key={`${a.kind}-${a.date}-${i}`}
-              style={[styles.advisory, { borderLeftColor: severityColor[a.severity] ?? colors.info }]}
+              tint={(severityTint[a.severity] ?? severityTint.info).bg}
+              style={styles.advisory}
             >
               <Text style={styles.advisoryDate}>
                 {format(parseISO(a.date), 'd MMM', { locale: dfLocale() })}
               </Text>
               <Text style={styles.advisoryMsg}>{a.message}</Text>
-            </View>
+            </TintCard>
           ))}
         </View>
       )}
@@ -116,11 +118,9 @@ const styles = StyleSheet.create({
   chipValue: { fontSize: 16, fontWeight: '700', color: colors.text },
   advisories: { marginTop: spacing.md, gap: spacing.sm },
   advisory: {
-    borderLeftWidth: 3,
-    paddingLeft: spacing.sm,
-    paddingVertical: spacing.xs,
-    backgroundColor: colors.bg,
-    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
   },
   advisoryDate: { fontSize: 11, color: colors.textMuted, textTransform: 'capitalize' },
   advisoryMsg: { fontSize: 13, color: colors.text },

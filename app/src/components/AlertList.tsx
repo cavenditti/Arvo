@@ -6,20 +6,14 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { Alert, AlertState, Severity } from '@/api/types';
-import { Dot, MonoLabel, Pill } from '@/components/ui';
+import type { Alert, AlertState } from '@/api/types';
+import { Dot, MonoLabel, Pill, TintCard } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
 import { setSnoozeDays } from '@/features/insights/snooze';
-import { colors, radius, severityColor, spacing } from '@/theme';
+import { colors, radius, severityColor, severityTint, spacing } from '@/theme';
 import type { AlertListProps } from './types';
 
 const SNOOZE_CHOICES = [1, 3, 7];
-
-const SEVERITY_TINT: Record<Severity, { fg: string; bg: string }> = {
-  critical: { fg: '#A5432B', bg: '#F7E7E2' },
-  warning: { fg: '#9A6A1E', bg: '#F6EFDD' },
-  info: { fg: '#5B8F8A', bg: '#E5EEED' },
-};
 
 const STATE_TINT: Record<AlertState, { fg: string; bg: string }> = {
   open: { fg: colors.primary, bg: colors.primarySoft },
@@ -35,7 +29,7 @@ export default function AlertList({ alerts, onAction, parcelNames, onOpenParcel 
   return (
     <View style={styles.list}>
       {alerts.map((a) => {
-        const sev = SEVERITY_TINT[a.severity] ?? SEVERITY_TINT.info;
+        const sev = severityTint[a.severity] ?? severityTint.info;
         const state = STATE_TINT[a.state];
         const actionable = a.state === 'open' || a.state === 'snoozed';
         const parcelName = a.parcel_id ? parcelNames?.[a.parcel_id] : undefined;
@@ -44,7 +38,7 @@ export default function AlertList({ alerts, onAction, parcelNames, onOpenParcel 
           locale: dfLocale(),
         });
         return (
-          <View key={a.id} style={styles.card}>
+          <TintCard key={a.id} tint={sev.bg} style={styles.card}>
             <View style={styles.titleRow}>
               <Dot color={severityColor[a.severity] ?? colors.info} />
               <Text style={styles.title} numberOfLines={2}>
@@ -92,7 +86,7 @@ export default function AlertList({ alerts, onAction, parcelNames, onOpenParcel 
                 )}
               </View>
             )}
-          </View>
+          </TintCard>
         );
       })}
     </View>
@@ -110,7 +104,6 @@ function ActionButton({ label, onPress }: { label: string; onPress: () => void }
 const styles = StyleSheet.create({
   list: { gap: spacing.sm },
   card: {
-    backgroundColor: colors.card,
     borderRadius: radius.lg,
     padding: spacing.md,
     borderWidth: 1,
