@@ -1,0 +1,92 @@
+// SPINE (read-only for feature agents). CLI + boot. Keep the called signatures stable.
+mod audit;
+mod config;
+mod error;
+mod imagery;
+mod jobs;
+mod modules;
+mod routes;
+mod security;
+mod seed;
+mod state;
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use clap::{Parser, Subcommand};
+use sqlx::postgres::PgPoolOptions;
+use tracing_subscriber::EnvFilter;
+
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
+
+#[derive(Parser)]
+#[command(name = "arvo-api", version)]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Option<Cmd>,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Run the HTTP API (default)
+    Serve,
+    /// Apply pending migrations and exit
+    Migrate,
+    /// Seed the database (use --demo for the full demo tenant)
+    Seed {
+        #[arg(long)]
+        demo: bool,
+    },
+    /// Refresh STAC scenes (and compute indices when built with --features imagery)
+    IngestImagery {
+        #[arg(long)]
+        parcel: Option<uuid::Uuid>,
+    },
+    /// Run the anomaly detector over all parcels
+    DetectAnomalies,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+    let _ = dotenvy::from_path("../.env"); // repo root when running from backend/
+    let _ = dotenvy::from_path(".env");
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .init();
+
+    let cfg = config::Config::from_env()?;
+    let pool = PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&cfg.database_url)
+        .await?;
+    let state = state::AppState { pool: pool.clone(), cfg: Arc::new(cfg) };
+
+    match Cli::parse().cmd.unwrap_or(Cmd::Serve) {
+        Cmd::Migrate => {
+            MIGRATOR.run(&pool).await?;
+            println!("migrations applied");
+        }
+        Cmd::Seed { demo } => {
+            MIGRATOR.run(&pool).await?;
+            seed::run(&state, demo).await?;
+        }
+        Cmd::IngestImagery { parcel } => {
+            imagery::ingest_all(&state, parcel).await?;
+        }
+        Cmd::DetectAnomalies => {
+            let n = jobs::detect_all(&state).await?;
+            println!("alerts created: {n}");
+        }
+        Cmd::Serve => {
+            MIGRATOR.run(&pool).await?;
+            std::fs::create_dir_all(&state.cfg.upload_dir)?;
+            let addr = SocketAddr::from(([0, 0, 0, 0], state.cfg.port));
+            let app = routes::app(state);
+            tracing::info!("arvo-api listening on http://{addr}");
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            axum::serve(listener, app).await?;
+        }
+    }
+    Ok(())
+}

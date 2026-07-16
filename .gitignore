@@ -1,0 +1,14 @@
+# Rust
+backend/target/
+# Node / Expo
+app/node_modules/
+app/.expo/
+app/dist/
+app/web-build/
+# Env & local data
+.env
+app/.env.local
+var/
+# OS / editor
+.DS_Store
+*.log

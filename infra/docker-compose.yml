@@ -1,0 +1,20 @@
+name: arvo
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: arvo-db
+    ports:
+      - "5439:5432"
+    environment:
+      POSTGRES_USER: arvo
+      POSTGRES_PASSWORD: arvo
+      POSTGRES_DB: arvo
+    volumes:
+      - arvo-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arvo -d arvo"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  arvo-db:
