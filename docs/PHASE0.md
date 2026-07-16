@@ -52,7 +52,7 @@ arvo/
 | FR-0-021 | Cloud masking | SCL-class mask in the `imagery` worker; per-obs `cloud_pct` recorded | ✅ (feature-gated) |
 | FR-0-022 | NDVI, NDRE, GNDVI, NDMI, SAVI | formulas in `core::indices`; computed by worker or demo synth | ✅ |
 | FR-0-023 | Per-parcel per-index time series | `index_observations` + series API | ✅ |
-| FR-0-027 | Web tiles + GeoTIFF | **Deferred** — app renders parcel polygons colored by latest index + stats/series instead | ⏸ |
+| FR-0-027 | Web tiles + GeoTIFF | XYZ raster tile server + float32 GeoTIFF export behind the `imagery` feature; app also renders parcel choropleth + stats/series | ✅ (XYZ tiles + GeoTIFF; OGC WMTS capabilities doc deferred) |
 | FR-0-030 | Weather forecast+observed per parcel | Open-Meteo daily archive + 7-day forecast, cached with staleness refresh | ✅ |
 | FR-0-040 | Geotagged scouting w/ photos | mobile form, expo-location + camera/picker, photo upload | ✅ |
 | FR-0-041 | Offline + lossless sync | client-UUID upserts, AsyncStorage outbox, LWW on `updated_at`, pull-since | ✅ |
@@ -67,15 +67,17 @@ Should/Could shipped: FR-0-024 (per-acquisition stats: mean/median/p10/p90/σ), 
 FR-0-032 (ET0 + simple water balance), FR-0-033 (frost/heat/spray-window advisories),
 FR-0-042 (scouting points on map), FR-0-053 (ack/snooze/assign/dismiss), FR-0-061 (GeoJSON/CSV export),
 FR-0-003 (basic scoped invites).
-Deferred: FR-0-013/014/025/026/043/054/062, GraphQL (REST-only v1), WMTS/GeoTIFF, push/email channels.
+Deferred: FR-0-013/014/025/026/043/054/062, GraphQL (REST-only v1), OGC WMTS capabilities doc, push/email channels.
 
 ## 4. Explicit deviations & their exit paths
 
 1. **OIDC → JWT+argon2.** All token issuance is in `crates/api/src/security.rs`; swapping to an
    OIDC issuer later touches only that module + login screens. RBAC roles per spec §3 are in place.
 2. **GraphQL → REST v1** (`/api/v1`, versioned per NFR-MNT-012). GraphQL can be layered on later.
-3. **Tiles/GeoTIFF deferred** — MVP visualizes per-parcel index stats + choropleth polygons; raster
-   serving (titiler-style) is P0.5.
+3. **Tiles/GeoTIFF shipped behind `--features imagery`** — XYZ raster tiles + float32 GeoTIFF
+   export (FR-0-027) render on demand from Sentinel-2 COGs and cache to `TILE_CACHE_DIR`. The app
+   additionally visualizes per-parcel index stats + choropleth polygons. Only the OGC WMTS
+   capabilities document is deferred (the tiles are already WMTS-compatible XYZ).
 4. **PDF → printable HTML** (FR-0-060). Same data, `?format=html&lang=it`.
 5. **No background scheduler** — ingest/refresh are on-demand (API/CLI) + lazy staleness refresh on
    read (weather >6h). A cron/Temporal loop is the P1 upgrade (NFR-PERF-011 then applies).
@@ -84,7 +86,10 @@ Deferred: FR-0-013/014/025/026/043/054/062, GraphQL (REST-only v1), WMTS/GeoTIFF
    ingests the STAC scene catalog, and `seed --demo` synthesizes realistic index series so the whole
    agronomy loop (series → anomaly → alert → report) runs end to end.
 7. **Uploads on local disk** (`UPLOAD_DIR`), served at `/uploads`. S3-compatible store is a config
-   swap later.
+   swap later. **Auth hardening backlog:** `/uploads` is unauthenticated in the MVP, and raster
+   tile URLs accept the JWT as a `?token=` query param (required because `<img>`/tile clients can't
+   set an `Authorization` header) — query-string tokens can leak via logs/referrers, so both move
+   behind signed, short-lived URLs later.
 
 ## 5. Data model (migrations/0001_init.sql)
 

@@ -23,6 +23,10 @@ pub fn app(state: AppState) -> Router {
         .merge(modules::observations::router())
         .merge(modules::reports::router());
 
+    // Raster tiles + GeoTIFF export (FR-0-027) — only in `imagery` builds (needs GDAL).
+    #[cfg(feature = "imagery")]
+    let api = api.merge(modules::tiles::router());
+
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .nest("/api/v1", api)

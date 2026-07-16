@@ -223,5 +223,42 @@ AUDIT=$(${COMPOSE} exec -T -e PGPASSWORD=arvo db psql -U arvo -d arvo -tAc "SELE
 [ "${AUDIT:-0}" -gt 0 ] || fail "audit_log empty"
 pass "audit rows present (${AUDIT})"
 
+# ---------------------------------------------------------------------------
+# Raster tiles + GeoTIFF export (imagery builds only, FR-0-027) — skipped when
+# /meta reports features.imagery=false, so featureless runs still pass.
+# ---------------------------------------------------------------------------
+IMAGERY=$(curl -sS "${BASE}/api/v1/meta" | jq -r '.features.imagery // false')
+if [ "$IMAGERY" = "true" ]; then
+  # z15 XYZ tile over the demo parcel centroid (slippy math in awk).
+  R=$(api GET "/api/v1/parcels/${VIGNETO}" "$TOK_D")
+  CLON=$(jq_get "$(body_of "$R")" '.centroid.lon')
+  CLAT=$(jq_get "$(body_of "$R")" '.centroid.lat')
+  TXY=$(awk -v lon="$CLON" -v lat="$CLAT" 'BEGIN{
+    pi=atan2(0,-1); z=15; n=2^z;
+    x=int((lon+180.0)/360.0*n);
+    r=lat*pi/180.0; t=sin(r)/cos(r);
+    y=int((1.0 - log(t+sqrt(t*t+1.0))/pi)/2.0*n);
+    printf "%d %d", x, y }')
+  TX=${TXY% *}; TY=${TXY#* }
+
+  TILE="$(mktemp -t arvo-tile).png"
+  CODE=$(curl -sS -o "$TILE" -w '%{http_code}' "${BASE}/api/v1/tiles/${VIGNETO}/ndvi/15/${TX}/${TY}.png?token=${TOK_D}")
+  [ "$CODE" = "200" ] || fail "tile fetch (${CODE})"
+  MAGIC=$(od -An -tx1 -N4 "$TILE" | tr -d ' \n')
+  [ "$MAGIC" = "89504e47" ] || fail "tile is not a PNG (magic=${MAGIC})"
+  pass "raster tile PNG (z15 ${TX}/${TY}, $(wc -c < "$TILE" | tr -d ' ') bytes, magic 89504e47)"
+
+  TIF="$(mktemp -t arvo-idx).tif"
+  CODE=$(curl -sS -o "$TIF" -w '%{http_code}' "${BASE}/api/v1/parcels/${VIGNETO}/indices/ndvi.tif?token=${TOK_D}")
+  [ "$CODE" = "200" ] || fail "geotiff export (${CODE})"
+  [ -s "$TIF" ] || fail "geotiff export is empty"
+  TMAGIC=$(od -An -tx1 -N2 "$TIF" | tr -d ' \n')
+  case "$TMAGIC" in 4949|4d4d) : ;; *) fail "geotiff bad TIFF magic (${TMAGIC})";; esac
+  pass "GeoTIFF export ($(wc -c < "$TIF" | tr -d ' ') bytes, TIFF magic ${TMAGIC})"
+  rm -f "$TILE" "$TIF"
+else
+  warn "imagery feature off — skipping tile/GeoTIFF steps (FR-0-027)"
+fi
+
 rm -f "$TMPJPG"
 echo "== ALL ${N} STEPS PASSED =="

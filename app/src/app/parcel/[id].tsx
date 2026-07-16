@@ -13,11 +13,12 @@ import {
 } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useQuery } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
-import { API_URL } from '@/api/client';
-import { INDEX_NAMES, type IndexName } from '@/api/types';
+import { API_URL, api, getAuthToken } from '@/api/client';
+import { INDEX_NAMES, type IndexName, type Meta } from '@/api/types';
 import AlertList from '@/components/AlertList';
 import IndexChart from '@/components/IndexChart';
 import MapView from '@/components/MapView';
@@ -56,7 +57,9 @@ export default function ParcelDetailScreen() {
   const parcelQ = useParcel(id);
   const farmsQ = useFarms();
   const [index, setIndex] = useState<IndexName>('ndvi');
+  const [showOverlay, setShowOverlay] = useState(false);
   const seriesQ = useIndexSeries(id, index);
+  const metaQ = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/meta') });
   const weatherQ = useWeather(id);
   const agroQ = useAgro(id);
   const advisoriesQ = useAdvisories(id);
@@ -108,6 +111,24 @@ export default function ParcelDetailScreen() {
   const farmName = farmsQ.data?.find((f) => f.id === parcel.farm_id)?.name ?? '—';
   // Narrowed alias: TS control-flow narrowing from the guard above doesn't reach into the callbacks.
   const p = parcel;
+
+  // Index-raster overlay gate: backend build must serve imagery AND the selected index's latest
+  // observation must be scene-backed (has scene_id). series is asc by time → last point is latest.
+  const series = seriesQ.data?.series ?? [];
+  const latestPoint = series.length > 0 ? series[series.length - 1] : undefined;
+  const overlayAvailable =
+    (metaQ.data?.features.imagery ?? false) && !!latestPoint?.scene_id;
+  const overlayOn = overlayAvailable && showOverlay;
+  const [bw, bs, be, bn] = p.bbox;
+  const padX = (be - bw) * 0.3;
+  const padY = (bn - bs) * 0.3;
+  const overlay = overlayOn
+    ? {
+        urlTemplate: `${API_URL}/api/v1/tiles/${p.id}/${index}/{z}/{x}/{y}.png?token=${getAuthToken()}`,
+        opacity: 0.85,
+        bounds: [bw - padX, bs - padY, be + padX, bn + padY] as [number, number, number, number],
+      }
+    : undefined;
 
   function saveEdit() {
     setEditErr(null);
@@ -225,6 +246,7 @@ export default function ParcelDetailScreen() {
             parcels={[{ parcel }]}
             mode="view"
             focus={[parcel.centroid.lon, parcel.centroid.lat, 15]}
+            overlay={overlay}
             height={220}
           />
         </View>
@@ -256,6 +278,19 @@ export default function ParcelDetailScreen() {
               );
             })}
           </View>
+          {overlayAvailable ? (
+            <View style={styles.chips}>
+              <Pressable
+                style={[styles.chip, overlayOn && styles.chipActive]}
+                onPress={() => setShowOverlay((v) => !v)}
+              >
+                <Ionicons name="layers" size={14} color={overlayOn ? '#fff' : colors.textMuted} />
+                <Text style={[styles.chipTxt, overlayOn && styles.chipTxtActive]}>
+                  {t('parcel.overlay')}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
           {seriesQ.isLoading ? (
             <ActivityIndicator color={colors.primary} style={styles.pad} />
           ) : (seriesQ.data?.series.length ?? 0) === 0 ? (

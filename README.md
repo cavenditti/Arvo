@@ -30,13 +30,30 @@ Testing on a phone (Expo Go): set `EXPO_PUBLIC_API_URL=http://<your-LAN-IP>:8787
 ## Satellite imagery
 
 The STAC scene catalog (Earth Search, Sentinel-2 L2A) works out of the box. Actual pixel compute
-(NDVI & co. from COGs with SCL cloud masking) needs GDAL:
+(NDVI & co. from COGs with SCL cloud masking) plus the raster tile server / GeoTIFF export are
+behind the `imagery` cargo feature, which links **system GDAL**:
 
 ```bash
-brew install gdal
-cd backend && cargo run -p arvo-api --features imagery -- ingest-imagery
+brew install gdal                 # GDAL 3.13+ (provides gdal-config)
+make ingest                       # STAC refresh + compute indices from COGs (features=imagery)
+make api-imagery                  # serve the API with tiles/GeoTIFF enabled
 ```
 
-Without it, `make seed` synthesizes realistic index series so the full loop (series → anomaly →
-alert → report) still runs. See [docs/PHASE0.md](docs/PHASE0.md) for scope, deviations, and the
-FR traceability matrix.
+The `gdal` crate is pinned to the georust git master with the `bindgen` feature (see the workspace
+`[patch.crates-io]` in `backend/Cargo.toml`), so bindings are generated against the locally
+installed GDAL — no system-version guessing. `png` is an optional dep wired into the same feature.
+
+When enabled, `/api/v1/meta` reports `"features": {"imagery": true}` and these routes light up
+(FR-0-027):
+
+- `GET /api/v1/tiles/{parcel}/{index}/{z}/{x}/{y}.png?token=<jwt>` — 256×256 RGBA Web-Mercator XYZ
+  tiles (red→yellow→green for ndvi/ndre/gndvi/savi, brown→white→blue for ndmi; clouds/nodata
+  transparent). Cached on disk under `TILE_CACHE_DIR` (default `./var/tiles`). Bearer header **or**
+  `?token=` query param, since raster `<img>` clients cannot set headers.
+- `GET /api/v1/parcels/{id}/indices/{index}.tif?token=<jwt>` — float32 GeoTIFF of the index clipped
+  to the parcel bbox + 60 m buffer.
+
+Without the feature the default build stays dependency-free: the platform still ingests the STAC
+scene catalog, and `make seed` synthesizes realistic index series so the full loop (series →
+anomaly → alert → report) runs end to end. See [docs/PHASE0.md](docs/PHASE0.md) for scope,
+deviations, and the FR traceability matrix.

@@ -142,6 +142,7 @@
   "parcel.indices": "Indici",
   "parcel.no_series": "Nessun dato disponibile.",
   "parcel.refresh_imagery": "Aggiorna immagini",
+  "parcel.overlay": "Sovrapposizione indice",
   "parcel.imagery_title": "Aggiornamento immagini",
   "parcel.imagery_result": "Scene trovate {{found}}, nuove {{added}}, calcolate {{computed}}.",
   "parcel.weather": "Meteo e agronomia",

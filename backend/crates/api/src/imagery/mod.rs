@@ -14,6 +14,8 @@ pub mod stac;
 pub mod synth;
 
 #[cfg(feature = "imagery")]
+pub(crate) mod raster;
+#[cfg(feature = "imagery")]
 mod worker;
 
 pub const DEFAULT_REFRESH_DAYS: i64 = 90;

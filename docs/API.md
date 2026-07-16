@@ -60,6 +60,22 @@ crop is a free string; known crops (drive GDD base temp): `vine, olive, tomato, 
 - `GET /api/v1/indices/latest?parcel_ids=a,b,c` → `{"<parcel_id>": {"ndvi": IndexPoint|null, ...}}` (dashboard batch)
 - `GET /api/v1/parcels/{id}/indices.csv?index=ndvi` → `text/csv` (`observed_at,mean,median,p10,p90,stddev,cloud_pct,source`)
 
+## Raster tiles & GeoTIFF export (imagery builds only — FR-0-027)
+Available when `/api/v1/meta` reports `features.imagery: true`; otherwise these routes return 404
+with code `feature_disabled` semantics (plain `not_found` acceptable).
+
+- `GET /api/v1/tiles/{parcel_id}/{index}/{z}/{x}/{y}.png?token=<jwt>&scene=<scene_id|latest>`
+  → 256×256 RGBA PNG in Web Mercator XYZ ("slippy map" / WMTS-compatible tiling).
+  Auth: standard Bearer header **or** `?token=` query param (tile `<img>` clients cannot set
+  headers); same claims validation + org scoping via the parcel. Cross-tenant → 404.
+  `scene=latest` (default) resolves the newest scene-backed index observation for that
+  parcel+index. Pixels are NOT clipped to the parcel (Sentinel-2 is public data; the parcel gates
+  access, not pixels); tiles fully outside the scene → transparent PNG.
+  Colormaps: ndvi/ndre/gndvi/savi red→yellow→green over [-0.2, 0.9]; ndmi brown→white→blue over
+  [-0.4, 0.6]. NoData/masked → transparent. Tiles are cached on disk under `var/tiles/{scene}/{index}/{z}/{x}/{y}.png`.
+- `GET /api/v1/parcels/{id}/indices/{index}.tif?scene=latest&token=<jwt>` → float32 GeoTIFF of the
+  index clipped to the parcel bbox + 60 m buffer, `Content-Disposition: attachment`. Same auth rules.
+
 ## Weather & agronomy
 `WeatherDaily = {date, t_min, t_max, t_mean, precip_mm, humidity_mean, wind_max_kmh, radiation_mj, et0_mm, is_forecast}`
 

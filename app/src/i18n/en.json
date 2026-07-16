@@ -142,6 +142,7 @@
   "parcel.indices": "Indices",
   "parcel.no_series": "No data available.",
   "parcel.refresh_imagery": "Refresh imagery",
+  "parcel.overlay": "Index overlay",
   "parcel.imagery_title": "Imagery refresh",
   "parcel.imagery_result": "{{found}} scenes found, {{added}} new, {{computed}} computed.",
   "parcel.weather": "Weather & agronomy",

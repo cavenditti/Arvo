@@ -61,6 +61,24 @@ impl AuthUser {
     }
 }
 
+/// Validate a raw JWT string and return the authenticated caller. Shared by the `AuthUser`
+/// extractor (Bearer header) and the tile/GeoTIFF endpoints, which also accept a `?token=`
+/// query param because raster `<img>` clients cannot set an `Authorization` header (docs/API.md
+/// §"Raster tiles & GeoTIFF export"). Same claims decode either way, so org scoping is identical.
+pub fn decode_token(jwt_secret: &str, token: &str) -> ApiResult<AuthUser> {
+    let data = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(jwt_secret.as_bytes()),
+        &Validation::new(Algorithm::HS256),
+    )
+    .map_err(|_| ApiError::Unauthorized)?;
+    Ok(AuthUser {
+        user_id: data.claims.sub,
+        org_id: data.claims.org,
+        role: data.claims.role,
+    })
+}
+
 impl<S> FromRequestParts<S> for AuthUser
 where
     AppState: FromRef<S>,
@@ -76,16 +94,6 @@ where
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
             .ok_or(ApiError::Unauthorized)?;
-        let data = decode::<Claims>(
-            token,
-            &DecodingKey::from_secret(app.cfg.jwt_secret.as_bytes()),
-            &Validation::new(Algorithm::HS256),
-        )
-        .map_err(|_| ApiError::Unauthorized)?;
-        Ok(AuthUser {
-            user_id: data.claims.sub,
-            org_id: data.claims.org,
-            role: data.claims.role,
-        })
+        decode_token(&app.cfg.jwt_secret, token)
     }
 }

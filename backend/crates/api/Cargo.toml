@@ -5,8 +5,8 @@ edition.workspace = true
 
 [features]
 default = []
-# Real Sentinel-2 pixel compute (needs system GDAL, e.g. `brew install gdal`)
-imagery = ["dep:gdal"]
+# Real Sentinel-2 pixel compute + raster tiles/GeoTIFF (needs system GDAL, e.g. `brew install gdal`)
+imagery = ["dep:gdal", "dep:png"]
 
 [dependencies]
 arvo-core = { path = "../core" }
@@ -39,4 +39,5 @@ rand = "0.8"
 futures = "0.3"
 bytes = "1"
 
-gdal = { version = "0.17", optional = true }
+gdal = { version = "0.19", optional = true, features = ["bindgen"] }
+png = { version = "0.17", optional = true }

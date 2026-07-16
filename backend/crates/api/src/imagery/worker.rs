@@ -13,14 +13,11 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::imagery::raster::{asset_href, open_vsicurl, to_reflectance, BAND_KEYS, SCL_CLOUD_CLASSES};
 use crate::imagery::stac::SceneRow;
 
-/// SCL classes to exclude: 3 = cloud shadow, 8 = cloud (medium), 9 = cloud (high), 10 = cirrus.
-const SCL_CLOUD_CLASSES: [i64; 4] = [3, 8, 9, 10];
 /// Common output grid resolution (metres). S2 bands are 10–20 m; we resample to 10 m.
 const TARGET_RES_M: f64 = 10.0;
-/// Bands required to compute at least one index (SCL is mandatory for masking).
-const REQUIRED: [&str; 6] = ["red", "green", "nir", "nir08", "rededge1", "swir16"];
 
 struct Computed {
     cloud_pct: f64,
@@ -105,7 +102,7 @@ fn compute_pixels(assets: &Value, geometry_geojson: &str) -> anyhow::Result<Opti
     // Read SCL and every reflectance band, each resampled onto the same out_w × out_h grid.
     let scl = read_grid(&scl_ds, ds_min_x, ds_max_y, ds_max_x, ds_min_y, out_w, out_h, true)?;
     let mut bands = std::collections::HashMap::new();
-    for key in REQUIRED {
+    for key in BAND_KEYS {
         let Some(href) = asset_href(assets, key) else { continue };
         let ds = open_vsicurl(href)?;
         let g = read_grid(&ds, ds_min_x, ds_max_y, ds_max_x, ds_min_y, out_w, out_h, false)?;
@@ -227,20 +224,6 @@ fn read_grid(
         .read_as::<f64>(win, win_size, (out_w, out_h), Some(alg))
         .context("read_as")?;
     Ok(buf.data().to_vec())
-}
-
-/// Harmonized surface reflectance from an L2A DN (processing baseline ≥ 04.00 offset of −1000).
-fn to_reflectance(dn: f64) -> f64 {
-    ((dn - 1000.0) / 10000.0).max(0.0)
-}
-
-fn open_vsicurl(href: &str) -> anyhow::Result<Dataset> {
-    let path = format!("/vsicurl/{href}");
-    Dataset::open(std::path::Path::new(&path)).with_context(|| format!("open {path}"))
-}
-
-fn asset_href<'a>(assets: &'a Value, key: &str) -> Option<&'a str> {
-    assets.get(key)?.as_str()
 }
 
 /// Exterior rings (lon/lat) of a GeoJSON Polygon or MultiPolygon geometry.

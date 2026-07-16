@@ -26,6 +26,13 @@ export interface MapViewProps {
   focus?: [number, number, number?];
   /** extra point markers (e.g. scouting observations) */
   markers?: { id: string; lon: number; lat: number; label?: string }[];
+  /** XYZ raster overlay (index tiles) above base map, below parcel polygons */
+  overlay?: {
+    urlTemplate: string;
+    opacity?: number;
+    /** [w, s, e, n] — limits tile requests */
+    bounds?: [number, number, number, number];
+  };
   height?: number;
 }
 

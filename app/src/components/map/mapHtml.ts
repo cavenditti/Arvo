@@ -1,6 +1,6 @@
 // OWNER: fe-map — one self-contained Leaflet document shared by MapView.native (react-native-webview)
 // and MapView.web (iframe srcDoc). Bridge is JSON both ways:
-//   in  → { type:'init', parcels, markers, focus, mode, labels }  (native: injected window.__update(...)
+//   in  → { type:'init', parcels, markers, focus, mode, labels, overlay }  (native: injected window.__update(...)
 //          or a 'message' event; web: a window 'message' event)
 //   out → { type:'ready' } once Leaflet is up, { type:'select', id }, { type:'drawn', geometry }
 // Draw mode: tap to add vertices with live preview + on-map Fine/Annulla buttons.
@@ -20,6 +20,8 @@ export interface MapInitMessage {
   focus: [number, number, number?] | null;
   mode: 'view' | 'draw';
   labels: MapLabels;
+  /** XYZ index raster tiles rendered above the base map, below parcel polygons; null = none */
+  overlay: NonNullable<MapViewProps['overlay']> | null;
 }
 
 /** Flatten the frozen MapView props into the wire payload the Leaflet document understands. */
@@ -36,6 +38,7 @@ export function buildInit(props: MapViewProps, labels: MapLabels): MapInitMessag
     focus: props.focus ?? null,
     mode: props.mode,
     labels,
+    overlay: props.overlay ?? null,
   };
 }
 
@@ -73,6 +76,7 @@ export const mapHtml = `<!DOCTYPE html>
   var DEFAULT_FILL = '#2E7D32';
   var map, parcelLayer, markerLayer, mode = 'view';
   var drawPts = [], drawLine = null, drawPoly = null, drawDots = [];
+  var overlayLayer = null, overlayKey = null;
 
   function post(msg){
     var s = JSON.stringify(msg);
@@ -133,6 +137,7 @@ export const mapHtml = `<!DOCTYPE html>
       var ll = L.latLng(m.lat, m.lon);
       bounds = bounds ? bounds.extend(ll) : L.latLngBounds(ll, ll);
     });
+    updateOverlay(p.overlay);
     if (p.focus && p.focus.length >= 2) {
       map.setView([p.focus[1], p.focus[0]], p.focus.length > 2 && p.focus[2] ? p.focus[2] : 15);
     } else if (bounds && bounds.isValid()) {
@@ -140,6 +145,27 @@ export const mapHtml = `<!DOCTYPE html>
     }
     setDraw(mode === 'draw');
   };
+
+  // Single XYZ index raster overlay. Diffed by JSON so unchanged updates don't reload tiles.
+  // Lives in the default tilePane (z-index 200): above the OSM base (added first in ready()),
+  // below parcel polygons which Leaflet renders in overlayPane (z-index 400). Verified — no custom pane needed.
+  function updateOverlay(ov){
+    var key = ov && ov.urlTemplate ? JSON.stringify(ov) : null;
+    if (key === overlayKey) return;
+    overlayKey = key;
+    if (overlayLayer) { map.removeLayer(overlayLayer); overlayLayer = null; }
+    if (!key) return;
+    var opts = {
+      opacity: typeof ov.opacity === 'number' ? ov.opacity : 0.85,
+      maxZoom: 17,
+      crossOrigin: true
+    };
+    if (ov.bounds && ov.bounds.length === 4) {
+      // ov.bounds = [w, s, e, n] → L.latLngBounds(SW=[s,w], NE=[n,e])
+      opts.bounds = L.latLngBounds([ov.bounds[1], ov.bounds[0]], [ov.bounds[3], ov.bounds[2]]);
+    }
+    overlayLayer = L.tileLayer(ov.urlTemplate, opts).addTo(map);
+  }
 
   function setDraw(on){
     resetDraw();

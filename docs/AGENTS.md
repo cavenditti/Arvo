@@ -73,7 +73,8 @@ i18n JSONs are shared append-points: **add only your namespaced keys, never refo
 
 ## Component contracts (frozen, in `src/components/types.ts`)
 
-- `MapView {parcels: ParcelFeature[]; mode: 'view'|'draw'; onSelectParcel?(id); onDrawComplete?(geojson: GeoJSON.Polygon); focus?: [lon,lat,zoom?]; colorBy?: Record<string, string>}`
+- `MapView {parcels: ParcelFeature[]; mode: 'view'|'draw'; onSelectParcel?(id); onDrawComplete?(geojson: GeoJSON.Polygon); focus?: [lon,lat,zoom?]; colorBy?: Record<string, string>; overlay?: {urlTemplate: string; opacity?: number; bounds?: [w,s,e,n]}}`
+  — `overlay` renders an XYZ `L.tileLayer` (index raster) above the base map, below parcel polygons.
   — Leaflet inside `react-native-webview` (native) / iframe `srcDoc` (web); one shared HTML string in
   `src/components/map/mapHtml.ts`; bridge = JSON `postMessage` both ways (`{type:'init'|'select'|'drawn', ...}`); OSM tiles; draw = tap-to-add-vertex + finish button (or leaflet-draw from CDN).
 - `IndexChart {series: IndexPoint[]; index: IndexName; height?: number}` — react-native-svg line +

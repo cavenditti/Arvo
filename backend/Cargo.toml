@@ -8,3 +8,7 @@ edition = "2021"
 
 [profile.dev]
 debug = 0
+
+[patch.crates-io]
+gdal = { git = "https://github.com/georust/gdal", branch = "master" }
+gdal-sys = { git = "https://github.com/georust/gdal", branch = "master" }
