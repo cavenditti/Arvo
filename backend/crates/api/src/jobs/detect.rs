@@ -1,14 +1,21 @@
-//! OWNER: be-alerts — anomaly detection job. Loads each non-archived parcel's NDVI series,
-//! runs `arvo_core::anomaly` on the latest point, and upserts an `index_drop` alert with a
-//! per-day dedupe key so re-running is idempotent.
-use arvo_core::anomaly::{self, SeriesPoint};
-use chrono::{DateTime, Utc};
+//! OWNER: be-alerts — anomaly detection job. Loads each non-archived parcel's NDVI series
+//! (quality-filtered), scans it with `arvo_core::anomaly`, and upserts an `index_drop`
+//! alert per recent event with a per-day dedupe key so re-running is idempotent.
+use arvo_core::anomaly::{self, SeriesPoint, BASELINE_WINDOW_DAYS};
+use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
 use crate::state::AppState;
 
 /// The index the detector watches. NDVI is the canonical vigor proxy for Tier 0.
 const INDEX: &str = "ndvi";
+/// Observations above this per-parcel cloud fraction are too contaminated to trust —
+/// residual cloud/shadow depresses NDVI and fires false "drops".
+const MAX_CLOUD_PCT: f64 = 40.0;
+/// Observations computed from fewer clear pixels than this are statistically meaningless.
+const MIN_PIXELS: i64 = 50;
+/// Only events this recent become alerts (older ones are history, not something to act on).
+const RECENT_DAYS: i64 = 14;
 
 #[derive(sqlx::FromRow)]
 struct ParcelRow {
@@ -34,27 +41,47 @@ pub async fn detect_for_org(state: &AppState, org_id: Uuid) -> anyhow::Result<u3
 
     let mut created = 0u32;
     for parcel in parcels {
+        // Quality gate: scene-wide cloud filters happen at STAC search time, but per-parcel
+        // cloud can still be ~100% — those observations must not feed the detector.
+        // Source precedence: when real sentinel-2 observations exist for the parcel, the
+        // synthetic demo series is ignored entirely — mixing the two makes the level jump
+        // between them look like an anomaly.
         let series: Vec<SeriesRow> = sqlx::query_as(
             "SELECT observed_at, mean FROM index_observations
              WHERE parcel_id = $1 AND index_name = $2
+               AND (cloud_pct IS NULL OR cloud_pct < $3)
+               AND (pixel_count IS NULL OR pixel_count >= $4)
+               AND source = (SELECT CASE WHEN EXISTS (
+                     SELECT 1 FROM index_observations
+                     WHERE parcel_id = $1 AND index_name = $2 AND source = 'sentinel-2'
+                   ) THEN 'sentinel-2' ELSE 'demo' END)
              ORDER BY observed_at ASC",
         )
         .bind(parcel.id)
         .bind(INDEX)
+        .bind(MAX_CLOUD_PCT)
+        .bind(MIN_PIXELS)
         .fetch_all(&state.pool)
         .await?;
 
         let points: Vec<SeriesPoint> = series
             .iter()
-            .map(|r| SeriesPoint { observed_at: r.observed_at, mean: r.mean })
+            .map(|r| SeriesPoint {
+                observed_at: r.observed_at,
+                mean: r.mean,
+            })
             .collect();
 
-        let Some(event) = anomaly::detect_latest(&points) else {
-            continue;
-        };
-
-        if upsert_alert(state, org_id, &parcel, &event).await? {
-            created += 1;
+        // Scan the whole series, then alert on recent events only: a batch ingest can land
+        // several points at once, and a recovery point after a dip must not hide it.
+        let cutoff = Utc::now() - Duration::days(RECENT_DAYS);
+        for event in anomaly::scan_series(&points) {
+            if event.observed_at < cutoff {
+                continue;
+            }
+            if upsert_alert(state, org_id, &parcel, &event).await? {
+                created += 1;
+            }
         }
     }
     Ok(created)
@@ -74,8 +101,9 @@ pub async fn detect_all(state: &AppState) -> anyhow::Result<u32> {
     Ok(total)
 }
 
-/// Insert an `index_drop` alert; `ON CONFLICT DO NOTHING` on the per-day dedupe key.
-/// Returns true when a new row was inserted.
+/// Insert an `index_drop` alert deduped per parcel+day. A same-day second scene that is
+/// WORSE escalates the existing row to critical (state untouched); anything else is a no-op.
+/// Returns true when a row was inserted or escalated.
 async fn upsert_alert(
     state: &AppState,
     org_id: Uuid,
@@ -87,8 +115,8 @@ async fn upsert_alert(
     let pct = (event.drop_pct * 100.0).round() as i64;
     let title = format!("NDVI drop on {}", parcel.name);
     let message = format!(
-        "NDVI dropped {}% below the 45-day baseline ({:.2} → {:.2})",
-        pct, event.baseline, event.value
+        "NDVI dropped {pct}% below the {BASELINE_WINDOW_DAYS}-day baseline ({:.2} → {:.2})",
+        event.baseline, event.value
     );
     let data = serde_json::json!({
         "index": INDEX,
@@ -100,7 +128,10 @@ async fn upsert_alert(
     let result = sqlx::query(
         "INSERT INTO alerts (org_id, parcel_id, kind, severity, title, message, data, dedupe_key)
          VALUES ($1, $2, 'index_drop', $3, $4, $5, $6, $7)
-         ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+         ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO UPDATE
+           SET severity = EXCLUDED.severity, message = EXCLUDED.message,
+               data = EXCLUDED.data, updated_at = now()
+           WHERE alerts.severity = 'warning' AND EXCLUDED.severity = 'critical'",
     )
     .bind(org_id)
     .bind(parcel.id)

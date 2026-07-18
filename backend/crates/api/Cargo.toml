@@ -13,7 +13,7 @@ arvo-core = { path = "../core" }
 
 axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace", "timeout"] }
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "migrate",
     "derive", "macros",
@@ -26,6 +26,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 argon2 = "0.5"
 jsonwebtoken = "9"
+sha2 = "0.10"
 
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
@@ -36,7 +37,6 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand = "0.8"
-futures = "0.3"
 bytes = "1"
 
 gdal = { version = "0.19", optional = true, features = ["bindgen"] }

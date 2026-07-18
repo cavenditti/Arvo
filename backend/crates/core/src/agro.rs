@@ -14,7 +14,9 @@ pub fn base_temp(crop: Option<&str>) -> f64 {
 /// Growing-degree-day accumulation over `(t_min, t_max)` day pairs:
 /// Σ max(0, (t_min + t_max) / 2 − base).
 pub fn gdd_sum(days: &[(f64, f64)], base: f64) -> f64 {
-    days.iter().map(|&(lo, hi)| (((lo + hi) / 2.0) - base).max(0.0)).sum()
+    days.iter()
+        .map(|&(lo, hi)| (((lo + hi) / 2.0) - base).max(0.0))
+        .sum()
 }
 
 /// Water balance (mm) = Σ(precip − ET0) over the last `window` aligned days.
@@ -90,8 +92,17 @@ pub fn advisories(days: &[ForecastDay]) -> Vec<Advisory> {
     for d in &days {
         if let Some(t) = d.t_min {
             if t < 2.0 {
-                let severity = if t < 0.0 { Severity::Critical } else { Severity::Warning };
-                out.push(Advisory { kind: AdvisoryKind::FrostRisk, severity, date: d.date, value: Some(t) });
+                let severity = if t < 0.0 {
+                    Severity::Critical
+                } else {
+                    Severity::Warning
+                };
+                out.push(Advisory {
+                    kind: AdvisoryKind::FrostRisk,
+                    severity,
+                    date: d.date,
+                    value: Some(t),
+                });
             }
         }
     }
@@ -103,12 +114,22 @@ pub fn advisories(days: &[ForecastDay]) -> Vec<Advisory> {
         }
         let prev_run =
             i > 0 && hot(&days[i - 1]) && days[i - 1].date.succ_opt() == Some(days[i].date);
-        let next_run =
-            i + 1 < days.len() && hot(&days[i + 1]) && days[i].date.succ_opt() == Some(days[i + 1].date);
+        let next_run = i + 1 < days.len()
+            && hot(&days[i + 1])
+            && days[i].date.succ_opt() == Some(days[i + 1].date);
         if prev_run || next_run {
             let t = days[i].t_max.unwrap();
-            let severity = if t >= 38.0 { Severity::Critical } else { Severity::Warning };
-            out.push(Advisory { kind: AdvisoryKind::HeatStress, severity, date: days[i].date, value: Some(t) });
+            let severity = if t >= 38.0 {
+                Severity::Critical
+            } else {
+                Severity::Warning
+            };
+            out.push(Advisory {
+                kind: AdvisoryKind::HeatStress,
+                severity,
+                date: days[i].date,
+                value: Some(t),
+            });
         }
     }
 
@@ -169,8 +190,20 @@ mod tests {
         assert_eq!(water_balance(&[0.0, 0.0], &[3.0, 4.0], 2), -7.0);
     }
 
-    fn fd(date: &str, t_min: Option<f64>, t_max: Option<f64>, precip: Option<f64>, wind: Option<f64>) -> ForecastDay {
-        ForecastDay { date: d(date), t_min, t_max, precip_mm: precip, wind_max_kmh: wind }
+    fn fd(
+        date: &str,
+        t_min: Option<f64>,
+        t_max: Option<f64>,
+        precip: Option<f64>,
+        wind: Option<f64>,
+    ) -> ForecastDay {
+        ForecastDay {
+            date: d(date),
+            t_min,
+            t_max,
+            precip_mm: precip,
+            wind_max_kmh: wind,
+        }
     }
 
     #[test]
@@ -181,7 +214,10 @@ mod tests {
             fd("2026-01-03", Some(5.0), Some(10.0), Some(0.0), Some(20.0)), // none
         ];
         let a = advisories(&days);
-        let frost: Vec<_> = a.iter().filter(|x| x.kind == AdvisoryKind::FrostRisk).collect();
+        let frost: Vec<_> = a
+            .iter()
+            .filter(|x| x.kind == AdvisoryKind::FrostRisk)
+            .collect();
         assert_eq!(frost.len(), 2);
         assert_eq!(frost[0].severity, Severity::Warning);
         assert_eq!(frost[1].severity, Severity::Critical);
@@ -195,7 +231,9 @@ mod tests {
             fd("2026-07-02", Some(22.0), Some(36.0), Some(0.0), Some(10.0)),
             fd("2026-07-03", Some(20.0), Some(30.0), Some(0.0), Some(10.0)),
         ];
-        assert!(advisories(&single).iter().all(|x| x.kind != AdvisoryKind::HeatStress));
+        assert!(advisories(&single)
+            .iter()
+            .all(|x| x.kind != AdvisoryKind::HeatStress));
 
         // two consecutive hot days, second one extreme
         let run = [
@@ -218,16 +256,18 @@ mod tests {
             fd("2026-07-01", Some(24.0), Some(37.0), Some(0.0), Some(10.0)),
             fd("2026-07-05", Some(24.0), Some(37.0), Some(0.0), Some(10.0)),
         ];
-        assert!(advisories(&gap).iter().all(|x| x.kind != AdvisoryKind::HeatStress));
+        assert!(advisories(&gap)
+            .iter()
+            .all(|x| x.kind != AdvisoryKind::HeatStress));
     }
 
     #[test]
     fn spray_window_only_within_next_three_and_dry_calm() {
         let days = [
-            fd("2026-05-01", Some(10.0), Some(20.0), Some(0.0), Some(8.0)),  // good, day 1
-            fd("2026-05-02", Some(10.0), Some(20.0), Some(5.0), Some(8.0)),  // rain → no
+            fd("2026-05-01", Some(10.0), Some(20.0), Some(0.0), Some(8.0)), // good, day 1
+            fd("2026-05-02", Some(10.0), Some(20.0), Some(5.0), Some(8.0)), // rain → no
             fd("2026-05-03", Some(10.0), Some(20.0), Some(0.0), Some(20.0)), // windy → no
-            fd("2026-05-04", Some(10.0), Some(20.0), Some(0.0), Some(5.0)),  // good but beyond next 3
+            fd("2026-05-04", Some(10.0), Some(20.0), Some(0.0), Some(5.0)), // good but beyond next 3
         ];
         let spray: Vec<_> = advisories(&days)
             .into_iter()

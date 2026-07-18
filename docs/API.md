@@ -5,8 +5,15 @@ Auth: `Authorization: Bearer <jwt>`. JWT claims: `{sub: user_id, org: org_id, ro
 All timestamps RFC3339 UTC. All IDs are UUIDs. Geometry is GeoJSON (EPSG:4326).
 
 **Errors** — every non-2xx returns `{"error": {"code": "<snake_case>", "message": "<human text>"}}`.
-Codes: `unauthorized` 401, `forbidden` 403, `not_found` 404, `bad_request` 400, `conflict` 409, `internal` 500.
-Cross-tenant access = `not_found` (do not leak existence).
+Codes: `unauthorized` 401, `forbidden` 403, `not_found` 404, `bad_request` 400, `conflict` 409,
+`rate_limited` 429, `internal` 500. Cross-tenant access = `not_found` (do not leak existence).
+Auth endpoints are rate-limited per IP (30/min).
+
+**Media tokens** — session JWTs are never accepted in query strings. Endpoints that plain
+`<img>`/tile/browser clients open directly (photos, tiles, GeoTIFF, the season report) accept
+`?token=<media token>` instead: a short-lived (15 min) read-only JWT with `aud: "media"`, minted
+via `POST /auth/media-token`. Media tokens cannot call any other endpoint; Bearer session tokens
+keep working on these endpoints for API clients.
 
 **Roles** (ordered): `viewer < operator < agronomist < admin < owner`. Minimum role per endpoint noted as `[role+]`. Default `[viewer+]` for GET, `[operator+]` for writes unless stated.
 
@@ -15,13 +22,16 @@ Cross-tenant access = `not_found` (do not leak existence).
 - `GET /api/v1/meta` → `{"version": "0.1.0", "features": {"imagery": false}}`
 
 ## Auth
-- `POST /api/v1/auth/register` `{email, password (≥8), full_name, org_name, locale?("it")}`
+- `POST /api/v1/auth/register` `{email, password (8..512), full_name (≤200), org_name (≤200), locale?("it")}`
   → `201 {token, user: User, org: Org}` — creates org + owner membership. 409 if email taken.
 - `POST /api/v1/auth/login` `{email, password, org_id?}` → `{token, user: User, orgs: [{id, name, role}]}`
-  Token is scoped to `org_id` or the user's first org. 401 on bad credentials.
+  Token is scoped to `org_id` or the user's first org. 401 on bad credentials; 404 when `org_id`
+  isn't one of the user's memberships (same semantics as switch-org).
 - `POST /api/v1/auth/switch-org` `{org_id}` [auth] → `{token}` (must be a member).
 - `GET /api/v1/auth/me` → `{user: User, org: Org, role}`
+- `POST /api/v1/auth/media-token` [auth] → `{token, expires_at}` — short-lived media token (see top).
 - `POST /api/v1/orgs/invites` `{email, role}` [admin+] → `201 {id, token, email, role, expires_at}`
+  The raw token is returned only here; the server stores a hash.
 - `POST /api/v1/auth/accept-invite` `{token, email, password?, full_name?}` (no auth; registers the
   user if new, then adds membership) → `{token, user, org}`
 - `GET /api/v1/orgs/members` → `[{user_id, email, full_name, role}]`
@@ -42,20 +52,27 @@ crop is a free string; known crops (drive GDD base temp): `vine, olive, tomato, 
 - `POST /api/v1/parcels` `{farm_id, name, geometry (Polygon|MultiPolygon), crop?, variety?, planting_date?, season_year?}`
   → `201 Parcel`. Validate: valid GeoJSON, `ST_IsValid`, area ≤ 10,000 ha. Geometry stored as MultiPolygon.
 - `GET /api/v1/parcels/{id}` → `Parcel` · `PATCH /api/v1/parcels/{id}` (any field incl. geometry) → `Parcel`
+  Omitted fields keep their value; sending `crop/variety/planting_date/season_year` as explicit
+  `null` clears them. Caps: name ≤200, crop/variety ≤100, season_year 1900–2100.
 - `DELETE /api/v1/parcels/{id}` → 204 (soft: `archived=true`)
 - `POST /api/v1/parcels/import` `{farm_id, feature_collection: FeatureCollection}` → `201 {created: [Parcel]}`
-  (per-feature `properties.name/crop` honored; skips invalid features, reports `{skipped: n}`)
+  (per-feature `properties.name/crop` honored; skips invalid features, reports `{skipped: n}`;
+  max 1000 features; all-or-nothing on DB errors)
 - `GET /api/v1/parcels/export.geojson?farm_id=` → FeatureCollection (all parcel fields as properties)
 
 ## Imagery — scenes & indices
 `IndexName = ndvi | ndre | gndvi | ndmi | savi`
 `IndexPoint = {observed_at, mean, median, p10, p90, stddev, pixel_count, cloud_pct, scene_id?, source: "sentinel-2"|"demo"}`
 
-- `POST /api/v1/parcels/{id}/imagery/refresh` `{days?: 90}` → `{scenes_found, scenes_new, computed}`
-  Searches Earth Search STAC (`sentinel-2-l2a`, intersects parcel, cloud<60%), upserts `scenes`.
+- `POST /api/v1/parcels/{id}/imagery/refresh` `{days?: 90}` (clamped 1–366) → `{scenes_found, scenes_new, computed}`
+  Searches Earth Search STAC (`sentinel-2-l2a`, intersects parcel, cloud<60%), upserts `scenes`
+  (incl. footprint bbox + BOA-offset flag). Upstream/STAC failure → 500 (details stay in logs).
   `computed` > 0 only when built with the `imagery` feature (GDAL); otherwise 0.
 - `GET /api/v1/parcels/{id}/scenes?limit=50` → `[{id, stac_id, acquired_at, cloud_cover}]`
-- `GET /api/v1/parcels/{id}/indices?index=ndvi&from=&to=` → `{index, series: [IndexPoint]}` (asc by time)
+  Only scenes whose footprint intersects the parcel (rows ingested before footprints were stored
+  are included until the next refresh backfills them).
+- `GET /api/v1/parcels/{id}/indices?index=ndvi&from=&to=` → `{index, series: [IndexPoint]}` (asc by
+  time; `from`/`to` accept RFC3339 or `YYYY-MM-DD`, anything else → 400)
 - `GET /api/v1/parcels/{id}/indices/latest` → `{ndvi: IndexPoint|null, ndre: ..., gndvi: ..., ndmi: ..., savi: ...}`
 - `GET /api/v1/indices/latest?parcel_ids=a,b,c` → `{"<parcel_id>": {"ndvi": IndexPoint|null, ...}}` (dashboard batch)
 - `GET /api/v1/parcels/{id}/indices.csv?index=ndvi` → `text/csv` (`observed_at,mean,median,p10,p90,stddev,cloud_pct,source`)
@@ -64,17 +81,17 @@ crop is a free string; known crops (drive GDD base temp): `vine, olive, tomato, 
 Available when `/api/v1/meta` reports `features.imagery: true`; otherwise these routes return 404
 with code `feature_disabled` semantics (plain `not_found` acceptable).
 
-- `GET /api/v1/tiles/{parcel_id}/{index}/{z}/{x}/{y}.png?token=<jwt>&scene=<scene_id|latest>`
+- `GET /api/v1/tiles/{parcel_id}/{index}/{z}/{x}/{y}.png?token=<media token>&scene=<scene_id|latest>`
   → 256×256 RGBA PNG in Web Mercator XYZ ("slippy map" / WMTS-compatible tiling).
-  Auth: standard Bearer header **or** `?token=` query param (tile `<img>` clients cannot set
-  headers); same claims validation + org scoping via the parcel. Cross-tenant → 404.
+  Auth: Bearer header (session token) **or** `?token=` (media token ONLY — session JWTs in query
+  strings are rejected); org scoping via the parcel either way. Cross-tenant → 404.
   `scene=latest` (default) resolves the newest scene-backed index observation for that
   parcel+index. Pixels are NOT clipped to the parcel (Sentinel-2 is public data; the parcel gates
   access, not pixels); tiles fully outside the scene → transparent PNG.
   Colormaps: ndvi/ndre/gndvi/savi red→yellow→green over [-0.2, 0.9]; ndmi brown→white→blue over
   [-0.4, 0.6]. NoData/masked → transparent. Tiles are cached on disk under `var/tiles/{scene}/{index}/{z}/{x}/{y}.png`.
-- `GET /api/v1/parcels/{id}/indices/{index}.tif?scene=latest&token=<jwt>` → float32 GeoTIFF of the
-  index clipped to the parcel bbox + 60 m buffer, `Content-Disposition: attachment`. Same auth rules.
+- `GET /api/v1/parcels/{id}/indices/{index}.tif?scene=latest&token=<media token>` → float32 GeoTIFF
+  of the index clipped to the parcel bbox + 60 m buffer, `Content-Disposition: attachment`. Same auth rules.
 
 ## Weather & agronomy
 `WeatherDaily = {date, t_min, t_max, t_mean, precip_mm, humidity_mean, wind_max_kmh, radiation_mj, et0_mm, is_forecast}`
@@ -94,7 +111,8 @@ with code `feature_disabled` semantics (plain `not_found` acceptable).
 snoozed_until, assigned_to, created_at, updated_at}`
 Kinds: `index_drop`, `frost_risk`, `heat_stress` (extensible).
 
-- `GET /api/v1/alerts?state=open&parcel_id=` → `[Alert]` (desc by created_at; `snoozed` with elapsed `snoozed_until` are reported as `open`)
+- `GET /api/v1/alerts?state=open&parcel_id=&limit=200` → `[Alert]` (desc by created_at, `limit`
+  clamped 1–500; `snoozed` with elapsed `snoozed_until` are reported as `open`)
 - `POST /api/v1/alerts/{id}/ack` · `/dismiss` · `/snooze` `{until}` · `/assign` `{user_id}` → `Alert`
 - `POST /api/v1/alerts/detect` [agronomist+] → `{created}` — runs the anomaly detector over all org parcels now.
 
@@ -105,15 +123,25 @@ lon, lat, taken_at, updated_at, deleted, author_id?, author_name?}`
 - `POST /api/v1/observations/sync` `{last_pulled_at: ts|null, upserts: [Observation]}` →
   `{server_time, applied: [id], changes: [Observation]}`
   Rules: last-write-wins on `updated_at` (server keeps the newer); insert if unknown id; `deleted:true`
-  tombstones. `changes` = all org observations with server `updated_at > last_pulled_at` (or all, if null).
-  Client then sets `last_pulled_at = server_time`. Idempotent — resending the same upserts is safe.
+  tombstones. The pull cursor is SERVER-side: `changes` = all org observations whose
+  server-received time > `last_pulled_at` (or all, if null) — skewed device clocks cannot hide
+  rows from teammates. `server_time` is issued with a small overlap window, so recently-changed
+  rows may be re-delivered on the next pull; the LWW merge makes that harmless. Client sets
+  `last_pulled_at = server_time`. Idempotent — resending the same upserts is safe. Every processed
+  id is echoed in `applied` (including ids the server will never apply, so clients drain their
+  outbox). A `parcel_id` not in the caller's org is stored as `null`. Viewers may call with empty
+  `upserts` (pull-only); pushing requires `[operator+]`. Caps: note ≤10k, ≤50 tags of ≤100 chars;
+  `photos[].path` entries not under `/uploads/` are dropped.
 - `GET /api/v1/observations?parcel_id=&limit=100` → `[Observation]` (excludes deleted)
-- `POST /api/v1/observations/{id}/photos` — multipart field `file` (jpeg/png ≤ 10 MB) →
-  `201 {path: "/uploads/observations/<id>/<uuid>.jpg"}` — appends to the observation's `photos`.
-- Files are served statically at `GET /uploads/...` (no auth in MVP; note in PHASE0 hardening list).
+- `POST /api/v1/observations/{id}/photos` — multipart field `file` (jpeg/png ≤ 10 MB, content
+  sniffed) → `201 {path: "/uploads/observations/<id>/<uuid>.jpg"}` — appends to `photos`.
+  409 when the observation is tombstoned.
+- `GET /uploads/observations/{obs}/{file}?token=<media token>` — authenticated (media token or
+  Bearer) + org-checked; photos are never publicly served.
 
 ## Reports & export
-- `GET /api/v1/reports/parcels/{id}/season?lang=it` → `text/html` — print-optimized single-file report:
+- `GET /api/v1/reports/parcels/{id}/season?lang=it&token=<media token>` → `text/html` — Bearer or
+  media token (lets the app open it in a plain browser tab). Print-optimized single-file report:
   parcel header (name/crop/area/season), NDVI series inline-SVG chart, weather summary (GDD, ET0, rain),
   alert history, scouting log with photo thumbnails, and the decision-support disclaimer footer
   (required by FR-0-052/NFR-CMP-030).

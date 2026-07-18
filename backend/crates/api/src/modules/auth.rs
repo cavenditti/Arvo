@@ -16,8 +16,9 @@ use uuid::Uuid;
 
 use crate::audit;
 use crate::error::{ApiError, ApiResult};
-use crate::security::{issue_token, AuthUser, Role};
+use crate::security::{issue_media_token, issue_token, sha256_hex, AuthUser, Role};
 use crate::state::AppState;
+use crate::util::require_len;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -26,6 +27,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/switch-org", post(switch_org))
         .route("/auth/me", get(me))
         .route("/auth/accept-invite", post(accept_invite))
+        .route("/auth/media-token", post(media_token))
 }
 
 // ---- shared shapes -------------------------------------------------------
@@ -69,16 +71,20 @@ async fn register(
     Json(req): Json<RegisterReq>,
 ) -> ApiResult<impl IntoResponse> {
     let email = normalize_email(&req.email)?;
-    if req.password.len() < 8 {
-        return Err(ApiError::BadRequest("password must be at least 8 characters".into()));
-    }
+    validate_password(&req.password)?;
     let full_name = req.full_name.trim().to_string();
     let org_name = req.org_name.trim().to_string();
     if org_name.is_empty() {
         return Err(ApiError::BadRequest("org_name required".into()));
     }
-    let locale = req.locale.filter(|s| !s.is_empty()).unwrap_or_else(|| "it".into());
-    let hash = hash_password(&req.password)?;
+    require_len("full_name", &full_name, 200)?;
+    require_len("org_name", &org_name, 200)?;
+    let locale = req
+        .locale
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "it".into());
+    require_len("locale", &locale, 16)?;
+    let hash = hash_password_blocking(req.password).await?;
 
     let mut tx = state.pool.begin().await?;
     let org = sqlx::query_as::<_, Org>("INSERT INTO orgs (name) VALUES ($1) RETURNING id, name")
@@ -165,10 +171,10 @@ async fn login(
     // Uniform 401: on an unknown email do the same argon2 work, then fail identically,
     // so the response neither reveals existence nor leaks timing.
     let Some(row) = row else {
-        let _ = verify_password(&req.password, dummy_hash());
+        let _ = verify_password_blocking(req.password, dummy_hash().to_string()).await;
         return Err(ApiError::Unauthorized);
     };
-    if !verify_password(&req.password, &row.password_hash) {
+    if !verify_password_blocking(req.password, row.password_hash.clone()).await {
         return Err(ApiError::Unauthorized);
     }
 
@@ -184,7 +190,10 @@ async fn login(
     // Scope the token to the requested org (must be a member) or the first membership.
     let (org_id, role) = match req.org_id {
         Some(oid) => {
-            let m = orgs.iter().find(|o| o.id == oid).ok_or(ApiError::NotFound)?;
+            let m = orgs
+                .iter()
+                .find(|o| o.id == oid)
+                .ok_or(ApiError::NotFound)?;
             (m.id, m.role)
         }
         None => {
@@ -193,8 +202,12 @@ async fn login(
         }
     };
     let token = issue_token(&state.cfg.jwt_secret, row.id, org_id, role)?;
-    let user =
-        User { id: row.id, email: row.email, full_name: row.full_name, locale: row.locale };
+    let user = User {
+        id: row.id,
+        email: row.email,
+        full_name: row.full_name,
+        locale: row.locale,
+    };
     Ok(Json(LoginResponse { token, user, orgs }))
 }
 
@@ -236,17 +249,20 @@ struct MeResponse {
 }
 
 async fn me(State(state): State<AppState>, user: AuthUser) -> ApiResult<Json<MeResponse>> {
-    let u = sqlx::query_as::<_, User>(
-        "SELECT id, email, full_name, locale FROM users WHERE id = $1",
-    )
-    .bind(user.user_id)
-    .fetch_one(&state.pool)
-    .await?;
+    let u =
+        sqlx::query_as::<_, User>("SELECT id, email, full_name, locale FROM users WHERE id = $1")
+            .bind(user.user_id)
+            .fetch_one(&state.pool)
+            .await?;
     let org = sqlx::query_as::<_, Org>("SELECT id, name FROM orgs WHERE id = $1")
         .bind(user.org_id)
         .fetch_one(&state.pool)
         .await?;
-    Ok(Json(MeResponse { user: u, org, role: user.role }))
+    Ok(Json(MeResponse {
+        user: u,
+        org,
+        role: user.role,
+    }))
 }
 
 // ---- accept-invite -------------------------------------------------------
@@ -281,10 +297,11 @@ async fn accept_invite(
         return Err(ApiError::BadRequest("invite token required".into()));
     }
 
+    // Invites are stored hashed (orgs.rs) so a DB leak doesn't yield join-as-any-role tokens.
     let invite = sqlx::query_as::<_, InviteRow>(
         "SELECT id, org_id, email, role, expires_at, accepted_at FROM invites WHERE token = $1",
     )
-    .bind(token)
+    .bind(sha256_hex(token))
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| ApiError::BadRequest("invalid invite token".into()))?;
@@ -310,14 +327,16 @@ async fn accept_invite(
     {
         Some(u) => u,
         None => {
-            let password = req.password.as_deref().unwrap_or("");
+            let password = req.password.clone().unwrap_or_default();
             if password.len() < 8 {
                 return Err(ApiError::BadRequest(
                     "password (min 8 characters) required for a new account".into(),
                 ));
             }
-            let hash = hash_password(password)?;
+            validate_password(&password)?;
+            let hash = hash_password_blocking(password).await?;
             let full_name = req.full_name.as_deref().unwrap_or("").trim().to_string();
+            require_len("full_name", &full_name, 200)?;
             sqlx::query_as::<_, User>(
                 "INSERT INTO users (email, password_hash, full_name, locale)
                  VALUES ($1, $2, $3, 'it') RETURNING id, email, full_name, locale",
@@ -371,6 +390,20 @@ async fn accept_invite(
     Ok(Json(AuthResponse { token, user, org }))
 }
 
+// ---- media token ---------------------------------------------------------
+
+/// Short-lived read-only token for tile/photo URLs (docs/API.md §"Media tokens").
+async fn media_token(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> ApiResult<Json<serde_json::Value>> {
+    let (token, exp) = issue_media_token(&state.cfg.jwt_secret, &user)?;
+    Ok(Json(json!({
+        "token": token,
+        "expires_at": DateTime::from_timestamp(exp, 0).unwrap_or_else(Utc::now),
+    })))
+}
+
 // ---- helpers -------------------------------------------------------------
 
 fn normalize_email(raw: &str) -> ApiResult<String> {
@@ -378,7 +411,35 @@ fn normalize_email(raw: &str) -> ApiResult<String> {
     if email.is_empty() || !email.contains('@') {
         return Err(ApiError::BadRequest("valid email required".into()));
     }
+    require_len("email", &email, 254)?;
     Ok(email)
+}
+
+/// Upper bound only — the argon2 cost of pathological inputs, not password policy.
+fn validate_password(password: &str) -> ApiResult<()> {
+    if password.len() < 8 {
+        return Err(ApiError::BadRequest(
+            "password must be at least 8 characters".into(),
+        ));
+    }
+    if password.len() > 512 {
+        return Err(ApiError::BadRequest("password too long (max 512)".into()));
+    }
+    Ok(())
+}
+
+/// argon2id is ~50-100ms of pure CPU; keep it off the async workers so a login burst
+/// can't stall every other endpoint.
+async fn hash_password_blocking(password: String) -> ApiResult<String> {
+    tokio::task::spawn_blocking(move || hash_password(&password))
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("hash task: {e}")))?
+}
+
+async fn verify_password_blocking(password: String, phc: String) -> bool {
+    tokio::task::spawn_blocking(move || verify_password(&password, &phc))
+        .await
+        .unwrap_or(false)
 }
 
 fn hash_password(password: &str) -> ApiResult<String> {
@@ -394,7 +455,9 @@ fn hash_password(password: &str) -> ApiResult<String> {
 
 fn verify_password(password: &str, phc: &str) -> bool {
     match PasswordHash::new(phc) {
-        Ok(parsed) => Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok(),
+        Ok(parsed) => Argon2::default()
+            .verify_password(password.as_bytes(), &parsed)
+            .is_ok(),
         Err(_) => false,
     }
 }
@@ -406,7 +469,9 @@ fn dummy_hash() -> &'static str {
 }
 
 fn conflict_on_unique(e: sqlx::Error, msg: &str) -> ApiError {
-    if e.as_database_error().is_some_and(|db| db.is_unique_violation()) {
+    if e.as_database_error()
+        .is_some_and(|db| db.is_unique_violation())
+    {
         ApiError::Conflict(msg.into())
     } else {
         e.into()

@@ -1,6 +1,10 @@
 //! Vegetation index formulas (NDVI, NDRE, GNDVI, NDMI, SAVI) and per-parcel pixel
 //! statistics (mean / median / p10 / p90 / stddev). Pure — no I/O, no DB.
 
+/// The canonical index set (FR-0-022). Single source of truth for API validation,
+/// the demo synth, and the GDAL worker — matches the DB CHECK constraint.
+pub const INDEX_NAMES: [&str; 5] = ["ndvi", "ndre", "gndvi", "ndmi", "savi"];
+
 /// Normalized difference of two reflectance bands: (a - b) / (a + b).
 /// Returns NaN when the denominator is ~0 so callers/stats can mask it out.
 #[inline]

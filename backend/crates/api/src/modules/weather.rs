@@ -16,6 +16,7 @@ use crate::audit;
 use crate::error::{ApiError, ApiResult};
 use crate::security::{AuthUser, Role};
 use crate::state::AppState;
+use crate::util::{resolve_lang, Lang};
 
 const FORECAST_URL: &str = "https://api.open-meteo.com/v1/forecast";
 const ARCHIVE_URL: &str = "https://archive-api.open-meteo.com/v1/archive";
@@ -119,9 +120,15 @@ async fn fetch_daily(
     url: &str,
     params: &[(&str, String)],
 ) -> anyhow::Result<OmDaily> {
-    let resp = client.get(url).query(params).send().await?.error_for_status()?;
+    let resp = client
+        .get(url)
+        .query(params)
+        .send()
+        .await?
+        .error_for_status()?;
     let body: OmResponse = resp.json().await?;
-    body.daily.ok_or_else(|| anyhow::anyhow!("open-meteo returned no daily block"))
+    body.daily
+        .ok_or_else(|| anyhow::anyhow!("open-meteo returned no daily block"))
 }
 
 /// Merge an Open-Meteo daily block into `out`, keyed by date. `is_forecast` is decided
@@ -129,7 +136,9 @@ async fn fetch_daily(
 /// (observed) values are preferred and only their gaps are filled.
 fn merge(daily: &OmDaily, today: NaiveDate, out: &mut BTreeMap<NaiveDate, DayRow>) {
     for (i, t) in daily.time.iter().enumerate() {
-        let Ok(date) = NaiveDate::parse_from_str(t, "%Y-%m-%d") else { continue };
+        let Ok(date) = NaiveDate::parse_from_str(t, "%Y-%m-%d") else {
+            continue;
+        };
         let row = DayRow {
             date,
             t_min: daily.temperature_2m_min.get(i).copied().flatten(),
@@ -142,19 +151,35 @@ fn merge(daily: &OmDaily, today: NaiveDate, out: &mut BTreeMap<NaiveDate, DayRow
             et0_mm: daily.et0_fao_evapotranspiration.get(i).copied().flatten(),
             is_forecast: date >= today,
         };
-        out.entry(date).and_modify(|e| e.fill_from(&row)).or_insert(row);
+        out.entry(date)
+            .and_modify(|e| e.fill_from(&row))
+            .or_insert(row);
     }
 }
 
 /// Fetch archive (past) + forecast (future) and upsert into weather_daily.
 /// Network failures are swallowed (warn + serve/return what we have); only DB errors
 /// propagate. Returns the number of daily rows written.
+///
+/// Single-flight: the whole refresh runs inside one transaction holding a per-parcel
+/// advisory lock, so N concurrent dashboard reads on a stale parcel trigger one
+/// Open-Meteo round-trip, not N. Losers return 0 and serve the cached rows.
 async fn refresh_weather(state: &AppState, parcel_id: Uuid, info: &ParcelInfo) -> ApiResult<i64> {
     let today = Utc::now().date_naive();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| ApiError::Internal(e.into()))?;
+
+    let mut tx = state.pool.begin().await?;
+    let got_lock: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtext('weather:' || $1::text))")
+            .bind(parcel_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if !got_lock {
+        return Ok(0); // another request is already refreshing this parcel
+    }
 
     // Archive window: last 120 days, extended back to planting_date if that is older.
     let mut start = today - Days::new(ARCHIVE_DAYS);
@@ -180,7 +205,9 @@ async fn refresh_weather(state: &AppState, parcel_id: Uuid, info: &ParcelInfo) -
         ];
         match fetch_daily(&client, ARCHIVE_URL, &params).await {
             Ok(d) => merge(&d, today, &mut rows),
-            Err(e) => tracing::warn!(error = ?e, parcel_id = %parcel_id, "open-meteo archive fetch failed"),
+            Err(e) => {
+                tracing::warn!(error = ?e, parcel_id = %parcel_id, "open-meteo archive fetch failed")
+            }
         }
     }
 
@@ -194,25 +221,27 @@ async fn refresh_weather(state: &AppState, parcel_id: Uuid, info: &ParcelInfo) -
     ];
     match fetch_daily(&client, FORECAST_URL, &params).await {
         Ok(d) => merge(&d, today, &mut rows),
-        Err(e) => tracing::warn!(error = ?e, parcel_id = %parcel_id, "open-meteo forecast fetch failed"),
+        Err(e) => {
+            tracing::warn!(error = ?e, parcel_id = %parcel_id, "open-meteo forecast fetch failed")
+        }
     }
 
     if rows.is_empty() {
         return Ok(0);
     }
 
-    let mut tx = state.pool.begin().await?;
     for r in rows.values() {
         sqlx::query(
             "INSERT INTO weather_daily
                (parcel_id, date, t_min, t_max, t_mean, precip_mm, humidity_mean,
-                wind_max_kmh, radiation_mj, et0_mm, is_forecast, fetched_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now())
+                wind_max_kmh, radiation_mj, et0_mm, is_forecast, fetched_at, source)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now(), 'open-meteo')
              ON CONFLICT (parcel_id, date) DO UPDATE SET
                t_min = EXCLUDED.t_min, t_max = EXCLUDED.t_max, t_mean = EXCLUDED.t_mean,
                precip_mm = EXCLUDED.precip_mm, humidity_mean = EXCLUDED.humidity_mean,
                wind_max_kmh = EXCLUDED.wind_max_kmh, radiation_mj = EXCLUDED.radiation_mj,
-               et0_mm = EXCLUDED.et0_mm, is_forecast = EXCLUDED.is_forecast, fetched_at = now()",
+               et0_mm = EXCLUDED.et0_mm, is_forecast = EXCLUDED.is_forecast,
+               fetched_at = now(), source = EXCLUDED.source",
         )
         .bind(parcel_id)
         .bind(r.date)
@@ -363,12 +392,13 @@ async fn get_agro(
     });
 
     // Pull every row we might need (GDD window and the 30-day balance window), observed
-    // through today. Future/forecast rows are excluded from these accumulations.
+    // rows only: today's row is a forecast until the archive backfills it, and forecast
+    // temps/precip must not leak into the accumulations.
     let window_start = from_date.min(today - Days::new(30));
     let rows = sqlx::query_as::<_, AgroRow>(
         "SELECT date, t_min, t_max, precip_mm, et0_mm
          FROM weather_daily
-         WHERE parcel_id = $1 AND date >= $2 AND date <= $3
+         WHERE parcel_id = $1 AND date >= $2 AND date <= $3 AND is_forecast = false
          ORDER BY date",
     )
     .bind(id)
@@ -420,10 +450,12 @@ async fn get_advisories(
     ensure_fresh(&state, id, &info).await;
     let lang = resolve_lang(&state, user.user_id, q.lang).await;
 
+    // `date >= CURRENT_DATE`: when refresh has failed for days, stale forecast rows for
+    // dates already gone must not produce advisories about the past.
     let days = sqlx::query_as::<_, ForecastRow>(
         "SELECT date, t_min, t_max, precip_mm, wind_max_kmh
          FROM weather_daily
-         WHERE parcel_id = $1 AND is_forecast = true
+         WHERE parcel_id = $1 AND is_forecast = true AND date >= CURRENT_DATE
          ORDER BY date",
     )
     .bind(id)
@@ -525,38 +557,9 @@ async fn upsert_alert(
 
 // ---------- localization ----------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Lang {
-    It,
-    En,
-}
-
 #[derive(Debug, Deserialize)]
 struct LangQuery {
     lang: Option<String>,
-}
-
-/// `?lang=it|en` wins; otherwise fall back to the user's stored locale; default Italian.
-async fn resolve_lang(state: &AppState, user_id: Uuid, q: Option<String>) -> Lang {
-    if let Some(l) = q {
-        return parse_lang(&l);
-    }
-    let locale: Option<String> =
-        sqlx::query_scalar("SELECT locale FROM users WHERE id = $1")
-            .bind(user_id)
-            .fetch_optional(&state.pool)
-            .await
-            .ok()
-            .flatten();
-    locale.map(|l| parse_lang(&l)).unwrap_or(Lang::It)
-}
-
-fn parse_lang(s: &str) -> Lang {
-    if s.to_ascii_lowercase().starts_with("en") {
-        Lang::En
-    } else {
-        Lang::It
-    }
 }
 
 fn round1(x: f64) -> f64 {

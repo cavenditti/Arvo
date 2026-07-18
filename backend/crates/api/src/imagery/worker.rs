@@ -13,11 +13,18 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::imagery::raster::{asset_href, open_vsicurl, to_reflectance, BAND_KEYS, SCL_CLOUD_CLASSES};
+use crate::imagery::raster::{self, asset_href, open_vsicurl, to_reflectance, BAND_KEYS};
 use crate::imagery::stac::SceneRow;
 
 /// Common output grid resolution (metres). S2 bands are 10–20 m; we resample to 10 m.
 const TARGET_RES_M: f64 = 10.0;
+/// Snap the compute bbox to this grid (lcm of the 10/20 m band grids, relative to the tile
+/// origin) so every band's read window covers exactly the same ground.
+const SNAP_M: f64 = 60.0;
+/// Upper bound on the output grid (w*h). Parcels are user-supplied (drawn or imported
+/// GeoJSON); without a cap a degenerate polygon allocates gigabytes in 7 band buffers.
+/// 4M px = 400 km² at 10 m — far above the 10,000 ha parcel validation limit.
+const MAX_GRID_PIXELS: usize = 4_000_000;
 
 struct Computed {
     cloud_pct: f64,
@@ -33,9 +40,12 @@ pub async fn compute_scene(
     scene: SceneRow,
 ) -> anyhow::Result<usize> {
     let assets = scene.assets.clone();
+    // Unknown flag → assume the offset is NOT pre-applied (legacy baseline behaviour).
+    let boa = scene.boa_offset_applied.unwrap_or(false);
     // GDAL is blocking — keep it off the async runtime.
     let computed =
-        tokio::task::spawn_blocking(move || compute_pixels(&assets, &geometry_geojson)).await??;
+        tokio::task::spawn_blocking(move || compute_pixels(&assets, &geometry_geojson, boa))
+            .await??;
     let Some(c) = computed else { return Ok(0) };
 
     let mut inserted = 0usize;
@@ -67,8 +77,14 @@ pub async fn compute_scene(
     Ok(inserted)
 }
 
-/// All GDAL/pixel work (blocking, pure). Returns None when the parcel is not covered.
-fn compute_pixels(assets: &Value, geometry_geojson: &str) -> anyhow::Result<Option<Computed>> {
+/// All GDAL/pixel work (blocking, pure). Returns None when the parcel is not covered
+/// (including partial coverage: stats from a stretched half-window would be silently wrong).
+fn compute_pixels(
+    assets: &Value,
+    geometry_geojson: &str,
+    boa_offset_applied: bool,
+) -> anyhow::Result<Option<Computed>> {
+    raster::configure();
     let rings = parse_exterior_rings(geometry_geojson)?;
     if rings.is_empty() {
         return Ok(None);
@@ -90,22 +106,51 @@ fn compute_pixels(assets: &Value, geometry_geojson: &str) -> anyhow::Result<Opti
     let mut ys = vec![min_lat, min_lat, max_lat, max_lat];
     let mut zs = vec![0.0f64; 4];
     to_ds.transform_coords(&mut xs, &mut ys, &mut zs)?;
-    let ds_min_x = xs.iter().cloned().fold(f64::MAX, f64::min);
-    let ds_max_x = xs.iter().cloned().fold(f64::MIN, f64::max);
-    let ds_min_y = ys.iter().cloned().fold(f64::MAX, f64::min);
-    let ds_max_y = ys.iter().cloned().fold(f64::MIN, f64::max);
+
+    // Snap the bbox outward to the 60 m grid *relative to the tile origin* (all S2 bands of a
+    // tile share it). Every band's window math then lands on exact pixel boundaries at 10 and
+    // 20 m alike — no per-band floor/ceil drift, and the pixel-centre coordinates below
+    // describe the actual read window for every band.
+    let sgt = scl_ds.geo_transform().context("scl geo_transform")?;
+    let snap = |v: f64, origin: f64, up: bool| {
+        let rel = (v - origin) / SNAP_M;
+        origin + if up { rel.ceil() } else { rel.floor() } * SNAP_M
+    };
+    let ds_min_x = snap(xs.iter().cloned().fold(f64::MAX, f64::min), sgt[0], false);
+    let ds_max_x = snap(xs.iter().cloned().fold(f64::MIN, f64::max), sgt[0], true);
+    let ds_min_y = snap(ys.iter().cloned().fold(f64::MAX, f64::min), sgt[3], false);
+    let ds_max_y = snap(ys.iter().cloned().fold(f64::MIN, f64::max), sgt[3], true);
 
     // Common output grid at TARGET_RES_M.
     let out_w = (((ds_max_x - ds_min_x) / TARGET_RES_M).round() as usize).max(1);
     let out_h = (((ds_max_y - ds_min_y) / TARGET_RES_M).round() as usize).max(1);
+    if out_w * out_h > MAX_GRID_PIXELS {
+        return Err(anyhow!(
+            "parcel bbox too large for pixel compute ({out_w}x{out_h} px at 10 m)"
+        ));
+    }
 
     // Read SCL and every reflectance band, each resampled onto the same out_w × out_h grid.
-    let scl = read_grid(&scl_ds, ds_min_x, ds_max_y, ds_max_x, ds_min_y, out_w, out_h, true)?;
+    // A band window falling (partly) outside its raster bails to None: parcels at tile edges
+    // are computed from the neighbouring scene that fully contains them.
+    let Some(scl) = read_grid(
+        &scl_ds, ds_min_x, ds_max_y, ds_max_x, ds_min_y, out_w, out_h, true,
+    )?
+    else {
+        return Ok(None);
+    };
     let mut bands = std::collections::HashMap::new();
     for key in BAND_KEYS {
-        let Some(href) = asset_href(assets, key) else { continue };
+        let Some(href) = asset_href(assets, key) else {
+            continue;
+        };
         let ds = open_vsicurl(href)?;
-        let g = read_grid(&ds, ds_min_x, ds_max_y, ds_max_x, ds_min_y, out_w, out_h, false)?;
+        let Some(g) = read_grid(
+            &ds, ds_min_x, ds_max_y, ds_max_x, ds_min_y, out_w, out_h, false,
+        )?
+        else {
+            return Ok(None);
+        };
         bands.insert(key, g);
     }
 
@@ -144,14 +189,16 @@ fn compute_pixels(assets: &Value, geometry_geojson: &str) -> anyhow::Result<Opti
         if !point_in_rings(px[i], py[i], &rings) {
             continue; // outside the parcel polygon
         }
+        if raster::scl_nodata(scl[i]) {
+            continue; // outside the scene footprint — not covered, not "clear"
+        }
         parcel_px += 1;
-        if SCL_CLOUD_CLASSES.contains(&(scl[i].round() as i64)) {
+        if raster::scl_masked(scl[i]) {
             cloud_px += 1;
             continue; // clouded — excluded from index stats
         }
-        let g = |b: Option<&[f64]>| b.map(|s| to_reflectance(s[i]));
-        let (r, gr, n8, ni, re, sw) =
-            (g(red), g(green), g(nir08), g(nir), g(rededge1), g(swir16));
+        let g = |b: Option<&[f64]>| b.map(|s| to_reflectance(s[i], boa_offset_applied));
+        let (r, gr, n8, ni, re, sw) = (g(red), g(green), g(nir08), g(nir), g(rededge1), g(swir16));
         if let (Some(ni), Some(r)) = (ni, r) {
             ndvi[i] = indices::ndvi(ni as f32, r as f32);
             savi[i] = indices::savi(ni as f32, r as f32);
@@ -192,6 +239,8 @@ fn compute_pixels(assets: &Value, geometry_geojson: &str) -> anyhow::Result<Opti
 
 /// Read a band clipped to the dataset-CRS bbox and resampled to `out_w × out_h` (row-major).
 /// `categorical` uses nearest-neighbour (SCL classes); reflectance uses bilinear.
+/// Returns `None` when the window is not fully inside the raster: clamping would stretch a
+/// partial read across the whole output grid and silently mis-locate every pixel.
 #[allow(clippy::too_many_arguments)]
 fn read_grid(
     ds: &Dataset,
@@ -202,34 +251,44 @@ fn read_grid(
     out_w: usize,
     out_h: usize,
     categorical: bool,
-) -> anyhow::Result<Vec<f64>> {
+) -> anyhow::Result<Option<Vec<f64>>> {
     let gt = ds.geo_transform().context("geo_transform")?;
     let (rw, rh) = ds.raster_size();
     // Invert the (north-up) geotransform: col = (x - ox)/px, row = (y - oy)/py (py < 0).
     let col = |x: f64| (x - gt[0]) / gt[1];
     let row = |y: f64| (y - gt[3]) / gt[5];
-    let c0 = col(ds_min_x).floor().clamp(0.0, rw as f64) as isize;
-    let c1 = col(ds_max_x).ceil().clamp(0.0, rw as f64) as isize;
-    let r0 = row(ds_max_y).floor().clamp(0.0, rh as f64) as isize;
-    let r1 = row(ds_min_y).ceil().clamp(0.0, rh as f64) as isize;
+    // The bbox is pre-snapped to the shared 60 m grid, so these are exact integers.
+    let c0 = col(ds_min_x).round() as isize;
+    let c1 = col(ds_max_x).round() as isize;
+    let r0 = row(ds_max_y).round() as isize;
+    let r1 = row(ds_min_y).round() as isize;
+    if c0 < 0 || r0 < 0 || c1 > rw as isize || r1 > rh as isize {
+        return Ok(None); // (partially) outside this raster
+    }
     let win = (c0.min(c1), r0.min(r1));
     let win_size = (
         ((c1 - c0).unsigned_abs()).max(1),
         ((r1 - r0).unsigned_abs()).max(1),
     );
 
-    let alg = if categorical { ResampleAlg::NearestNeighbour } else { ResampleAlg::Bilinear };
+    let alg = if categorical {
+        ResampleAlg::NearestNeighbour
+    } else {
+        ResampleAlg::Bilinear
+    };
     let band = ds.rasterband(1).context("rasterband(1)")?;
     let buf = band
         .read_as::<f64>(win, win_size, (out_w, out_h), Some(alg))
         .context("read_as")?;
-    Ok(buf.data().to_vec())
+    Ok(Some(buf.data().to_vec()))
 }
 
 /// Exterior rings (lon/lat) of a GeoJSON Polygon or MultiPolygon geometry.
 fn parse_exterior_rings(geojson: &str) -> anyhow::Result<Vec<Vec<[f64; 2]>>> {
     let v: Value = serde_json::from_str(geojson).context("parse geometry")?;
-    let coords = v.get("coordinates").ok_or_else(|| anyhow!("geometry has no coordinates"))?;
+    let coords = v
+        .get("coordinates")
+        .ok_or_else(|| anyhow!("geometry has no coordinates"))?;
     let mut rings = Vec::new();
     match v.get("type").and_then(|t| t.as_str()) {
         Some("Polygon") => {
@@ -246,7 +305,10 @@ fn parse_exterior_rings(geojson: &str) -> anyhow::Result<Vec<Vec<[f64; 2]>>> {
         }
         other => return Err(anyhow!("unsupported geometry type: {other:?}")),
     }
-    Ok(rings.into_iter().filter(|r: &Vec<[f64; 2]>| r.len() >= 3).collect())
+    Ok(rings
+        .into_iter()
+        .filter(|r: &Vec<[f64; 2]>| r.len() >= 3)
+        .collect())
 }
 
 fn ring_from(v: &Value) -> Vec<[f64; 2]> {
@@ -282,9 +344,7 @@ fn point_in_rings(lon: f64, lat: f64, rings: &[Vec<[f64; 2]>]) -> bool {
         for i in 0..ring.len() {
             let (xi, yi) = (ring[i][0], ring[i][1]);
             let (xj, yj) = (ring[j][0], ring[j][1]);
-            if (yi > lat) != (yj > lat)
-                && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi
-            {
+            if (yi > lat) != (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi {
                 inside = !inside;
             }
             j = i;

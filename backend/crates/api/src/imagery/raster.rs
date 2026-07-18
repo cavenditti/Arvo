@@ -40,15 +40,28 @@ pub fn asset_href<'a>(assets: &'a Value, key: &str) -> Option<&'a str> {
     assets.get(key)?.as_str()
 }
 
-/// Harmonized surface reflectance from an L2A DN (processing baseline ≥ 04.00 offset of −1000).
-pub fn to_reflectance(dn: f64) -> f64 {
-    ((dn - 1000.0) / 10000.0).max(0.0)
+/// Surface reflectance from an L2A DN. Processing baseline ≥ 04.00 added a +1000 offset to
+/// DNs; Earth Search reports whether its harmonization already removed it via
+/// `earthsearch:boa_offset_applied`. When that flag is true the offset is already baked in
+/// and must NOT be subtracted again (doing so shifts every band down by 0.1 reflectance and
+/// clamps dark bands to 0 → NDVI pinned at 1.0).
+pub fn to_reflectance(dn: f64, boa_offset_applied: bool) -> f64 {
+    let v = if boa_offset_applied {
+        dn / 10000.0
+    } else {
+        (dn - 1000.0) / 10000.0
+    };
+    v.max(0.0)
+}
+
+/// True for SCL nodata (0): outside the scene footprint — "no data", not "cloudy".
+pub fn scl_nodata(scl: f64) -> bool {
+    scl.round() as i64 == 0
 }
 
 /// True when an SCL sample must be masked out: nodata (0) or a cloud/shadow/cirrus class.
-/// Unlike the worker (which additionally clips to the parcel polygon), tile/GeoTIFF rendering
-/// has no polygon mask, so nodata (outside the scene footprint) is treated as masked here.
+/// The worker distinguishes nodata (not covered) from cloud (covered but excluded) via
+/// `scl_nodata`; tile/GeoTIFF rendering has no polygon mask and treats both as transparent.
 pub fn scl_masked(scl: f64) -> bool {
-    let c = scl.round() as i64;
-    c == 0 || SCL_CLOUD_CLASSES.contains(&c)
+    scl_nodata(scl) || SCL_CLOUD_CLASSES.contains(&(scl.round() as i64))
 }

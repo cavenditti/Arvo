@@ -13,8 +13,9 @@ use uuid::Uuid;
 
 use crate::audit;
 use crate::error::{ApiError, ApiResult};
-use crate::security::AuthUser;
+use crate::security::{authenticate_bearer_or_media, issue_media_token};
 use crate::state::AppState;
+use crate::util;
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/reports/parcels/{id}/season", get(season_report))
@@ -64,17 +65,28 @@ struct ScoutRow {
 #[derive(Debug, Deserialize)]
 struct ReportQuery {
     lang: Option<String>,
+    /// Short-lived media token — lets the app open the report in a plain browser tab
+    /// (docs/API.md §"Media tokens") without ever putting the session JWT in a URL.
+    token: Option<String>,
 }
 
 /// GET /reports/parcels/{id}/season?lang=it|en → print-friendly HTML.
+/// Auth: Bearer session token or `?token=` media token.
 async fn season_report(
     State(state): State<AppState>,
-    user: AuthUser,
+    headers: axum::http::HeaderMap,
     Path(id): Path<Uuid>,
     Query(q): Query<ReportQuery>,
 ) -> ApiResult<Html<String>> {
-    let lang = resolve_lang(&state, user.user_id, q.lang.as_deref()).await;
+    let user = authenticate_bearer_or_media(&state.cfg.jwt_secret, &headers, q.token.as_deref())?;
+    let lang = match util::resolve_lang(&state, user.user_id, q.lang).await {
+        util::Lang::En => "en",
+        util::Lang::It => "it",
+    };
     let t = labels(lang);
+    // Photo thumbnails are behind the authenticated /uploads route; a short-lived media
+    // token keeps them loading in the print view without putting the session JWT in HTML.
+    let (media_token, _) = issue_media_token(&state.cfg.jwt_secret, &user)?;
 
     let header: ParcelHeader = sqlx::query_as(
         "SELECT p.name, p.crop, p.variety, p.season_year, p.planting_date,
@@ -135,7 +147,17 @@ async fn season_report(
     .fetch_all(&state.pool)
     .await?;
 
-    let html = render(&t, lang, &header, start, &ndvi, &wx, &alerts, &scouting);
+    let html = render(
+        &t,
+        lang,
+        &header,
+        start,
+        &ndvi,
+        &wx,
+        &alerts,
+        &scouting,
+        &media_token,
+    );
 
     audit::record(
         &state.pool,
@@ -149,27 +171,6 @@ async fn season_report(
     .await;
 
     Ok(Html(html))
-}
-
-/// Resolve the report language: explicit `?lang`, else the user's stored locale, else Italian.
-async fn resolve_lang(state: &AppState, user_id: Uuid, param: Option<&str>) -> &'static str {
-    match param {
-        Some("en") => "en",
-        Some("it") => "it",
-        _ => {
-            let locale: Option<String> = sqlx::query_scalar("SELECT locale FROM users WHERE id = $1")
-                .bind(user_id)
-                .fetch_optional(&state.pool)
-                .await
-                .ok()
-                .flatten();
-            if locale.as_deref() == Some("en") {
-                "en"
-            } else {
-                "it"
-            }
-        }
-    }
 }
 
 /// Localised section labels (tiny inline match on lang; Italian is primary).
@@ -304,6 +305,7 @@ fn render(
     wx: &WeatherSummary,
     alerts: &[AlertRow],
     scouting: &[ScoutRow],
+    media_token: &str,
 ) -> String {
     let mut s = String::with_capacity(8192);
     s.push_str("<!doctype html><html lang=\"");
@@ -355,7 +357,11 @@ fn render(
     // Weather
     s.push_str("<section><h2>");
     s.push_str(t.weather);
-    let _ = write!(s, " <span class=\"note\">({} {start})</span></h2><div class=\"chips\">", t.since);
+    let _ = write!(
+        s,
+        " <span class=\"note\">({} {start})</span></h2><div class=\"chips\">",
+        t.since
+    );
     chip(&mut s, t.precip, &format!("{:.0} mm", wx.precip_sum));
     chip(&mut s, t.et0, &format!("{:.0} mm", wx.et0_sum));
     chip(&mut s, t.gdd, &format!("{:.0} \u{00B0}Cd", wx.gdd_sum));
@@ -412,12 +418,15 @@ fn render(
                 o.taken_at.format("%Y-%m-%d"),
                 esc(&o.note),
             );
+            // Only server-issued upload paths become <img> tags (photos are also sanitized
+            // at write time; this is defense in depth against a report fetching foreign URLs).
             let thumbs: Vec<&str> = o
                 .photos
                 .as_array()
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|p| p.get("path").and_then(Value::as_str))
+                        .filter(|p| p.starts_with("/uploads/") && !p.contains(".."))
                         .take(3)
                         .collect()
                 })
@@ -425,11 +434,20 @@ fn render(
             if !thumbs.is_empty() {
                 s.push_str("<div class=\"thumbs\">");
                 for p in thumbs {
-                    let _ = write!(s, "<img src=\"{}\" alt=\"\">", esc(p));
+                    let _ = write!(
+                        s,
+                        "<img src=\"{}?token={}\" alt=\"\">",
+                        esc(p),
+                        esc(media_token)
+                    );
                 }
                 s.push_str("</div>");
             }
-            let _ = write!(s, "</td><td class=\"tags\">{}</td></tr>", esc(&o.tags.join(", ")));
+            let _ = write!(
+                s,
+                "</td><td class=\"tags\">{}</td></tr>",
+                esc(&o.tags.join(", "))
+            );
         }
         s.push_str("</tbody></table>");
     }
@@ -452,7 +470,10 @@ fn meta(s: &mut String, k: &str, v: &str) {
 }
 
 fn chip(s: &mut String, k: &str, v: &str) {
-    let _ = write!(s, "<div class=\"chip\"><span class=\"k\">{k}</span><span class=\"v\">{v}</span></div>");
+    let _ = write!(
+        s,
+        "<div class=\"chip\"><span class=\"k\">{k}</span><span class=\"v\">{v}</span></div>"
+    );
 }
 
 fn empty(s: &mut String, msg: &str) {
@@ -472,14 +493,21 @@ fn ndvi_svg(pts: &[SeriesPoint]) -> String {
     let y = |v: f64| mt + (1.0 - v.clamp(0.0, 1.0)) * ph;
 
     let mut s = String::with_capacity(2048);
-    let _ = write!(s, "<svg viewBox=\"0 0 {w} {h}\" xmlns=\"http://www.w3.org/2000/svg\" role=\"img\">");
+    let _ = write!(
+        s,
+        "<svg viewBox=\"0 0 {w} {h}\" xmlns=\"http://www.w3.org/2000/svg\" role=\"img\">"
+    );
     let _ = write!(s, "<rect x=\"{ml}\" y=\"{mt}\" width=\"{pw}\" height=\"{ph}\" fill=\"#f7faf6\" stroke=\"#d8e2d9\"/>");
 
     // y gridlines + labels (0, 0.25, 0.5, 0.75, 1.0)
     for i in 0..=4 {
         let v = i as f64 * 0.25;
         let yy = y(v);
-        let _ = write!(s, "<line x1=\"{ml}\" y1=\"{yy:.1}\" x2=\"{:.1}\" y2=\"{yy:.1}\" stroke=\"#e6ece6\"/>", ml + pw);
+        let _ = write!(
+            s,
+            "<line x1=\"{ml}\" y1=\"{yy:.1}\" x2=\"{:.1}\" y2=\"{yy:.1}\" stroke=\"#e6ece6\"/>",
+            ml + pw
+        );
         let _ = write!(s, "<text x=\"{:.1}\" y=\"{:.1}\" font-size=\"11\" fill=\"#6b7a6e\" text-anchor=\"end\">{v:.2}</text>", ml - 6.0, yy + 3.0);
     }
 
@@ -489,7 +517,12 @@ fn ndvi_svg(pts: &[SeriesPoint]) -> String {
         let f = i as f64 / ticks as f64;
         let ts = t0 + f * span;
         let xx = x(ts);
-        let _ = write!(s, "<line x1=\"{xx:.1}\" y1=\"{:.1}\" x2=\"{xx:.1}\" y2=\"{:.1}\" stroke=\"#d8e2d9\"/>", mt + ph, mt + ph + 4.0);
+        let _ = write!(
+            s,
+            "<line x1=\"{xx:.1}\" y1=\"{:.1}\" x2=\"{xx:.1}\" y2=\"{:.1}\" stroke=\"#d8e2d9\"/>",
+            mt + ph,
+            mt + ph + 4.0
+        );
         let dt = DateTime::<Utc>::from_timestamp(ts as i64, 0).unwrap_or_else(Utc::now);
         let _ = write!(s, "<text x=\"{xx:.1}\" y=\"{:.1}\" font-size=\"11\" fill=\"#6b7a6e\" text-anchor=\"middle\">{}</text>", mt + ph + 18.0, dt.format("%d/%m"));
     }
@@ -497,11 +530,25 @@ fn ndvi_svg(pts: &[SeriesPoint]) -> String {
     // polyline + points
     let mut poly = String::new();
     for p in pts {
-        let _ = write!(poly, "{:.1},{:.1} ", x(p.observed_at.timestamp() as f64), y(p.mean));
+        let _ = write!(
+            poly,
+            "{:.1},{:.1} ",
+            x(p.observed_at.timestamp() as f64),
+            y(p.mean)
+        );
     }
-    let _ = write!(s, "<polyline points=\"{}\" fill=\"none\" stroke=\"#2f7d3a\" stroke-width=\"2.5\"/>", poly.trim());
+    let _ = write!(
+        s,
+        "<polyline points=\"{}\" fill=\"none\" stroke=\"#2f7d3a\" stroke-width=\"2.5\"/>",
+        poly.trim()
+    );
     for p in pts {
-        let _ = write!(s, "<circle cx=\"{:.1}\" cy=\"{:.1}\" r=\"3\" fill=\"#1f5c29\"/>", x(p.observed_at.timestamp() as f64), y(p.mean));
+        let _ = write!(
+            s,
+            "<circle cx=\"{:.1}\" cy=\"{:.1}\" r=\"3\" fill=\"#1f5c29\"/>",
+            x(p.observed_at.timestamp() as f64),
+            y(p.mean)
+        );
     }
     s.push_str("</svg>");
     s

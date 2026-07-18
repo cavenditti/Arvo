@@ -12,11 +12,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use arvo_core::indices::INDEX_NAMES;
+
 use crate::error::{ApiError, ApiResult};
+use crate::modules::parcels::assert_owned;
 use crate::security::AuthUser;
 use crate::state::AppState;
-
-const INDEX_NAMES: [&str; 5] = ["ndvi", "ndre", "gndvi", "ndmi", "savi"];
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -88,10 +89,10 @@ async fn series(
     Path(id): Path<Uuid>,
     Query(q): Query<SeriesQuery>,
 ) -> ApiResult<Json<Value>> {
-    assert_owned(&state, id, user.org_id).await?;
+    assert_owned(&state.pool, user.org_id, id).await?;
     let index = normalize_index(q.index.as_deref())?;
-    let from = parse_ts(q.from.as_deref());
-    let to = parse_ts(q.to.as_deref());
+    let from = parse_ts("from", q.from.as_deref())?;
+    let to = parse_ts("to", q.to.as_deref())?;
 
     let points = sqlx::query_as::<_, IndexPoint>(
         "SELECT observed_at, mean, median, p10, p90, stddev, pixel_count, cloud_pct, scene_id, source
@@ -117,7 +118,7 @@ async fn latest(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Value>> {
-    assert_owned(&state, id, user.org_id).await?;
+    assert_owned(&state.pool, user.org_id, id).await?;
     let rows = sqlx::query_as::<_, NamedPoint>(
         "SELECT DISTINCT ON (index_name)
                 index_name, observed_at, mean, median, p10, p90, stddev, pixel_count,
@@ -208,7 +209,7 @@ async fn export_csv(
     Path(id): Path<Uuid>,
     Query(q): Query<SeriesQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    assert_owned(&state, id, user.org_id).await?;
+    assert_owned(&state.pool, user.org_id, id).await?;
     let index = normalize_index(q.index.as_deref())?;
 
     let points = sqlx::query_as::<_, IndexPoint>(
@@ -243,19 +244,9 @@ async fn export_csv(
 
 // --- helpers ---------------------------------------------------------------
 
-/// 404 unless the parcel belongs to the caller's org (no existence leak).
-async fn assert_owned(state: &AppState, parcel_id: Uuid, org_id: Uuid) -> ApiResult<()> {
-    let ok: Option<Uuid> =
-        sqlx::query_scalar("SELECT id FROM parcels WHERE id = $1 AND org_id = $2")
-            .bind(parcel_id)
-            .bind(org_id)
-            .fetch_optional(&state.pool)
-            .await?;
-    ok.map(|_| ()).ok_or(ApiError::NotFound)
-}
-
-/// Validate/normalize the `index` param; default `ndvi`.
-fn normalize_index(index: Option<&str>) -> ApiResult<&'static str> {
+/// Validate/normalize the `index` param; default `ndvi`. Shared with the tile/GeoTIFF
+/// endpoints so the accepted set can't drift.
+pub fn normalize_index(index: Option<&str>) -> ApiResult<&'static str> {
     match index.map(str::trim).filter(|s| !s.is_empty()) {
         None => Ok("ndvi"),
         Some(v) => INDEX_NAMES
@@ -266,18 +257,23 @@ fn normalize_index(index: Option<&str>) -> ApiResult<&'static str> {
 }
 
 /// Parse a query timestamp: RFC3339, or a bare `YYYY-MM-DD` (treated as UTC midnight).
-fn parse_ts(s: Option<&str>) -> Option<DateTime<Utc>> {
-    let s = s?.trim();
-    if s.is_empty() {
-        return None;
-    }
+/// Garbage is a 400 — silently ignoring a filter would return the full series as if the
+/// filter had applied.
+fn parse_ts(field: &str, s: Option<&str>) -> ApiResult<Option<DateTime<Utc>>> {
+    let Some(s) = s.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Some(dt.with_timezone(&Utc));
+        return Ok(Some(dt.with_timezone(&Utc)));
     }
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Some(Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0).unwrap()));
+        return Ok(Some(
+            Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0).unwrap()),
+        ));
     }
-    None
+    Err(ApiError::BadRequest(format!(
+        "invalid {field}: expected RFC3339 or YYYY-MM-DD, got {s:?}"
+    )))
 }
 
 /// Build the `{ndvi, ndre, gndvi, ndmi, savi}` object, null where a series is absent.

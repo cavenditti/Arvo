@@ -13,6 +13,7 @@ use crate::audit;
 use crate::error::{ApiError, ApiResult};
 use crate::security::{AuthUser, Role};
 use crate::state::AppState;
+use crate::util::require_len;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -61,6 +62,7 @@ async fn create(
     if name.is_empty() {
         return Err(ApiError::BadRequest("name is required".into()));
     }
+    require_len("name", name, 200)?;
     let farm = sqlx::query_as::<_, Farm>(
         "INSERT INTO farms (org_id, name) VALUES ($1, $2)
          RETURNING id, name, created_at",
@@ -93,6 +95,7 @@ async fn update(
     if name.is_empty() {
         return Err(ApiError::BadRequest("name is required".into()));
     }
+    require_len("name", name, 200)?;
     let farm = sqlx::query_as::<_, Farm>(
         "UPDATE farms SET name = $3 WHERE id = $1 AND org_id = $2
          RETURNING id, name, created_at",

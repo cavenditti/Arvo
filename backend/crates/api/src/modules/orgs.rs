@@ -12,8 +12,9 @@ use uuid::Uuid;
 
 use crate::audit;
 use crate::error::{ApiError, ApiResult};
-use crate::security::{AuthUser, Role};
+use crate::security::{sha256_hex, AuthUser, Role};
 use crate::state::AppState;
+use crate::util::require_len;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -30,7 +31,6 @@ struct CreateInviteReq {
 #[derive(Serialize, sqlx::FromRow)]
 struct Invite {
     id: Uuid,
-    token: String,
     email: String,
     role: Role,
     expires_at: DateTime<Utc>,
@@ -50,18 +50,20 @@ async fn create_invite(
     if email.is_empty() || !email.contains('@') {
         return Err(ApiError::BadRequest("valid email required".into()));
     }
+    require_len("email", &email, 254)?;
 
+    // Only the hash is stored; the raw token is returned exactly once, below.
     let token = invite_token();
     let expires_at = Utc::now() + Duration::days(7);
     let invite = sqlx::query_as::<_, Invite>(
         "INSERT INTO invites (org_id, email, role, token, expires_at)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, token, email, role, expires_at",
+         RETURNING id, email, role, expires_at",
     )
     .bind(user.org_id)
     .bind(&email)
     .bind(req.role)
-    .bind(&token)
+    .bind(sha256_hex(&token))
     .bind(expires_at)
     .fetch_one(&state.pool)
     .await?;
@@ -76,7 +78,16 @@ async fn create_invite(
         json!({ "email": email, "role": req.role }),
     )
     .await;
-    Ok((StatusCode::CREATED, Json(invite)))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": invite.id,
+            "token": token,
+            "email": invite.email,
+            "role": invite.role,
+            "expires_at": invite.expires_at,
+        })),
+    ))
 }
 
 #[derive(Serialize, sqlx::FromRow)]

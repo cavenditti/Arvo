@@ -13,9 +13,16 @@ use crate::audit;
 use crate::error::{ApiError, ApiResult};
 use crate::security::{AuthUser, Role};
 use crate::state::AppState;
+use crate::util::require_len;
 
 const MAX_UPSERTS: usize = 500;
 const MAX_PHOTO_BYTES: usize = 10 * 1024 * 1024;
+const MAX_NOTE_BYTES: usize = 10_000;
+const MAX_TAGS: usize = 50;
+/// Pull cursors overlap by this much so rows committed by a transaction that was still
+/// in flight when we computed `server_time` are re-delivered next sync instead of lost.
+/// Re-delivery is harmless (LWW merge is idempotent); a skipped row would be silent data loss.
+const PULL_OVERLAP_SECONDS: i64 = 10;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -98,36 +105,60 @@ async fn sync(
     user: AuthUser,
     Json(req): Json<SyncRequest>,
 ) -> ApiResult<Json<SyncResponse>> {
-    user.require(Role::Operator)?;
+    // Viewers may pull (read-only offline app); pushing rows needs Operator.
+    if !req.upserts.is_empty() {
+        user.require(Role::Operator)?;
+    }
     if req.upserts.len() > MAX_UPSERTS {
         return Err(ApiError::BadRequest(format!(
             "too many upserts (max {MAX_UPSERTS} per call)"
         )));
     }
-    let server_time = Utc::now();
 
     let mut applied: Vec<Uuid> = Vec::new();
     let mut tx = state.pool.begin().await?;
     for up in &req.upserts {
+        require_len("note", &up.note, MAX_NOTE_BYTES)?;
+        if up.tags.len() > MAX_TAGS {
+            return Err(ApiError::BadRequest(format!(
+                "too many tags (max {MAX_TAGS})"
+            )));
+        }
+        for tag in &up.tags {
+            require_len("tag", tag, 100)?;
+        }
+        // A parcel reference is honored only when the parcel belongs to the caller's org.
+        // Anything else (foreign org, hard-deleted parcel from a cascaded farm delete) is
+        // stored as NULL instead of failing the whole batch with an FK error — otherwise a
+        // legitimate offline outbox replay would wedge on a 500 forever.
+        let parcel_id: Option<Uuid> = match up.parcel_id {
+            Some(pid) => {
+                sqlx::query_scalar("SELECT id FROM parcels WHERE id = $1 AND org_id = $2")
+                    .bind(pid)
+                    .bind(user.org_id)
+                    .fetch_optional(&mut *tx)
+                    .await?
+            }
+            None => None,
+        };
+        let photos = sanitize_photos(&up.photos);
         let existing: Option<(Uuid, DateTime<Utc>)> =
             sqlx::query_as("SELECT org_id, updated_at FROM observations WHERE id = $1")
                 .bind(up.id)
                 .fetch_optional(&mut *tx)
                 .await?;
-        // Photos jsonb must be an array; coerce a missing/null value to [].
-        let photos = if up.photos.is_array() { up.photos.clone() } else { json!([]) };
         match existing {
             // Unknown id → INSERT (org + author from the token).
             None => {
                 sqlx::query(
                     "INSERT INTO observations
-                       (id, org_id, parcel_id, author_id, lon, lat, note, tags, photos, taken_at, deleted, updated_at)
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                       (id, org_id, parcel_id, author_id, lon, lat, note, tags, photos, taken_at, deleted, updated_at, server_updated_at)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now())
                      ON CONFLICT (id) DO NOTHING",
                 )
                 .bind(up.id)
                 .bind(user.org_id)
-                .bind(up.parcel_id)
+                .bind(parcel_id)
                 .bind(user.user_id)
                 .bind(up.lon)
                 .bind(up.lat)
@@ -141,17 +172,19 @@ async fn sync(
                 .await?;
                 applied.push(up.id);
             }
-            // Known id in the SAME org → LWW update (keep author_id).
+            // Known id in the SAME org → LWW update (keep author_id). The `updated_at <`
+            // guard is repeated in the WHERE so two concurrent syncs can't apply out of order.
             Some((org_id, stored_updated)) if org_id == user.org_id => {
                 if up.updated_at > stored_updated {
                     sqlx::query(
                         "UPDATE observations SET
                            parcel_id = $2, lon = $3, lat = $4, note = $5, tags = $6,
-                           photos = $7, taken_at = $8, deleted = $9, updated_at = $10
-                         WHERE id = $1 AND org_id = $11",
+                           photos = $7, taken_at = $8, deleted = $9, updated_at = $10,
+                           server_updated_at = now()
+                         WHERE id = $1 AND org_id = $11 AND updated_at < $10",
                     )
                     .bind(up.id)
-                    .bind(up.parcel_id)
+                    .bind(parcel_id)
                     .bind(up.lon)
                     .bind(up.lat)
                     .bind(&up.note)
@@ -166,22 +199,31 @@ async fn sync(
                 }
                 applied.push(up.id);
             }
-            // Id belongs to another org → skip silently (do not leak existence).
-            Some(_) => {}
+            // Id belongs to another org: never applied, but still echoed in `applied` so the
+            // client drains it from its outbox instead of retrying forever. No data is
+            // revealed, and the response is identical to the freshly-inserted case.
+            Some(_) => applied.push(up.id),
         }
     }
-    tx.commit().await?;
 
-    // Pull: all org rows changed since last_pulled_at (all rows when null), tombstones included.
+    // Pull inside the same transaction, cursored on the server clock (`server_updated_at`),
+    // not client wall clocks — a device with a skewed clock must not make rows invisible
+    // to its teammates. Tombstones included.
+    let server_time: DateTime<Utc> = sqlx::query_scalar(&format!(
+        "SELECT now() - interval '{PULL_OVERLAP_SECONDS} seconds'"
+    ))
+    .fetch_one(&mut *tx)
+    .await?;
     let changes: Vec<ObservationRow> = sqlx::query_as(&format!(
-        "{} WHERE o.org_id = $1 AND ($2::timestamptz IS NULL OR o.updated_at > $2)
-         ORDER BY o.updated_at ASC",
+        "{} WHERE o.org_id = $1 AND ($2::timestamptz IS NULL OR o.server_updated_at > $2)
+         ORDER BY o.server_updated_at ASC",
         OBS_SELECT
     ))
     .bind(user.org_id)
     .bind(req.last_pulled_at)
-    .fetch_all(&state.pool)
+    .fetch_all(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     audit::record(
         &state.pool,
@@ -194,7 +236,11 @@ async fn sync(
     )
     .await;
 
-    Ok(Json(SyncResponse { server_time, applied, changes }))
+    Ok(Json(SyncResponse {
+        server_time,
+        applied,
+        changes,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -231,6 +277,25 @@ struct PhotoResponse {
     path: String,
 }
 
+/// Photos in sync bodies are client-supplied JSON. Keep only array entries whose `path` is a
+/// server-issued upload path — anything else (external URLs, javascript:, junk shapes) is
+/// dropped so it can never surface in reports or the app as an <img src>.
+fn sanitize_photos(raw: &Value) -> Value {
+    let Some(items) = raw.as_array() else {
+        return json!([]);
+    };
+    let kept: Vec<Value> = items
+        .iter()
+        .filter(|p| {
+            p.get("path")
+                .and_then(Value::as_str)
+                .is_some_and(|s| s.starts_with("/uploads/") && !s.contains(".."))
+        })
+        .cloned()
+        .collect();
+    json!(kept)
+}
+
 /// POST /observations/{id}/photos — multipart field `file` (jpeg/png ≤ 10 MB).
 async fn upload_photo(
     State(state): State<AppState>,
@@ -240,15 +305,19 @@ async fn upload_photo(
 ) -> ApiResult<(StatusCode, Json<PhotoResponse>)> {
     user.require(Role::Operator)?;
 
-    // 404 early if the observation isn't in the caller's org.
-    let owned: Option<(Uuid,)> =
-        sqlx::query_as("SELECT id FROM observations WHERE id = $1 AND org_id = $2")
+    // 404 early if the observation isn't in the caller's org; no photos on tombstones.
+    let deleted: Option<bool> =
+        sqlx::query_scalar("SELECT deleted FROM observations WHERE id = $1 AND org_id = $2")
             .bind(id)
             .bind(user.org_id)
             .fetch_optional(&state.pool)
             .await?;
-    if owned.is_none() {
-        return Err(ApiError::NotFound);
+    match deleted {
+        None => return Err(ApiError::NotFound),
+        Some(true) => {
+            return Err(ApiError::Conflict("observation was deleted".into()));
+        }
+        Some(false) => {}
     }
 
     // Pull the `file` field, validating type and size.
@@ -273,7 +342,11 @@ async fn upload_photo(
             _ => match file_ext.as_deref() {
                 Some("jpg") | Some("jpeg") => "jpg",
                 Some("png") => "png",
-                _ => return Err(ApiError::BadRequest("only jpeg or png images are allowed".into())),
+                _ => {
+                    return Err(ApiError::BadRequest(
+                        "only jpeg or png images are allowed".into(),
+                    ))
+                }
             },
         };
         let data = field
@@ -283,13 +356,28 @@ async fn upload_photo(
         if data.len() > MAX_PHOTO_BYTES {
             return Err(ApiError::BadRequest("file exceeds the 10 MB limit".into()));
         }
+        // Content sniffing: extension/content-type alone must not decide what we store.
+        let magic_ok = match ext {
+            "jpg" => data.starts_with(&[0xFF, 0xD8, 0xFF]),
+            "png" => data.starts_with(&[0x89, 0x50, 0x4E, 0x47]),
+            _ => false,
+        };
+        if !magic_ok {
+            return Err(ApiError::BadRequest(
+                "file content is not a jpeg or png image".into(),
+            ));
+        }
         file = Some((data, ext));
         break;
     }
     let (data, ext) = file.ok_or_else(|| ApiError::BadRequest("missing `file` field".into()))?;
 
     // Save under <upload_dir>/observations/<obs_id>/<uuid>.<ext>.
-    let dir = state.cfg.upload_dir.join("observations").join(id.to_string());
+    let dir = state
+        .cfg
+        .upload_dir
+        .join("observations")
+        .join(id.to_string());
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| ApiError::Internal(e.into()))?;
@@ -301,16 +389,23 @@ async fn upload_photo(
     let path = format!("/uploads/observations/{id}/{file_name}");
     let entry = json!([{ "path": path, "taken_at": Utc::now() }]);
     let res = sqlx::query(
-        "UPDATE observations SET photos = photos || $1::jsonb, updated_at = now()
+        "UPDATE observations
+         SET photos = photos || $1::jsonb, updated_at = now(), server_updated_at = now()
          WHERE id = $2 AND org_id = $3",
     )
     .bind(&entry)
     .bind(id)
     .bind(user.org_id)
     .execute(&state.pool)
-    .await?;
-    if res.rows_affected() == 0 {
-        return Err(ApiError::NotFound);
+    .await;
+    match res {
+        Ok(r) if r.rows_affected() > 0 => {}
+        other => {
+            // Don't leave an orphan file when the DB append failed.
+            let _ = tokio::fs::remove_file(dir.join(&file_name)).await;
+            other?;
+            return Err(ApiError::NotFound);
+        }
     }
 
     audit::record(

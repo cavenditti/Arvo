@@ -1,8 +1,10 @@
 # Phase 0 — Tier-0 MVP implementation plan
 
-> **Status (2026-07-16): built and verified.** `scripts/smoke.sh` 28/28 green against real
-> Open-Meteo + Earth Search data; 31 unit tests passing; web portal verified in-browser
-> (login → dashboard → map choropleth → parcel detail → alerts → scouting).
+> **Status (2026-07-16): built and verified.** Production-hardening pass 2026-07-18 (media
+> tokens, authenticated uploads, server-side sync cursor, CI). `scripts/smoke.sh` 31/31 green
+> against real Open-Meteo + Earth Search data (33 on imagery builds); 40+ unit tests passing;
+> web portal verified in-browser (login → dashboard → map choropleth → parcel detail → alerts →
+> scouting).
 
 Target: a working, self-hostable Tier-0 slice of the platform (spec §6): multi-tenant field
 management, satellite index time series, weather + agronomic models, offline-first scouting,
@@ -86,10 +88,15 @@ Deferred: FR-0-013/014/025/026/043/054/062, GraphQL (REST-only v1), OGC WMTS cap
    ingests the STAC scene catalog, and `seed --demo` synthesizes realistic index series so the whole
    agronomy loop (series → anomaly → alert → report) runs end to end.
 7. **Uploads on local disk** (`UPLOAD_DIR`), served at `/uploads`. S3-compatible store is a config
-   swap later. **Auth hardening backlog:** `/uploads` is unauthenticated in the MVP, and raster
-   tile URLs accept the JWT as a `?token=` query param (required because `<img>`/tile clients can't
-   set an `Authorization` header) — query-string tokens can leak via logs/referrers, so both move
-   behind signed, short-lived URLs later.
+   swap later. ~~Auth hardening backlog~~ **closed 2026-07-18:** `/uploads` now requires auth +
+   an org check, and query-string auth everywhere (tiles, GeoTIFF, photos, report) uses
+   short-lived (15 min) `aud:"media"` tokens from `POST /auth/media-token` — session JWTs in
+   query strings are rejected outright (docs/API.md §"Media tokens").
+8. **Remaining hardening backlog (P1):** per-membership token versioning (role changes don't
+   revoke live 7-day JWTs); EXIF stripping on photo upload; initial-sync paging for very large
+   orgs; rate limiting beyond the auth endpoints; a guard on farm hard-delete (cascades a whole
+   season of derived data); STAC pagination past the 100-item page (currently clamped `days` +
+   a page-full warning).
 
 ## 5. Data model (migrations/0001_init.sql)
 
@@ -130,8 +137,9 @@ note, tags[], photos jsonb, taken_at, updated_at, deleted)`, `audit_log(append-o
 register → login → me → create farm → create parcel (GeoJSON, area/centroid returned) → import FC →
 weather refresh+read (real Open-Meteo) → agro (GDD/ET0/balance) → advisories → STAC scene refresh
 (best-effort, network-tolerant) → seeded index series present → anomaly alert exists → ack/snooze →
-observations sync (upsert, pull-since, LWW) → photo upload → season report HTML 200 → CSV/GeoJSON
-export → **cross-tenant isolation: second org gets 404 on first org's parcel** → audit rows exist.
+observations sync (upsert, pull-since, LWW) → photo upload → **uploads auth: bare fetch 401, media
+token 200, session-JWT-in-query rejected** → season report HTML 200 → CSV/GeoJSON export →
+**cross-tenant isolation: second org gets 404 on first org's parcel** → audit rows exist.
 
 ## 9. Runbook
 

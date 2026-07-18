@@ -5,10 +5,12 @@ mod error;
 mod imagery;
 mod jobs;
 mod modules;
+mod ratelimit;
 mod routes;
 mod security;
 mod seed;
 mod state;
+mod util;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -57,10 +59,14 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = config::Config::from_env()?;
     let pool = PgPoolOptions::new()
-        .max_connections(10)
+        .max_connections(cfg.db_max_connections)
+        .acquire_timeout(std::time::Duration::from_secs(5))
         .connect(&cfg.database_url)
         .await?;
-    let state = state::AppState { pool: pool.clone(), cfg: Arc::new(cfg) };
+    let state = state::AppState {
+        pool: pool.clone(),
+        cfg: Arc::new(cfg),
+    };
 
     match Cli::parse().cmd.unwrap_or(Cmd::Serve) {
         Cmd::Migrate => {
@@ -85,8 +91,37 @@ async fn main() -> anyhow::Result<()> {
             let app = routes::app(state);
             tracing::info!("arvo-api listening on http://{addr}");
             let listener = tokio::net::TcpListener::bind(addr).await?;
-            axum::serve(listener, app).await?;
+            // ConnectInfo powers the per-IP auth rate limiter; graceful shutdown lets
+            // in-flight requests (sync transactions especially) finish on SIGTERM/ctrl-c.
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
         }
     }
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    tracing::info!("shutdown signal received — draining in-flight requests");
 }

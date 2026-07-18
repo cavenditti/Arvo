@@ -48,6 +48,7 @@ const ALERT_COLS: &str = "id, parcel_id, kind, severity, title, message, data, \
 struct ListQuery {
     state: Option<String>,
     parcel_id: Option<Uuid>,
+    limit: Option<i64>,
 }
 
 /// GET /alerts — desc by created_at. Snoozed rows whose `snoozed_until` has elapsed are
@@ -67,17 +68,21 @@ async fn list_alerts(
     .execute(&state.pool)
     .await?;
 
+    // Bounded: alert history grows daily per parcel; dashboards poll this endpoint.
+    let limit = q.limit.unwrap_or(200).clamp(1, 500);
     let sql = format!(
         "SELECT {ALERT_COLS} FROM alerts
          WHERE org_id = $1
            AND ($2::text IS NULL OR state::text = $2)
            AND ($3::uuid IS NULL OR parcel_id = $3)
-         ORDER BY created_at DESC"
+         ORDER BY created_at DESC
+         LIMIT $4"
     );
     let alerts: Vec<Alert> = sqlx::query_as(&sql)
         .bind(user.org_id)
         .bind(&q.state)
         .bind(q.parcel_id)
+        .bind(limit)
         .fetch_all(&state.pool)
         .await?;
     Ok(Json(alerts))
@@ -111,9 +116,19 @@ async fn snooze(
     Json(req): Json<SnoozeReq>,
 ) -> ApiResult<Json<Alert>> {
     if req.until <= Utc::now() {
-        return Err(ApiError::BadRequest("snooze `until` must be in the future".into()));
+        return Err(ApiError::BadRequest(
+            "snooze `until` must be in the future".into(),
+        ));
     }
-    transition(&state, &user, id, "snoozed", Some(req.until), "alert.snooze").await
+    transition(
+        &state,
+        &user,
+        id,
+        "snoozed",
+        Some(req.until),
+        "alert.snooze",
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,7 +153,9 @@ async fn assign(
     .fetch_one(&state.pool)
     .await?;
     if !is_member {
-        return Err(ApiError::BadRequest("assignee is not a member of this org".into()));
+        return Err(ApiError::BadRequest(
+            "assignee is not a member of this org".into(),
+        ));
     }
 
     let sql = format!(

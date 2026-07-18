@@ -29,10 +29,11 @@ use uuid::Uuid;
 
 use crate::error::{ApiError, ApiResult};
 use crate::imagery::raster;
+use crate::modules::indices::normalize_index;
+use crate::modules::parcels::assert_owned;
 use crate::security::{self, AuthUser};
 use crate::state::AppState;
 
-const INDEX_NAMES: [&str; 5] = ["ndvi", "ndre", "gndvi", "ndmi", "savi"];
 /// Half the Web-Mercator (EPSG:3857) world extent, metres.
 const ORIGIN_SHIFT: f64 = 20_037_508.342_789_244;
 const TILE_PX: usize = 256;
@@ -45,6 +46,14 @@ const NODATA: f32 = -9999.0;
 /// Cap on the source read window (px) per axis, so low-zoom tiles decimate via COG overviews
 /// instead of reading millions of native pixels.
 const MAX_READ_PX: usize = 512;
+/// Concurrent GDAL renders (each pulls up to 7 COG windows over HTTP). A cold map view fires
+/// ~30 tile requests at once; without a cap they all spawn blocking tasks simultaneously.
+const MAX_CONCURRENT_RENDERS: usize = 6;
+
+fn render_permits() -> &'static tokio::sync::Semaphore {
+    static SEM: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    SEM.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_RENDERS))
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -68,7 +77,7 @@ async fn tile(
     Query(q): Query<RasterQuery>,
 ) -> ApiResult<Response> {
     let auth = authenticate(&state, &headers, q.token.as_deref())?;
-    let index = normalize_index(&index)?;
+    let index = normalize_index(Some(&index))?;
     if z > 18 {
         return Err(ApiError::BadRequest("zoom out of range (0..=18)".into()));
     }
@@ -76,7 +85,7 @@ async fn tile(
         .parse::<u32>()
         .map_err(|_| ApiError::BadRequest("invalid tile y".into()))?;
 
-    assert_owned(&state, parcel_id, auth.org_id).await?;
+    assert_owned(&state.pool, auth.org_id, parcel_id).await?;
     let scene = resolve_scene(&state, parcel_id, index, q.scene.as_deref()).await?;
 
     // Out-of-range tile coords → transparent (never touch GDAL or the cache).
@@ -86,20 +95,26 @@ async fn tile(
     }
 
     // Disk cache: var/tiles/{scene}/{index}/{z}/{x}/{y}.png (contract path).
-    let cache = cache_path(&scene.id, index, z, x, y);
-    if let Ok(bytes) = std::fs::read(&cache) {
+    let cache = cache_path(&state, &scene.id, index, z, x, y);
+    if let Ok(bytes) = tokio::fs::read(&cache).await {
         return Ok(png_response(bytes));
     }
 
     let assets = scene.assets.clone();
-    let png = tokio::task::spawn_blocking(move || render_tile(&assets, index, z, x, y))
+    let boa = scene.boa_offset_applied.unwrap_or(false);
+    let _permit = render_permits()
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(anyhow!(e)))?;
+    let png = tokio::task::spawn_blocking(move || render_tile(&assets, index, z, x, y, boa))
         .await
         .map_err(|e| ApiError::Internal(anyhow!(e)))?
         .map_err(ApiError::Internal)?;
+    drop(_permit);
 
     if let Some(parent) = cache.parent() {
-        let _ = std::fs::create_dir_all(parent);
-        let _ = std::fs::write(&cache, &png);
+        let _ = tokio::fs::create_dir_all(parent).await;
+        let _ = tokio::fs::write(&cache, &png).await;
     }
     Ok(png_response(png))
 }
@@ -117,7 +132,7 @@ async fn geotiff(
         return Err(ApiError::NotFound);
     };
     let auth = authenticate(&state, &headers, q.token.as_deref())?;
-    let index = normalize_index(index_raw)?;
+    let index = normalize_index(Some(index_raw))?;
 
     // Org scope + parcel bbox (lon/lat) in one query.
     let bbox: Option<(f64, f64, f64, f64)> = sqlx::query_as(
@@ -128,11 +143,18 @@ async fn geotiff(
     .bind(auth.org_id)
     .fetch_optional(&state.pool)
     .await?;
-    let Some(bbox) = bbox else { return Err(ApiError::NotFound) };
+    let Some(bbox) = bbox else {
+        return Err(ApiError::NotFound);
+    };
 
     let scene = resolve_scene(&state, parcel_id, index, q.scene.as_deref()).await?;
     let assets = scene.assets.clone();
-    let tif = tokio::task::spawn_blocking(move || render_geotiff(&assets, index, bbox))
+    let boa = scene.boa_offset_applied.unwrap_or(false);
+    let _permit = render_permits()
+        .acquire()
+        .await
+        .map_err(|e| ApiError::Internal(anyhow!(e)))?;
+    let tif = tokio::task::spawn_blocking(move || render_geotiff(&assets, index, bbox, boa))
         .await
         .map_err(|e| ApiError::Internal(anyhow!(e)))?
         .map_err(ApiError::Internal)?;
@@ -153,30 +175,21 @@ async fn geotiff(
 
 // --- auth / scoping / scene resolution -------------------------------------
 
-/// Bearer header first, then `?token=`; same claims decode as the `AuthUser` extractor.
-fn authenticate(state: &AppState, headers: &HeaderMap, query_token: Option<&str>) -> ApiResult<AuthUser> {
-    let header_token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
-    let token = header_token.or(query_token).ok_or(ApiError::Unauthorized)?;
-    security::decode_token(&state.cfg.jwt_secret, token)
-}
-
-/// 404 unless the parcel belongs to the caller's org (no existence leak).
-async fn assert_owned(state: &AppState, parcel_id: Uuid, org_id: Uuid) -> ApiResult<()> {
-    let ok: Option<Uuid> =
-        sqlx::query_scalar("SELECT id FROM parcels WHERE id = $1 AND org_id = $2")
-            .bind(parcel_id)
-            .bind(org_id)
-            .fetch_optional(&state.pool)
-            .await?;
-    ok.map(|_| ()).ok_or(ApiError::NotFound)
+/// Bearer header carries a full session token; `?token=` accepts ONLY short-lived media
+/// tokens (docs/API.md §"Media tokens") so long-lived credentials never ride in query
+/// strings where access logs and referrers can capture them.
+fn authenticate(
+    state: &AppState,
+    headers: &HeaderMap,
+    query_token: Option<&str>,
+) -> ApiResult<AuthUser> {
+    security::authenticate_bearer_or_media(&state.cfg.jwt_secret, headers, query_token)
 }
 
 struct ResolvedScene {
     id: Uuid,
     assets: Value,
+    boa_offset_applied: Option<bool>,
 }
 
 /// Resolve `scene`: `latest`/absent → newest scene-backed index observation for parcel+index;
@@ -188,37 +201,49 @@ async fn resolve_scene(
     index: &str,
     scene: Option<&str>,
 ) -> ApiResult<ResolvedScene> {
-    let row: Option<(Uuid, Value)> = match scene.map(str::trim).filter(|s| !s.is_empty()) {
-        None | Some("latest") => {
-            sqlx::query_as(
-                "SELECT s.id, s.assets
+    let row: Option<(Uuid, Value, Option<bool>)> =
+        match scene.map(str::trim).filter(|s| !s.is_empty()) {
+            None | Some("latest") => {
+                sqlx::query_as(
+                    "SELECT s.id, s.assets, s.boa_offset_applied
                  FROM index_observations io JOIN scenes s ON s.id = io.scene_id
                  WHERE io.parcel_id = $1 AND io.index_name = $2 AND io.scene_id IS NOT NULL
                  ORDER BY io.observed_at DESC
                  LIMIT 1",
-            )
-            .bind(parcel_id)
-            .bind(index)
-            .fetch_optional(&state.pool)
-            .await?
-        }
-        Some(id) => {
-            let scene_id =
-                Uuid::parse_str(id).map_err(|_| ApiError::BadRequest("invalid scene id".into()))?;
-            sqlx::query_as("SELECT id, assets FROM scenes WHERE id = $1")
-                .bind(scene_id)
+                )
+                .bind(parcel_id)
+                .bind(index)
                 .fetch_optional(&state.pool)
                 .await?
-        }
-    };
-    let (id, assets) = row.ok_or(ApiError::NotFound)?;
-    Ok(ResolvedScene { id, assets })
+            }
+            Some(id) => {
+                let scene_id = Uuid::parse_str(id)
+                    .map_err(|_| ApiError::BadRequest("invalid scene id".into()))?;
+                sqlx::query_as("SELECT id, assets, boa_offset_applied FROM scenes WHERE id = $1")
+                    .bind(scene_id)
+                    .fetch_optional(&state.pool)
+                    .await?
+            }
+        };
+    let (id, assets, boa_offset_applied) = row.ok_or(ApiError::NotFound)?;
+    Ok(ResolvedScene {
+        id,
+        assets,
+        boa_offset_applied,
+    })
 }
 
 // --- rendering: XYZ tile ---------------------------------------------------
 
 /// Render one 256×256 RGBA PNG tile. Blocking (GDAL). Fully-outside/masked → transparent PNG.
-fn render_tile(assets: &Value, index: &str, z: u32, x: u32, y: u32) -> anyhow::Result<Vec<u8>> {
+fn render_tile(
+    assets: &Value,
+    index: &str,
+    z: u32,
+    x: u32,
+    y: u32,
+    boa_offset_applied: bool,
+) -> anyhow::Result<Vec<u8>> {
     raster::configure();
 
     // Web-Mercator bounds of the tile.
@@ -289,7 +314,9 @@ fn render_tile(assets: &Value, index: &str, z: u32, x: u32, y: u32) -> anyhow::R
         }
         let refl = |b: &Option<BandGrid>| -> Option<f32> {
             b.as_ref()
-                .map(|g| raster::to_reflectance(g.sample_bilinear(dx, dy)) as f32)
+                .map(|g| {
+                    raster::to_reflectance(g.sample_bilinear(dx, dy), boa_offset_applied) as f32
+                })
                 .filter(|v| v.is_finite())
         };
         let v = index_value(
@@ -321,6 +348,7 @@ fn render_geotiff(
     assets: &Value,
     index: &str,
     (min_lon, min_lat, max_lon, max_lat): (f64, f64, f64, f64),
+    boa_offset_applied: bool,
 ) -> anyhow::Result<Vec<u8>> {
     raster::configure();
 
@@ -347,7 +375,9 @@ fn render_geotiff(
     let count = out_w * out_h;
 
     // Aligned window reads (native CRS grid), like the ingest worker.
-    let scl = read_aligned(&scl_ds, ds_min_x, ds_max_y, ds_max_x, ds_min_y, out_w, out_h, true)?;
+    let scl = read_aligned(
+        &scl_ds, ds_min_x, ds_max_y, ds_max_x, ds_min_y, out_w, out_h, true,
+    )?;
     let read_band = |key: &str| -> anyhow::Result<Option<Vec<f64>>> {
         match raster::asset_href(assets, key) {
             Some(href) => {
@@ -368,7 +398,7 @@ fn render_geotiff(
 
     let refl = |b: &Option<Vec<f64>>, i: usize| -> Option<f32> {
         b.as_ref()
-            .map(|s| raster::to_reflectance(s[i]) as f32)
+            .map(|s| raster::to_reflectance(s[i], boa_offset_applied) as f32)
             .filter(|v| v.is_finite())
     };
     let mut buf = vec![NODATA; count];
@@ -407,7 +437,7 @@ fn render_geotiff(
     let opts = RasterCreationOptions::from_iter(["COMPRESS=DEFLATE", "PREDICTOR=3"]);
     let out_ds = ds.create_copy(&gtiff, &vsi_path, &opts)?;
     out_ds.close()?; // flush the GeoTIFF fully into the /vsimem/ buffer before reading it back
-    // Takes ownership of the in-memory file and frees it.
+                     // Takes ownership of the in-memory file and frees it.
     let bytes = gdal::vsi::get_vsi_mem_file_bytes_owned(&vsi_path)
         .map_err(|e| anyhow!("read {vsi_path}: {e}"))?;
     Ok(bytes)
@@ -440,7 +470,11 @@ fn read_aligned(
         (c1 - c0).unsigned_abs().max(1),
         (r1 - r0).unsigned_abs().max(1),
     );
-    let alg = if categorical { ResampleAlg::NearestNeighbour } else { ResampleAlg::Bilinear };
+    let alg = if categorical {
+        ResampleAlg::NearestNeighbour
+    } else {
+        ResampleAlg::Bilinear
+    };
     let band = ds.rasterband(1).context("rasterband(1)")?;
     let buf = band
         .read_as::<f64>(win, win_size, (out_w, out_h), Some(alg))
@@ -463,7 +497,11 @@ struct BandGrid {
 }
 
 impl BandGrid {
-    fn open(href: &str, bbox: (f64, f64, f64, f64), categorical: bool) -> anyhow::Result<Option<Self>> {
+    fn open(
+        href: &str,
+        bbox: (f64, f64, f64, f64),
+        categorical: bool,
+    ) -> anyhow::Result<Option<Self>> {
         let ds = raster::open_vsicurl(href)?;
         Self::from_dataset(&ds, bbox, categorical)
     }
@@ -487,9 +525,13 @@ impl BandGrid {
         }
         let win_cols = (c_hi - c_lo) as usize;
         let win_rows = (r_hi - r_lo) as usize;
-        let bw = win_cols.min(MAX_READ_PX).max(1);
-        let bh = win_rows.min(MAX_READ_PX).max(1);
-        let alg = if categorical { ResampleAlg::NearestNeighbour } else { ResampleAlg::Bilinear };
+        let bw = win_cols.clamp(1, MAX_READ_PX);
+        let bh = win_rows.clamp(1, MAX_READ_PX);
+        let alg = if categorical {
+            ResampleAlg::NearestNeighbour
+        } else {
+            ResampleAlg::Bilinear
+        };
         let band = ds.rasterband(1).context("rasterband(1)")?;
         let buf = band
             .read_as::<f64>((c_lo, r_lo), (win_cols, win_rows), (bw, bh), Some(alg))
@@ -530,7 +572,9 @@ impl BandGrid {
     }
 
     fn sample_bilinear(&self, x: f64, y: f64) -> f64 {
-        let Some((fx, fy)) = self.frac(x, y) else { return f64::NAN };
+        let Some((fx, fy)) = self.frac(x, y) else {
+            return f64::NAN;
+        };
         let x0 = fx.floor();
         let y0 = fy.floor();
         let tx = fx - x0;
@@ -547,7 +591,9 @@ impl BandGrid {
     }
 
     fn sample_nearest(&self, x: f64, y: f64) -> f64 {
-        let Some((fx, fy)) = self.frac(x, y) else { return f64::NAN };
+        let Some((fx, fy)) = self.frac(x, y) else {
+            return f64::NAN;
+        };
         self.at(fx.round() as isize, fy.round() as isize)
     }
 }
@@ -598,9 +644,25 @@ fn colormap(index: &str, v: f32) -> Option<[u8; 3]> {
         return None;
     }
     let (lo, hi, stops): (f64, f64, [[f64; 3]; 3]) = if index == "ndmi" {
-        (-0.4, 0.6, [[166.0, 97.0, 26.0], [247.0, 247.0, 247.0], [44.0, 123.0, 182.0]])
+        (
+            -0.4,
+            0.6,
+            [
+                [166.0, 97.0, 26.0],
+                [247.0, 247.0, 247.0],
+                [44.0, 123.0, 182.0],
+            ],
+        )
     } else {
-        (-0.2, 0.9, [[215.0, 48.0, 39.0], [255.0, 255.0, 191.0], [26.0, 152.0, 80.0]])
+        (
+            -0.2,
+            0.9,
+            [
+                [215.0, 48.0, 39.0],
+                [255.0, 255.0, 191.0],
+                [26.0, 152.0, 80.0],
+            ],
+        )
     };
     let t = (((v as f64) - lo) / (hi - lo)).clamp(0.0, 1.0);
     let (a, b, tt) = if t < 0.5 {
@@ -626,9 +688,18 @@ fn encode_png_rgba(rgba: &[u8], w: u32, h: u32) -> anyhow::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// A fully-transparent 256×256 PNG (tiles outside the scene / masked).
+/// A fully-transparent 256×256 PNG (tiles outside the scene / masked). Encoded once.
 fn transparent_png() -> anyhow::Result<Vec<u8>> {
-    encode_png_rgba(&vec![0u8; TILE_PX * TILE_PX * 4], TILE_PX as u32, TILE_PX as u32)
+    static PNG: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    if let Some(bytes) = PNG.get() {
+        return Ok(bytes.clone());
+    }
+    let bytes = encode_png_rgba(
+        &vec![0u8; TILE_PX * TILE_PX * 4],
+        TILE_PX as u32,
+        TILE_PX as u32,
+    )?;
+    Ok(PNG.get_or_init(|| bytes).clone())
 }
 
 fn png_response(bytes: Vec<u8>) -> Response {
@@ -642,9 +713,10 @@ fn png_response(bytes: Vec<u8>) -> Response {
         .into_response()
 }
 
-fn cache_path(scene_id: &Uuid, index: &str, z: u32, x: u32, y: u32) -> PathBuf {
-    let base = std::env::var("TILE_CACHE_DIR").unwrap_or_else(|_| "./var/tiles".into());
-    PathBuf::from(base)
+fn cache_path(state: &AppState, scene_id: &Uuid, index: &str, z: u32, x: u32, y: u32) -> PathBuf {
+    state
+        .cfg
+        .tile_cache_dir
         .join(scene_id.to_string())
         .join(index)
         .join(z.to_string())
@@ -652,17 +724,13 @@ fn cache_path(scene_id: &Uuid, index: &str, z: u32, x: u32, y: u32) -> PathBuf {
         .join(format!("{y}.png"))
 }
 
-/// Validate/normalize an index name to its canonical form.
-fn normalize_index(index: &str) -> ApiResult<&'static str> {
-    INDEX_NAMES
-        .into_iter()
-        .find(|n| n.eq_ignore_ascii_case(index.trim()))
-        .ok_or_else(|| ApiError::BadRequest(format!("unknown index: {index}")))
-}
-
-/// Strip a known extension (case-insensitive) if present.
+/// Strip a known extension (case-insensitive) if present. The char-boundary check matters:
+/// the segment is caller-controlled, and byte-slicing inside a multibyte char would panic.
 fn strip_ext<'a>(s: &'a str, ext: &str) -> &'a str {
-    if s.len() >= ext.len() && s[s.len() - ext.len()..].eq_ignore_ascii_case(ext) {
+    if s.len() >= ext.len()
+        && s.is_char_boundary(s.len() - ext.len())
+        && s[s.len() - ext.len()..].eq_ignore_ascii_case(ext)
+    {
         &s[..s.len() - ext.len()]
     } else {
         s
@@ -678,13 +746,16 @@ mod tests {
         assert_eq!(strip_ext("12388.png", ".png"), "12388");
         assert_eq!(strip_ext("12388.PNG", ".png"), "12388");
         assert_eq!(strip_ext("12388", ".png"), "12388");
+        // Multibyte tail: must not panic on a non-char-boundary slice.
+        assert_eq!(strip_ext("1€38", ".png"), "1€38");
+        assert_eq!(strip_ext("€", ".png"), "€");
     }
 
     #[test]
     fn normalizes_index_case_insensitively() {
-        assert_eq!(normalize_index("NDVI").unwrap(), "ndvi");
-        assert_eq!(normalize_index(" ndmi ").unwrap(), "ndmi");
-        assert!(normalize_index("bogus").is_err());
+        assert_eq!(normalize_index(Some("NDVI")).unwrap(), "ndvi");
+        assert_eq!(normalize_index(Some(" ndmi ")).unwrap(), "ndmi");
+        assert!(normalize_index(Some("bogus")).is_err());
     }
 
     #[test]

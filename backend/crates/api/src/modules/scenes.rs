@@ -43,10 +43,21 @@ async fn refresh(
     .await?
     .ok_or(ApiError::NotFound)?;
 
-    let days = body.and_then(|b| b.0.days).unwrap_or(imagery::DEFAULT_REFRESH_DAYS);
+    // Clamp: chrono::Duration::days panics far out of range, huge windows are pointless
+    // (STAC pagination caps out anyway), and negative values are meaningless.
+    let days = body
+        .and_then(|b| b.0.days)
+        .unwrap_or(imagery::DEFAULT_REFRESH_DAYS)
+        .clamp(1, 366);
     let outcome = imagery::refresh_scenes(&state, id, &geometry, days)
         .await
-        .map_err(|e| ApiError::BadRequest(format!("scene refresh failed: {e}")))?;
+        .map_err(|e| {
+            // Upstream/STAC failure details stay in the logs; clients get a stable message.
+            tracing::warn!(parcel = %id, error = ?e, "scene refresh failed");
+            ApiError::Internal(anyhow::anyhow!(
+                "scene refresh failed (upstream imagery service)"
+            ))
+        })?;
 
     audit::record(
         &state.pool,
@@ -79,29 +90,27 @@ struct SceneOut {
     cloud_cover: Option<f64>,
 }
 
-/// GET /parcels/{id}/scenes — recent scenes from the shared catalog (scenes are public source
-/// data; the parcel id is validated for org ownership before listing).
+/// GET /parcels/{id}/scenes — scenes whose footprint covers the parcel (scenes are shared
+/// public source data; the parcel id is validated for org ownership before listing).
+/// Rows ingested before footprints were stored (bbox NULL) are included until the next
+/// refresh backfills them — better a briefly-wide list than a silently-empty one.
 async fn list_scenes(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<Uuid>,
     Query(q): Query<ScenesQuery>,
 ) -> ApiResult<Json<Vec<SceneOut>>> {
-    let owned: Option<Uuid> =
-        sqlx::query_scalar("SELECT id FROM parcels WHERE id = $1 AND org_id = $2")
-            .bind(id)
-            .bind(user.org_id)
-            .fetch_optional(&state.pool)
-            .await?;
-    if owned.is_none() {
-        return Err(ApiError::NotFound);
-    }
+    crate::modules::parcels::assert_owned(&state.pool, user.org_id, id).await?;
 
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
     let scenes = sqlx::query_as::<_, SceneOut>(
-        "SELECT id, stac_id, acquired_at, cloud_cover
-         FROM scenes ORDER BY acquired_at DESC LIMIT $1",
+        "SELECT s.id, s.stac_id, s.acquired_at, s.cloud_cover
+         FROM scenes s
+         WHERE s.bbox IS NULL
+            OR ST_Intersects(s.bbox, (SELECT geom FROM parcels WHERE id = $1))
+         ORDER BY s.acquired_at DESC LIMIT $2",
     )
+    .bind(id)
     .bind(limit)
     .fetch_all(&state.pool)
     .await?;

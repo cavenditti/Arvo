@@ -15,6 +15,9 @@ use crate::audit;
 use crate::error::{ApiError, ApiResult};
 use crate::security::{AuthUser, Role};
 use crate::state::AppState;
+use crate::util::require_len;
+
+const MAX_IMPORT_FEATURES: usize = 1000;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -22,6 +25,45 @@ pub fn router() -> Router<AppState> {
         .route("/parcels/import", post(import))
         .route("/parcels/export.geojson", get(export))
         .route("/parcels/{id}", get(get_one).patch(update).delete(archive))
+}
+
+/// Assert the parcel exists in the caller's org (cross-tenant → 404). The single shared
+/// ownership guard used by every per-parcel module (weather, indices, scenes, reports, tiles)
+/// so the check can never drift between them.
+pub async fn assert_owned(pool: &PgPool, org_id: Uuid, parcel_id: Uuid) -> ApiResult<()> {
+    let found: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM parcels WHERE id = $1 AND org_id = $2")
+            .bind(parcel_id)
+            .bind(org_id)
+            .fetch_optional(pool)
+            .await?;
+    found.map(|_| ()).ok_or(ApiError::NotFound)
+}
+
+/// Validate optional descriptive fields shared by create/update/import.
+fn validate_fields(
+    name: Option<&str>,
+    crop: Option<&str>,
+    variety: Option<&str>,
+    season_year: Option<i32>,
+) -> ApiResult<()> {
+    if let Some(n) = name {
+        require_len("name", n, 200)?;
+    }
+    if let Some(c) = crop {
+        require_len("crop", c, 100)?;
+    }
+    if let Some(v) = variety {
+        require_len("variety", v, 100)?;
+    }
+    if let Some(y) = season_year {
+        if !(1900..=2100).contains(&y) {
+            return Err(ApiError::BadRequest(
+                "season_year out of range (1900-2100)".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Column list shared by every read (SELECT and INSERT/UPDATE ... RETURNING).
@@ -62,8 +104,8 @@ struct ParcelRow {
 impl ParcelRow {
     /// The exact Parcel JSON shape from docs/API.md §Parcels.
     fn to_json(&self) -> ApiResult<Value> {
-        let geometry: Value = serde_json::from_str(&self.geometry_json)
-            .map_err(|e| ApiError::Internal(e.into()))?;
+        let geometry: Value =
+            serde_json::from_str(&self.geometry_json).map_err(|e| ApiError::Internal(e.into()))?;
         Ok(json!({
             "id": self.id,
             "farm_id": self.farm_id,
@@ -84,11 +126,12 @@ impl ParcelRow {
 
 /// Validate that the farm exists in the caller's org (task: farm-belongs-to-org → 400).
 async fn ensure_farm(pool: &PgPool, org_id: Uuid, farm_id: Uuid) -> ApiResult<()> {
-    let found: Option<Uuid> = sqlx::query_scalar("SELECT id FROM farms WHERE id = $1 AND org_id = $2")
-        .bind(farm_id)
-        .bind(org_id)
-        .fetch_optional(pool)
-        .await?;
+    let found: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM farms WHERE id = $1 AND org_id = $2")
+            .bind(farm_id)
+            .bind(org_id)
+            .fetch_optional(pool)
+            .await?;
     if found.is_none() {
         return Err(ApiError::BadRequest("farm not found in this org".into()));
     }
@@ -117,7 +160,9 @@ async fn validate_geometry(pool: &PgPool, geometry: &Value) -> ApiResult<()> {
         other => ApiError::from(other),
     })?;
     if !valid {
-        return Err(ApiError::BadRequest("geometry is not topologically valid".into()));
+        return Err(ApiError::BadRequest(
+            "geometry is not topologically valid".into(),
+        ));
     }
     if area_ha > 10_000.0 {
         return Err(ApiError::BadRequest(format!(
@@ -128,9 +173,10 @@ async fn validate_geometry(pool: &PgPool, geometry: &Value) -> ApiResult<()> {
 }
 
 /// Insert one parcel and return the full read shape. Caller validates geometry/farm first.
+/// Generic over the executor so import can run every insert inside one transaction.
 #[allow(clippy::too_many_arguments)]
-async fn insert_parcel(
-    pool: &PgPool,
+async fn insert_parcel<'e, E: sqlx::PgExecutor<'e>>(
+    exec: E,
     org_id: Uuid,
     farm_id: Uuid,
     name: &str,
@@ -154,7 +200,7 @@ async fn insert_parcel(
         .bind(variety)
         .bind(planting_date)
         .bind(season_year)
-        .fetch_one(pool)
+        .fetch_one(exec)
         .await?;
     Ok(row)
 }
@@ -184,7 +230,10 @@ async fn list(
         .bind(q.include_archived)
         .fetch_all(&st.pool)
         .await?;
-    let out = rows.iter().map(ParcelRow::to_json).collect::<ApiResult<Vec<_>>>()?;
+    let out = rows
+        .iter()
+        .map(ParcelRow::to_json)
+        .collect::<ApiResult<Vec<_>>>()?;
     Ok(Json(out))
 }
 
@@ -209,6 +258,12 @@ async fn create(
     if name.is_empty() {
         return Err(ApiError::BadRequest("name is required".into()));
     }
+    validate_fields(
+        Some(name),
+        body.crop.as_deref(),
+        body.variety.as_deref(),
+        body.season_year,
+    )?;
     ensure_farm(&st.pool, user.org_id, body.farm_id).await?;
     validate_geometry(&st.pool, &body.geometry).await?;
     let row = insert_parcel(
@@ -251,13 +306,27 @@ async fn get_one(
     Ok(Json(row.to_json()?))
 }
 
+/// Distinguishes "field omitted" (None) from "field set to null" (Some(None)) so PATCH can
+/// actually clear nullable columns — plain Option can't represent both.
+fn double_option<'de, T, D>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(de).map(Some)
+}
+
 #[derive(Deserialize)]
 struct PatchParcel {
     name: Option<String>,
-    crop: Option<String>,
-    variety: Option<String>,
-    planting_date: Option<NaiveDate>,
-    season_year: Option<i32>,
+    #[serde(default, deserialize_with = "double_option")]
+    crop: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    variety: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    planting_date: Option<Option<NaiveDate>>,
+    #[serde(default, deserialize_with = "double_option")]
+    season_year: Option<Option<i32>>,
     geometry: Option<Value>,
     archived: Option<bool>,
 }
@@ -276,21 +345,28 @@ async fn update(
         Some(n) => Some(n.trim()),
         None => None,
     };
+    validate_fields(
+        name,
+        body.crop.as_ref().and_then(|o| o.as_deref()),
+        body.variety.as_ref().and_then(|o| o.as_deref()),
+        body.season_year.flatten(),
+    )?;
     if let Some(g) = &body.geometry {
         validate_geometry(&st.pool, g).await?;
     }
     let geometry_str = body.geometry.as_ref().map(Value::to_string);
-    // COALESCE keeps existing values for omitted fields; geometry replaced only when present.
+    // Omitted fields keep their value; nullable fields sent as explicit null are cleared
+    // (set-flag + value pairs); geometry replaced only when present.
     let sql = format!(
         "UPDATE parcels SET
             name = COALESCE($3, name),
-            crop = COALESCE($4, crop),
-            variety = COALESCE($5, variety),
-            planting_date = COALESCE($6, planting_date),
-            season_year = COALESCE($7, season_year),
-            archived = COALESCE($8, archived),
-            geom = CASE WHEN $9::text IS NOT NULL
-                        THEN ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($9), 4326))
+            crop = CASE WHEN $4 THEN $5 ELSE crop END,
+            variety = CASE WHEN $6 THEN $7 ELSE variety END,
+            planting_date = CASE WHEN $8 THEN $9 ELSE planting_date END,
+            season_year = CASE WHEN $10 THEN $11 ELSE season_year END,
+            archived = COALESCE($12, archived),
+            geom = CASE WHEN $13::text IS NOT NULL
+                        THEN ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($13), 4326))
                         ELSE geom END,
             updated_at = now()
          WHERE id = $1 AND org_id = $2
@@ -300,10 +376,14 @@ async fn update(
         .bind(id)
         .bind(user.org_id)
         .bind(name)
-        .bind(body.crop.as_deref())
-        .bind(body.variety.as_deref())
-        .bind(body.planting_date)
-        .bind(body.season_year)
+        .bind(body.crop.is_some())
+        .bind(body.crop.clone().flatten())
+        .bind(body.variety.is_some())
+        .bind(body.variety.clone().flatten())
+        .bind(body.planting_date.is_some())
+        .bind(body.planting_date.flatten())
+        .bind(body.season_year.is_some())
+        .bind(body.season_year.flatten())
         .bind(body.archived)
         .bind(geometry_str)
         .fetch_optional(&st.pool)
@@ -369,10 +449,21 @@ async fn import(
         .feature_collection
         .get("features")
         .and_then(Value::as_array)
-        .ok_or_else(|| ApiError::BadRequest("feature_collection.features must be an array".into()))?;
+        .ok_or_else(|| {
+            ApiError::BadRequest("feature_collection.features must be an array".into())
+        })?;
+    if features.len() > MAX_IMPORT_FEATURES {
+        return Err(ApiError::BadRequest(format!(
+            "too many features (max {MAX_IMPORT_FEATURES} per import)"
+        )));
+    }
 
+    // All-or-nothing: a DB failure mid-import must not leave a partial batch behind
+    // (a client retry would then duplicate the committed half).
     let mut created: Vec<Value> = Vec::new();
+    let mut created_meta: Vec<(Uuid, String)> = Vec::new();
     let mut skipped: usize = 0;
+    let mut tx = st.pool.begin().await?;
     for (i, feature) in features.iter().enumerate() {
         let geometry = match feature.get("geometry") {
             Some(g) if !g.is_null() => g,
@@ -398,24 +489,44 @@ async fn import(
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| format!("Parcella {}", i + 1));
+        require_len("name", &name, 200)?;
         let crop = props.and_then(|p| p.get("crop")).and_then(Value::as_str);
+        if let Some(c) = crop {
+            require_len("crop", c, 100)?;
+        }
 
-        let row =
-            insert_parcel(&st.pool, user.org_id, body.farm_id, &name, geometry, crop, None, None, None)
-                .await?;
+        let row = insert_parcel(
+            &mut *tx,
+            user.org_id,
+            body.farm_id,
+            &name,
+            geometry,
+            crop,
+            None,
+            None,
+            None,
+        )
+        .await?;
+        created_meta.push((row.id, row.name.clone()));
+        created.push(row.to_json()?);
+    }
+    tx.commit().await?;
+    for (id, name) in created_meta {
         audit::record(
             &st.pool,
             user.org_id,
             Some(user.user_id),
             "parcel.create",
             "parcel",
-            row.id,
-            json!({ "name": row.name, "farm_id": row.farm_id, "source": "import" }),
+            id,
+            json!({ "name": name, "farm_id": body.farm_id, "source": "import" }),
         )
         .await;
-        created.push(row.to_json()?);
     }
-    Ok((StatusCode::CREATED, Json(json!({ "created": created, "skipped": skipped }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "created": created, "skipped": skipped })),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -452,5 +563,7 @@ async fn export(
             "properties": props,
         }));
     }
-    Ok(Json(json!({ "type": "FeatureCollection", "features": features })))
+    Ok(Json(
+        json!({ "type": "FeatureCollection", "features": features }),
+    ))
 }

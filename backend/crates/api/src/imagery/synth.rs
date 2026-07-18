@@ -2,9 +2,10 @@
 //! generates a crop-plausible seasonal curve per index so the whole agronomy loop
 //! (series → anomaly → alert → report) runs end-to-end without the `imagery` feature.
 //!
-//! Determinism: the RNG is seeded from the parcel UUID, and timestamps are anchored to
-//! calendar dates (not wall-clock instants), so re-seeding on the same day is stable and
-//! `ON CONFLICT (parcel_id, index_name, observed_at)` dedupes cleanly.
+//! Determinism: the RNG is seeded from the parcel UUID and sample dates sit on an
+//! absolute 5-day grid anchored at Mar 1 (not rescaled to the wall clock), so the same
+//! calendar date always produces the same rows. The seeder additionally deletes its own
+//! `source = 'demo'` rows before inserting, making `seed --demo` idempotent across days.
 use std::f64::consts::PI;
 
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
@@ -27,10 +28,12 @@ pub struct SynthObs {
     pub source: &'static str,
 }
 
-pub const INDEX_NAMES: [&str; 5] = ["ndvi", "ndre", "gndvi", "ndmi", "savi"];
+pub use arvo_core::indices::INDEX_NAMES;
 
-/// Number of acquisitions across the season (~5-day revisit with cloud gaps).
+/// Max acquisitions kept (the newest ones); the sample grid is a fixed 5-day revisit.
 const N_POINTS: usize = 18;
+/// Sentinel-2-like revisit cadence anchoring the absolute sample grid.
+const REVISIT_DAYS: i64 = 5;
 /// Gaussian temporal noise on the mean (task spec: σ = 0.03).
 const NOISE_SD: f64 = 0.03;
 /// Within-parcel spatial spread used to derive p10/p90/stddev around the mean.
@@ -47,17 +50,26 @@ pub fn series(parcel_id: Uuid, anomaly: bool) -> Vec<SynthObs> {
 pub fn series_until(parcel_id: Uuid, anomaly: bool, end: NaiveDate) -> Vec<SynthObs> {
     let mut rng = seeded_rng(parcel_id);
     let start = NaiveDate::from_ymd_opt(end.year_from_march(), 3, 1).unwrap();
-    let span = (end - start).num_days().max(1);
 
-    let mut out = Vec::with_capacity(N_POINTS * INDEX_NAMES.len());
-    for i in 0..N_POINTS {
-        // Evenly spaced sample dates across [start, end]; t in [0, 1] is the season fraction.
-        let t = i as f64 / (N_POINTS - 1) as f64;
-        let day = (t * span as f64).round() as i64;
-        let date = start + Duration::days(day);
+    // Absolute grid: Mar 1 + k*5 days, keeping the newest ≤ N_POINTS dates ≤ end. Interior
+    // dates never move as `end` advances, so re-seeding on a later day produces a superset
+    // series instead of interleaved duplicates. Early in the season the series is simply
+    // shorter (the demo anomaly needs ~4 points before the detector can fire).
+    let season_days = (end - start).num_days().max(0);
+    let k_max = season_days / REVISIT_DAYS;
+    let k_min = (k_max - (N_POINTS as i64 - 1)).max(0);
+    let dates: Vec<NaiveDate> = (k_min..=k_max)
+        .map(|k| start + Duration::days(k * REVISIT_DAYS))
+        .collect();
+    let n_dates = dates.len();
+
+    let mut out = Vec::with_capacity(n_dates * INDEX_NAMES.len());
+    for (i, date) in dates.iter().enumerate() {
+        // Season fraction still spans the whole Mar→Oct arc for the curve shape.
+        let t = ((*date - start).num_days() as f64 / 214.0).clamp(0.0, 1.0);
         // Sentinel-2 overpass is ~10:00 UTC; keep a stable time-of-day.
         let observed_at = Utc.from_utc_datetime(&date.and_hms_opt(10, 0, 0).unwrap());
-        let last_two = i >= N_POINTS - 2;
+        let last_two = i + 2 >= n_dates;
 
         let base = ndvi_curve(t);
         let cloud_pct = rng.gen_range(0.0..40.0);
@@ -184,14 +196,21 @@ mod tests {
     fn different_parcels_differ() {
         let a = series_until(Uuid::from_u128(1), false, end());
         let b = series_until(Uuid::from_u128(2), false, end());
-        let same = a.iter().zip(&b).all(|(x, y)| (x.mean - y.mean).abs() < 1e-12);
+        let same = a
+            .iter()
+            .zip(&b)
+            .all(|(x, y)| (x.mean - y.mean).abs() < 1e-12);
         assert!(!same, "distinct parcels should produce distinct noise");
     }
 
     #[test]
     fn ndvi_greens_up_over_season() {
         let s = series_until(Uuid::from_u128(7), false, end());
-        let ndvi: Vec<f64> = s.iter().filter(|o| o.index_name == "ndvi").map(|o| o.mean).collect();
+        let ndvi: Vec<f64> = s
+            .iter()
+            .filter(|o| o.index_name == "ndvi")
+            .map(|o| o.mean)
+            .collect();
         // early season is bare-ish, peak season is high
         assert!(ndvi[0] < 0.4, "early ndvi {} too high", ndvi[0]);
         let peak = ndvi.iter().cloned().fold(f64::MIN, f64::max);
@@ -204,8 +223,16 @@ mod tests {
         let clean = series_until(id, false, end());
         let dipped = series_until(id, true, end());
         for name in ["ndvi", "savi"] {
-            let c: Vec<f64> = clean.iter().filter(|o| o.index_name == name).map(|o| o.mean).collect();
-            let d: Vec<f64> = dipped.iter().filter(|o| o.index_name == name).map(|o| o.mean).collect();
+            let c: Vec<f64> = clean
+                .iter()
+                .filter(|o| o.index_name == name)
+                .map(|o| o.mean)
+                .collect();
+            let d: Vec<f64> = dipped
+                .iter()
+                .filter(|o| o.index_name == name)
+                .map(|o| o.mean)
+                .collect();
             let n = c.len();
             // last two points drop ~25%, earlier points unchanged
             assert!((c[n - 3] - d[n - 3]).abs() < 1e-12);
@@ -213,8 +240,16 @@ mod tests {
             assert!(d[n - 2] < c[n - 2] * 0.8, "{name} penultimate not dipped");
         }
         // ndre must be untouched by the anomaly
-        let cn: Vec<f64> = clean.iter().filter(|o| o.index_name == "ndre").map(|o| o.mean).collect();
-        let dn: Vec<f64> = dipped.iter().filter(|o| o.index_name == "ndre").map(|o| o.mean).collect();
+        let cn: Vec<f64> = clean
+            .iter()
+            .filter(|o| o.index_name == "ndre")
+            .map(|o| o.mean)
+            .collect();
+        let dn: Vec<f64> = dipped
+            .iter()
+            .filter(|o| o.index_name == "ndre")
+            .map(|o| o.mean)
+            .collect();
         assert!(cn.iter().zip(&dn).all(|(a, b)| (a - b).abs() < 1e-12));
     }
 

@@ -23,8 +23,13 @@ pub struct SceneRow {
     pub id: Uuid,
     pub stac_id: String,
     pub acquired_at: DateTime<Utc>,
+    /// Persisted via SQL; kept on the struct for logging/debug context.
+    #[allow(dead_code)]
     pub cloud_cover: Option<f64>,
     pub assets: Value,
+    /// Earth Search harmonization flag: when true the -1000 BOA offset is already baked
+    /// into the DNs and reflectance conversion must NOT subtract it again.
+    pub boa_offset_applied: Option<bool>,
 }
 
 pub struct StacResult {
@@ -53,6 +58,8 @@ struct FeatureCollection {
 struct Feature {
     id: String,
     #[serde(default)]
+    bbox: Option<Vec<f64>>,
+    #[serde(default)]
     properties: Properties,
     #[serde(default)]
     assets: HashMap<String, Asset>,
@@ -63,6 +70,8 @@ struct Properties {
     datetime: Option<String>,
     #[serde(rename = "eo:cloud_cover")]
     cloud_cover: Option<f64>,
+    #[serde(rename = "earthsearch:boa_offset_applied")]
+    boa_offset_applied: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -107,6 +116,14 @@ pub async fn search_and_upsert(
         .context("stac search decode")?;
 
     let found = fc.features.len();
+    if found >= 100 {
+        // Page-full: Earth Search returned exactly the limit — results are likely truncated.
+        // Long windows should be narrowed (the API clamps `days`), or pagination added here.
+        tracing::warn!(
+            found,
+            "STAC search hit the page limit — older scenes may be missing"
+        );
+    }
     let mut new = 0usize;
     let mut scenes = Vec::with_capacity(found);
 
@@ -127,20 +144,33 @@ pub async fn search_and_upsert(
         }
         let assets = Value::Object(assets);
 
-        // Upsert on stac_id; (xmax = 0) is true only for freshly inserted rows.
+        // Item bbox [w, s, e, n] → footprint polygon (drives per-parcel scene listing).
+        let bbox = f.bbox.as_ref().filter(|b| b.len() == 4);
+        // Upsert on stac_id; (xmax = 0) is true only for freshly inserted rows. bbox and the
+        // offset flag are refreshed too, so pre-existing rows self-heal on the next refresh.
         let row: (Uuid, bool) = sqlx::query_as(
-            "INSERT INTO scenes (source, stac_id, acquired_at, cloud_cover, assets)
-             VALUES ('sentinel-2-l2a', $1, $2, $3, $4)
+            "INSERT INTO scenes (source, stac_id, acquired_at, cloud_cover, assets, bbox, boa_offset_applied)
+             VALUES ('sentinel-2-l2a', $1, $2, $3, $4,
+                     CASE WHEN $5::float8 IS NULL THEN NULL
+                          ELSE ST_MakeEnvelope($5, $6, $7, $8, 4326) END,
+                     $9)
              ON CONFLICT (stac_id) DO UPDATE
                SET acquired_at = EXCLUDED.acquired_at,
                    cloud_cover = EXCLUDED.cloud_cover,
-                   assets = EXCLUDED.assets
+                   assets = EXCLUDED.assets,
+                   bbox = COALESCE(EXCLUDED.bbox, scenes.bbox),
+                   boa_offset_applied = COALESCE(EXCLUDED.boa_offset_applied, scenes.boa_offset_applied)
              RETURNING id, (xmax = 0) AS inserted",
         )
         .bind(&f.id)
         .bind(acquired_at)
         .bind(f.properties.cloud_cover)
         .bind(&assets)
+        .bind(bbox.map(|b| b[0]))
+        .bind(bbox.map(|b| b[1]))
+        .bind(bbox.map(|b| b[2]))
+        .bind(bbox.map(|b| b[3]))
+        .bind(f.properties.boa_offset_applied)
         .fetch_one(pool)
         .await
         .context("upsert scene")?;
@@ -154,6 +184,7 @@ pub async fn search_and_upsert(
             acquired_at,
             cloud_cover: f.properties.cloud_cover,
             assets,
+            boa_offset_applied: f.properties.boa_offset_applied,
         });
     }
 
