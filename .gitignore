@@ -12,3 +12,5 @@ var/
 # OS / editor
 .DS_Store
 *.log
+# design source mocks (kept locally, not in the repo)
+ui-mock.zip

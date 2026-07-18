@@ -4,17 +4,21 @@ services:
     image: postgis/postgis:16-3.4
     container_name: arvo-db
     ports:
-      - "5439:5432"
+      # Host port is overridable so a local Postgres on 5432/5439 never collides.
+      - "${ARVO_DB_PORT:-5439}:5432"
     environment:
-      POSTGRES_USER: arvo
-      POSTGRES_PASSWORD: arvo
-      POSTGRES_DB: arvo
+      POSTGRES_USER: ${ARVO_DB_USER:-arvo}
+      POSTGRES_PASSWORD: ${ARVO_DB_PASSWORD:-arvo}
+      POSTGRES_DB: ${ARVO_DB_NAME:-arvo}
     volumes:
       - arvo-db:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U arvo -d arvo"]
+      test: ["CMD-SHELL", "pg_isready -U ${ARVO_DB_USER:-arvo} -d ${ARVO_DB_NAME:-arvo}"]
       interval: 3s
       timeout: 3s
       retries: 20
+      # Unclean shutdowns (laptop sleep/power loss) need WAL recovery + fsync
+      # before accepting connections; don't let `--wait` give up during that.
+      start_period: 60s
 volumes:
   arvo-db:

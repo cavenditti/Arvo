@@ -8,14 +8,28 @@
 # handled the request, and only WARN (never fail) when the upstream is unreachable.
 set -euo pipefail
 
+# Always run from the repo root so the compose file resolves regardless of caller cwd.
+cd "$(dirname "$0")/.."
+
 PORT="${PORT:-8787}"
 BASE="http://localhost:${PORT}"
 COMPOSE="docker compose -f infra/docker-compose.yml"
+
+# Temp files are registered here and removed on any exit (incl. fail()).
+TMPFILES=()
+cleanup() { rm -f "${TMPFILES[@]:-}"; }
+trap cleanup EXIT
+# Portable mktemp (BSD -t and GNU -t disagree); optional suffix as $2.
+mkt() { local f; f="$(mktemp "${TMPDIR:-/tmp}/$1.XXXXXX")${2:-}"; TMPFILES+=("$f"); echo "$f"; }
 
 N=0
 pass() { N=$((N + 1)); echo "PASS ${N} — $1"; }
 fail() { echo "FAIL — $1" >&2; exit 1; }
 warn() { echo "WARN — $1" >&2; }
+
+# Preflight: fail with a friendly message when the API isn't up at all.
+curl -fsS -o /dev/null --max-time 5 "${BASE}/healthz" \
+  || fail "API not reachable at ${BASE} — start it with \`make api\` (or \`make api-imagery\`) first"
 
 # jq_get <json> <filter> : extract a value, failing loudly if absent/null.
 jq_get() { echo "$1" | jq -er "$2" 2>/dev/null || fail "missing $2 in response: $1"; }
@@ -135,7 +149,7 @@ echo "$(body_of "$R")" | jq -e '.changes | type == "array"' >/dev/null || fail "
 pass "observations pull-since"
 
 # Photo upload + static serving.
-TMPJPG="$(mktemp -t arvo-smoke).jpg"
+TMPJPG="$(mkt arvo-smoke .jpg)"
 base64 -d > "$TMPJPG" <<'B64'
 /9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a
 HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAA
@@ -146,9 +160,24 @@ R=$(curl -sS -w $'\n%{http_code}' -H "Authorization: Bearer ${TOK_A}" -F "file=@
 PHOTO_PATH=$(jq_get "$(body_of "$R")" '.path')
 pass "photo upload (${PHOTO_PATH})"
 
+# Photos are private: bare fetch must 401, a short-lived media token must work.
 R=$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}${PHOTO_PATH}")
-[ "$R" = "200" ] || fail "GET ${PHOTO_PATH} served (${R})"
-pass "GET /uploads served the photo"
+[ "$R" = "401" ] || fail "GET ${PHOTO_PATH} without auth should be 401 (got ${R})"
+pass "GET /uploads rejects unauthenticated fetch (401)"
+
+R=$(api POST /api/v1/auth/media-token "$TOK_A")
+[ "$(code_of "$R")" = "200" ] || fail "media token ($(code_of "$R"))"
+MEDIA_A=$(jq_get "$(body_of "$R")" '.token')
+pass "media token issued"
+
+R=$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}${PHOTO_PATH}?token=${MEDIA_A}")
+[ "$R" = "200" ] || fail "GET ${PHOTO_PATH} with media token (${R})"
+pass "GET /uploads served the photo (media token)"
+
+# A full session JWT in the query string must be rejected (only media tokens ride in URLs).
+R=$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}${PHOTO_PATH}?token=${TOK_A}")
+[ "$R" = "401" ] || fail "session JWT in query string should be rejected (got ${R})"
+pass "session tokens rejected in query strings"
 
 # GeoJSON export.
 R=$(api GET "/api/v1/parcels/export.geojson?farm_id=${FARM_A}" "$TOK_A")
@@ -229,6 +258,11 @@ pass "audit rows present (${AUDIT})"
 # ---------------------------------------------------------------------------
 IMAGERY=$(curl -sS "${BASE}/api/v1/meta" | jq -r '.features.imagery // false')
 if [ "$IMAGERY" = "true" ]; then
+  # Tile URLs carry media tokens, not session JWTs.
+  R=$(api POST /api/v1/auth/media-token "$TOK_D")
+  [ "$(code_of "$R")" = "200" ] || fail "media token (demo)"
+  MEDIA_D=$(jq_get "$(body_of "$R")" '.token')
+
   # z15 XYZ tile over the demo parcel centroid (slippy math in awk).
   R=$(api GET "/api/v1/parcels/${VIGNETO}" "$TOK_D")
   CLON=$(jq_get "$(body_of "$R")" '.centroid.lon')
@@ -241,24 +275,22 @@ if [ "$IMAGERY" = "true" ]; then
     printf "%d %d", x, y }')
   TX=${TXY% *}; TY=${TXY#* }
 
-  TILE="$(mktemp -t arvo-tile).png"
-  CODE=$(curl -sS -o "$TILE" -w '%{http_code}' "${BASE}/api/v1/tiles/${VIGNETO}/ndvi/15/${TX}/${TY}.png?token=${TOK_D}")
+  TILE="$(mkt arvo-tile .png)"
+  CODE=$(curl -sS -o "$TILE" -w '%{http_code}' "${BASE}/api/v1/tiles/${VIGNETO}/ndvi/15/${TX}/${TY}.png?token=${MEDIA_D}")
   [ "$CODE" = "200" ] || fail "tile fetch (${CODE})"
   MAGIC=$(od -An -tx1 -N4 "$TILE" | tr -d ' \n')
   [ "$MAGIC" = "89504e47" ] || fail "tile is not a PNG (magic=${MAGIC})"
   pass "raster tile PNG (z15 ${TX}/${TY}, $(wc -c < "$TILE" | tr -d ' ') bytes, magic 89504e47)"
 
-  TIF="$(mktemp -t arvo-idx).tif"
-  CODE=$(curl -sS -o "$TIF" -w '%{http_code}' "${BASE}/api/v1/parcels/${VIGNETO}/indices/ndvi.tif?token=${TOK_D}")
+  TIF="$(mkt arvo-idx .tif)"
+  CODE=$(curl -sS -o "$TIF" -w '%{http_code}' "${BASE}/api/v1/parcels/${VIGNETO}/indices/ndvi.tif?token=${MEDIA_D}")
   [ "$CODE" = "200" ] || fail "geotiff export (${CODE})"
   [ -s "$TIF" ] || fail "geotiff export is empty"
   TMAGIC=$(od -An -tx1 -N2 "$TIF" | tr -d ' \n')
   case "$TMAGIC" in 4949|4d4d) : ;; *) fail "geotiff bad TIFF magic (${TMAGIC})";; esac
   pass "GeoTIFF export ($(wc -c < "$TIF" | tr -d ' ') bytes, TIFF magic ${TMAGIC})"
-  rm -f "$TILE" "$TIF"
 else
   warn "imagery feature off — skipping tile/GeoTIFF steps (FR-0-027)"
 fi
 
-rm -f "$TMPJPG"
 echo "== ALL ${N} STEPS PASSED =="

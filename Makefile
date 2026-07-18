@@ -1,6 +1,7 @@
 # Arvo monorepo tasks. Prereqs: docker, rust, node 20+.
 
-.PHONY: db-up db-down migrate api api-imagery ingest seed smoke app app-web check check-api check-app test
+.PHONY: db-up db-down migrate api api-imagery ingest seed smoke app app-web \
+        check check-api check-app fmt fmt-check lint test
 
 db-up:
 	docker compose -f infra/docker-compose.yml up -d --wait
@@ -25,8 +26,9 @@ ingest: db-up
 seed: db-up
 	cd backend && cargo run -p arvo-api -- seed --demo
 
+# Honors PORT from .env so smoke always targets the same port `make api` serves on.
 smoke:
-	bash scripts/smoke.sh
+	set -a; [ -f .env ] && . ./.env; set +a; bash scripts/smoke.sh
 
 app:
 	cd app && npx expo start
@@ -37,7 +39,19 @@ app-web:
 check: check-api check-app
 
 check-api:
-	cd backend && cargo check --workspace && cargo test --workspace
+	cd backend && cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 
 check-app:
-	cd app && npx tsc --noEmit
+	cd app && npx tsc --noEmit && npm run --silent lint
+
+fmt:
+	cd backend && cargo fmt
+
+fmt-check:
+	cd backend && cargo fmt --check
+
+lint:
+	cd backend && cargo clippy --workspace --all-targets -- -D warnings
+
+test:
+	cd backend && cargo test --workspace

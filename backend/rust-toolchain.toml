@@ -1,0 +1,4 @@
+[toolchain]
+# Keep in sync with CI. Bump deliberately; `cargo fmt`/clippy output changes across versions.
+channel = "1.96"
+components = ["rustfmt", "clippy"]

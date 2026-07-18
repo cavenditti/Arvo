@@ -7,7 +7,7 @@ season reports — multi-tenant, decision-support only (no actuation).
 
 - **backend/** — Rust (axum + sqlx + PostGIS). Single binary: HTTP API + CLI (`migrate`, `seed`, `ingest-imagery`, `detect-anomalies`).
 - **app/** — Expo (React Native, TypeScript). One codebase → iOS, Android **and web portal**. Italian-first i18n.
-- **docs/** — [PHASE0.md](docs/PHASE0.md) (scope & traceability) · [API.md](docs/API.md) (REST contract) · [AGENTS.md](docs/AGENTS.md) (conventions).
+- **docs/** — [PHASE0.md](docs/PHASE0.md) (scope & traceability) · [API.md](docs/API.md) (REST contract) · [DESIGN.md](docs/DESIGN.md) (Terra design language) · [AGENTS.md](docs/AGENTS.md) (conventions).
 
 ## Quickstart
 
@@ -46,12 +46,13 @@ installed GDAL — no system-version guessing. `png` is an optional dep wired in
 When enabled, `/api/v1/meta` reports `"features": {"imagery": true}` and these routes light up
 (FR-0-027):
 
-- `GET /api/v1/tiles/{parcel}/{index}/{z}/{x}/{y}.png?token=<jwt>` — 256×256 RGBA Web-Mercator XYZ
-  tiles (red→yellow→green for ndvi/ndre/gndvi/savi, brown→white→blue for ndmi; clouds/nodata
-  transparent). Cached on disk under `TILE_CACHE_DIR` (default `./var/tiles`). Bearer header **or**
-  `?token=` query param, since raster `<img>` clients cannot set headers.
-- `GET /api/v1/parcels/{id}/indices/{index}.tif?token=<jwt>` — float32 GeoTIFF of the index clipped
-  to the parcel bbox + 60 m buffer.
+- `GET /api/v1/tiles/{parcel}/{index}/{z}/{x}/{y}.png?token=<media token>` — 256×256 RGBA
+  Web-Mercator XYZ tiles (red→yellow→green for ndvi/ndre/gndvi/savi, brown→white→blue for ndmi;
+  clouds/nodata transparent). Cached on disk under `TILE_CACHE_DIR` (default `./var/tiles`).
+  Bearer header, or a short-lived media token in `?token=` since raster `<img>` clients cannot
+  set headers (see docs/API.md §"Media tokens").
+- `GET /api/v1/parcels/{id}/indices/{index}.tif?token=<media token>` — float32 GeoTIFF of the
+  index clipped to the parcel bbox + 60 m buffer.
 
 Without the feature the default build stays dependency-free: the platform still ingests the STAC
 scene catalog, and `make seed` synthesizes realistic index series so the full loop (series →
