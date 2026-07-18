@@ -208,14 +208,16 @@ pass "seeded NDVI series present (${SLEN} points)"
 
 R=$(api GET "/api/v1/parcels/${VIGNETO}/indices.csv?index=ndvi" "$TOK_D")
 [ "$(code_of "$R")" = "200" ] || fail "csv export"
-echo "$(body_of "$R")" | head -1 | grep -q '^observed_at,mean' || fail "csv header missing"
+# Pure-bash checks: with pipefail, early-exiting readers (head/grep -q) SIGPIPE the writer
+# and fail the pipeline even on a successful match (races by pipe-buffer timing on Linux).
+case "$(body_of "$R")" in observed_at,mean*) : ;; *) fail "csv header missing" ;; esac
 [ "$(body_of "$R" | wc -l)" -ge 2 ] || fail "csv has no data rows"
 pass "indices CSV export"
 
 # No state filter: the alert may already be acked/snoozed from a prior run — we only assert it exists.
 R=$(api GET "/api/v1/alerts?parcel_id=${VIGNETO}" "$TOK_D")
 [ "$(code_of "$R")" = "200" ] || fail "list alerts"
-ALERT_ID=$(echo "$(body_of "$R")" | jq -r '.[] | select(.kind=="index_drop") | .id' | head -1)
+ALERT_ID=$(echo "$(body_of "$R")" | jq -r '[.[] | select(.kind=="index_drop") | .id][0] // empty')
 [ -n "$ALERT_ID" ] || fail "no index_drop alert for Vigneto Nord (detector did not fire)"
 pass "anomaly alert exists (index_drop)"
 
@@ -232,7 +234,7 @@ pass "alert snooze"
 # Season report (HTML + mandatory decision-support disclaimer).
 R=$(api GET "/api/v1/reports/parcels/${VIGNETO}/season?lang=it" "$TOK_D")
 [ "$(code_of "$R")" = "200" ] || fail "season report"
-echo "$(body_of "$R")" | grep -q 'prescrizione agronomica' || fail "report missing decision-support disclaimer"
+case "$(body_of "$R")" in *"prescrizione agronomica"*) : ;; *) fail "report missing decision-support disclaimer" ;; esac
 pass "season report HTML (disclaimer present)"
 
 # ---------------------------------------------------------------------------
