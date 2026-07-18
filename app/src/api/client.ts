@@ -27,15 +27,27 @@ export class ApiError extends Error {
   }
 }
 
+// Mirrors the backend's 15s outbound-HTTP rule: a hung connection in the field must
+// surface as a retryable error, not an endless spinner (and not block the sync mutex).
+const REQUEST_TIMEOUT_MS = 15_000;
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API_URL}/api/v1${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/api/v1${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   if (res.status === 401 && onUnauthorized) onUnauthorized();
   if (!res.ok) {
     let code = 'internal';

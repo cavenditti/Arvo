@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 
 import { TintCard } from '../components/ui';
-import { colors, fonts, gradients, radius, spacing } from '../theme';
+import { colors, fonts, gradients, radius, severityTint, spacing } from '../theme';
 
 export function Field({ label, ...props }: { label: string } & TextInputProps) {
   return (
@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
   link: { alignItems: 'center', paddingVertical: spacing.md },
   linkText: { color: colors.primary, fontSize: 15, fontFamily: fonts.bodySemiBold },
   errorBox: {
-    backgroundColor: '#F7E7E2',
+    backgroundColor: severityTint.critical.bg,
     borderRadius: radius.sm,
     padding: spacing.md,
     marginBottom: spacing.md,

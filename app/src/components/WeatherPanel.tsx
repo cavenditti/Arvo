@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { AgroSummary } from '@/api/types';
-import { kindGlyph, weatherGlyph } from '@/components/glyphs';
+import { kindGlyph, weatherGlyph, weatherTone } from '@/components/glyphs';
 import { dfLocale } from '@/features/insights/format';
 import { colors, fonts, radius, severityGradient, severityTint, spacing, weatherGradient } from '@/theme';
 import { GlyphCard, MonoLabel, MonoValue } from './ui';
@@ -25,7 +25,7 @@ export default function WeatherPanel({ daily, agro, advisories }: WeatherPanelPr
               key={d.date}
               gradient={weatherGradient(d.t_min, d.t_max, d.precip_mm)}
               glyph={weatherGlyph(d.t_min, d.t_max, d.precip_mm)}
-              glyphColor={weatherGlyphColor(d.t_min, d.t_max, d.precip_mm)}
+              glyphColor={weatherTone(weatherGlyph(d.t_min, d.t_max, d.precip_mm))}
               glyphOpacity={0.18}
               glyphSize={76}
               style={styles.day}
@@ -107,19 +107,6 @@ function Chip({ label, value, balance }: { label: string; value: string; balance
       </MonoValue>
     </View>
   );
-}
-
-/** Weather-day glyph tone, matched to the backdrop family (mirrors theme.weatherGradient). */
-function weatherGlyphColor(
-  tMin: number | null,
-  tMax: number | null,
-  precipMm: number | null,
-): string {
-  if (tMin != null && tMin <= 0) return colors.info; // frost
-  if ((precipMm ?? 0) >= 1) return colors.info; // rain
-  if (tMax != null && tMax >= 32) return colors.warning; // hot
-  if (tMax != null && tMax >= 20) return colors.warning; // clear
-  return colors.textFaint; // cloud / mild
 }
 
 function fmtTemp(v: number | null): string {

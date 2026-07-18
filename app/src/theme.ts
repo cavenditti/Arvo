@@ -73,6 +73,15 @@ export function severityGradient(severity?: string | null): [string, string] {
   return gradients.eucalyptus;
 }
 
+// Alert lifecycle state → chip tint (shared by AlertList and the web alerts screen).
+export type AlertStateKey = 'open' | 'acked' | 'snoozed' | 'dismissed';
+export const alertStateTint: Record<AlertStateKey, { fg: string; bg: string }> = {
+  open: { fg: colors.primary, bg: colors.primarySoft },
+  acked: { fg: colors.textMuted, bg: colors.borderSoft },
+  snoozed: { fg: colors.info, bg: severityTint.info.bg },
+  dismissed: { fg: colors.textFaint, bg: colors.borderSoft },
+};
+
 // Parcel/alert health status: chip tint + text color pairs.
 export type Status = 'healthy' | 'watch' | 'attention';
 export const statusColors: Record<Status, { fg: string; bg: string }> = {

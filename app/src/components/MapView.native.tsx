@@ -40,6 +40,9 @@ export default function MapView(props: MapViewProps) {
         const msg = JSON.parse(e.nativeEvent.data);
         if (msg.type === 'ready') {
           readyRef.current = true;
+          // A fresh document announcing ready (first boot OR a WebView content-process
+          // reload) has no map state — clear the dedupe so the init is always re-sent.
+          lastSent.current = '';
           send();
         } else if (msg.type === 'select' && msg.id) {
           onSelectParcel?.(msg.id);

@@ -15,30 +15,30 @@ import { INDEX_NAMES, type Alert, type IndexName } from '@/api/types';
 import MapView from '@/components/MapView';
 import type { ParcelFeature } from '@/components/types';
 import { MonoLabel, MonoValue, StatusChip, TintCard } from '@/components/ui';
+import { severityRank } from '@/features/insights/alerts';
 import { INDEX_DOMAIN, arvoScore, cropLabel, indexColor, scoreColor } from '@/features/insights/format';
 import { NEUTRAL_FILL, formatArea, ndviColor } from '@/features/parcels/crops';
 import { useLatestIndices, useParcels } from '@/features/parcels/hooks';
 import { colors, fonts, gradients, radius, spacing, statusForSeverity } from '@/theme';
 
-const LEGEND: { color: string; label: string }[] = [
+// Legend value labels are numeric ranges except the no-data slot, translated at render.
+const LEGEND: { color: string; label: string | null }[] = [
   { color: ndviColor(0.2), label: '< 0.3' },
   { color: ndviColor(0.4), label: '0.3–0.5' },
   { color: ndviColor(0.6), label: '0.5–0.65' },
   { color: ndviColor(0.8), label: '≥ 0.65' },
-  { color: NEUTRAL_FILL, label: 'n/d' },
+  { color: NEUTRAL_FILL, label: null },
 ];
 
 // Selection-card height guess used for the FAB offset until onLayout reports the real value.
 const CARD_HEIGHT_ESTIMATE = 148;
-
-const SEVERITY_RANK: Record<string, number> = { info: 1, warning: 2, critical: 3 };
 
 /** Worst open-alert severity for a parcel (alerts already filtered to state=open). */
 function worstOpenSeverity(alerts: Alert[], parcelId: string): string | null {
   let worst: string | null = null;
   for (const a of alerts) {
     if (a.parcel_id !== parcelId) continue;
-    if ((SEVERITY_RANK[a.severity] ?? 0) > (worst ? (SEVERITY_RANK[worst] ?? 0) : 0)) {
+    if (severityRank(a.severity) > severityRank(worst)) {
       worst = a.severity;
     }
   }
@@ -185,9 +185,9 @@ export default function MapScreen() {
           ) : selectedIndex === 'ndvi' ? (
             <View style={styles.legendRow}>
               {LEGEND.map((l) => (
-                <View key={l.label} style={styles.legendItem}>
+                <View key={l.color} style={styles.legendItem}>
                   <View style={[styles.swatch, { backgroundColor: l.color }]} />
-                  <Text style={styles.legendLabel}>{l.label}</Text>
+                  <Text style={styles.legendLabel}>{l.label ?? t('map.no_data')}</Text>
                 </View>
               ))}
             </View>

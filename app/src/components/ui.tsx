@@ -9,6 +9,17 @@ import Glyph, { type GlyphName } from '@/components/glyphs';
 import { indexColor } from '@/features/insights/format';
 import { colors, fonts, radius, spacing, statusColors, type Status } from '@/theme';
 
+/** Avatar initials: first + last word ("Maria Rossi Bianchi" → "MB"). One implementation so
+ * the same person never renders different letters on different screens. */
+export function initials(name?: string | null): string {
+  if (!name) return '—';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '—';
+  const a = parts[0][0] ?? '';
+  const b = parts.length > 1 ? (parts[parts.length - 1][0] ?? '') : '';
+  return (a + b).toUpperCase() || '—';
+}
+
 /** Uppercase monospace micro-label ("5 PARCELS · 14 JUL PASS", table headers, meta rows). */
 export function MonoLabel({
   children,

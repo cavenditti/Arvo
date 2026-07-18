@@ -6,22 +6,22 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { Alert, AlertState } from '@/api/types';
 import { kindGlyph } from '@/components/glyphs';
 import { GlyphBadge, MonoLabel, Pill, TintCard } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
 import { setSnoozeDays } from '@/features/insights/snooze';
-import { colors, fonts, radius, severityGradient, severityTint, spacing } from '@/theme';
+import {
+  alertStateTint,
+  colors,
+  fonts,
+  radius,
+  severityGradient,
+  severityTint,
+  spacing,
+} from '@/theme';
 import type { AlertListProps } from './types';
 
 const SNOOZE_CHOICES = [1, 3, 7];
-
-const STATE_TINT: Record<AlertState, { fg: string; bg: string }> = {
-  open: { fg: colors.primary, bg: colors.primarySoft },
-  acked: { fg: colors.textMuted, bg: colors.borderSoft },
-  snoozed: { fg: '#5B8F8A', bg: '#E5EEED' },
-  dismissed: { fg: colors.textFaint, bg: colors.borderSoft },
-};
 
 export default function AlertList({ alerts, onAction, parcelNames, onOpenParcel }: AlertListProps) {
   const { t } = useTranslation();
@@ -31,7 +31,7 @@ export default function AlertList({ alerts, onAction, parcelNames, onOpenParcel 
     <View style={styles.list}>
       {alerts.map((a) => {
         const sev = severityTint[a.severity] ?? severityTint.info;
-        const state = STATE_TINT[a.state];
+        const state = alertStateTint[a.state];
         const actionable = a.state === 'open' || a.state === 'snoozed';
         const parcelName = a.parcel_id ? parcelNames?.[a.parcel_id] : undefined;
         const ago = formatDistanceToNow(parseISO(a.created_at), {

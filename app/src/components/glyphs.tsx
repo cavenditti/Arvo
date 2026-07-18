@@ -4,6 +4,8 @@
 import type { ComponentType } from 'react';
 import Svg, { Circle, G, Line, Path, Rect } from 'react-native-svg';
 
+import { colors } from '@/theme';
+
 export type GlyphName =
   | 'sun'
   | 'cloud'
@@ -205,6 +207,14 @@ export function weatherGlyph(
   if (tMax != null && tMax >= 32) return 'sun';
   if (tMax != null && tMax >= 20) return 'sun';
   return 'cloud';
+}
+
+/** Deeper tone matching a weather glyph's backdrop family (docs/DESIGN.md §5). The one
+ * canonical mapping — WeatherPanel and the weather tab previously kept near-twin copies. */
+export function weatherTone(glyph: GlyphName): string {
+  if (glyph === 'sun') return colors.warning; // hot / clear
+  if (glyph === 'rain' || glyph === 'frost') return colors.info; // wet / cold
+  return colors.textFaint; // cloud / mild
 }
 
 /** Alert/advisory kind → glyph (fallback 'sprout'). */

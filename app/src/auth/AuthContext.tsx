@@ -5,6 +5,8 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 
 import { api, setAuthToken, setOnUnauthorized } from '../api/client';
 import type { AuthResponse, Org, Role, User } from '../api/types';
+import { clearParcelsCache } from '../features/parcels/hooks';
+import { resetStore } from '../offline/queue';
 import * as storage from './storage';
 import type { OrgMembership, Session } from './storage';
 
@@ -71,6 +73,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStatus('unauthenticated');
     queryClient.clear();
     await storage.clearAuth();
+    // The next account on this device must never see — or push — this account's offline
+    // data: outbox, observations, and the parcels fallback all go.
+    await resetStore();
+    await clearParcelsCache();
   }
 
   // A 401 on any request means our token is dead — drop the session (the gate
@@ -89,14 +95,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const saved = await storage.getToken();
+      let saved: string | null = null;
+      let cached: Session | null = null;
+      try {
+        saved = await storage.getToken();
+        if (saved) cached = await storage.getSession();
+      } catch {
+        // Secure-storage failures (keystore corruption, first-run races) must land on the
+        // login screen, not an eternal splash spinner.
+        saved = null;
+      }
       if (!saved) {
         if (mounted) setStatus('unauthenticated');
         return;
       }
       setAuthToken(saved);
       tokenRef.current = saved;
-      const cached = await storage.getSession();
       if (!mounted) return;
       setToken(saved);
       if (cached) setSession(cached);
@@ -120,7 +134,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       mounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const value = useMemo<AuthContextValue>(
@@ -162,6 +175,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           role: membership.role,
         });
         queryClient.clear();
+        // Offline data is org-scoped: the outbox of org A must not sync into org B.
+        await resetStore();
+        await clearParcelsCache();
       },
     }),
     // applySession/clearSession are stable closures over setstate + queryClient.

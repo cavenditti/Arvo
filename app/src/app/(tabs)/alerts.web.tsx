@@ -17,10 +17,10 @@ import { api } from '@/api/client';
 import type { Alert, AlertState, Parcel, Severity, User } from '@/api/types';
 import { kindGlyph } from '@/components/glyphs';
 import type { AlertAction } from '@/components/types';
-import { GlyphBadge, MonoValue, Pill, TintCard } from '@/components/ui';
+import { GlyphBadge, MonoValue, Pill, TintCard, initials } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
 import { readSnoozeDays, setSnoozeDays } from '@/features/insights/snooze';
-import { colors, fonts, radius, severityGradient, severityTint, spacing } from '@/theme';
+import { alertStateTint, colors, fonts, radius, severityGradient, severityTint, spacing } from '@/theme';
 
 type Me = { user: User };
 type Segment = 'open' | 'snoozed' | 'resolved';
@@ -34,14 +34,6 @@ const ALERTS_ALL_KEY = ['alerts', 'all'] as const;
 // container is the focus affordance). Not part of RN's TextStyle, so cast like the repo idiom.
 const WEB_INPUT_RESET = { outlineStyle: 'none' } as unknown as TextStyle;
 
-// State tints are web-card-local; severity tag/gradient tints come from the shared
-// severityTint map in '@/theme' (title badge glyph via kindGlyph, backdrop via severityGradient).
-const STATE_TINT: Record<AlertState, { fg: string; bg: string }> = {
-  open: { fg: colors.primary, bg: colors.primarySoft },
-  acked: { fg: colors.textMuted, bg: colors.borderSoft },
-  snoozed: { fg: '#5B8F8A', bg: '#E5EEED' },
-  dismissed: { fg: colors.textFaint, bg: colors.borderSoft },
-};
 
 // Short filter-chip labels (the card severity tag reuses the longer severity.* keys instead).
 const SEV_FILTERS: { key: Severity; labelKey: string; fallback: string }[] = [
@@ -139,13 +131,7 @@ export default function AlertsWebScreen() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['alerts'] }),
   });
 
-  const initials = (me.data?.user.full_name ?? '—')
-    .split(' ')
-    .map((w) => w[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
+  const avatarInitials = initials(me.data?.user.full_name);
 
   const subtitle =
     t('alerts.header_meta', { open: openCount, fresh: newCount }) +
@@ -187,7 +173,7 @@ export default function AlertsWebScreen() {
             </Text>
           </View>
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initials}</Text>
+            <Text style={styles.avatarText}>{avatarInitials}</Text>
           </View>
         </View>
       </View>
@@ -343,7 +329,7 @@ function AlertCard({
   const [snoozeOpen, setSnoozeOpen] = useState(false);
 
   const sev = severityTint[alert.severity] ?? severityTint.info;
-  const state = STATE_TINT[alert.state];
+  const state = alertStateTint[alert.state];
   const actionable = alert.state === 'open' || alert.state === 'snoozed';
   const dimmed = alert.state === 'acked' || alert.state === 'dismissed';
   const ago = formatDistanceToNow(parseISO(alert.created_at), {

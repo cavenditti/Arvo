@@ -1,6 +1,6 @@
 // OWNER: fe-map — Parcel detail: header + mini-map, editable metadata, archive, NDVI/index chart
 // with an index switcher, weather + agronomy panel, alerts, imagery refresh, and season report link.
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -19,7 +19,7 @@ import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
-import { API_URL, api, getAuthToken } from '@/api/client';
+import { API_URL, api } from '@/api/client';
 import { INDEX_NAMES, type IndexName, type Meta } from '@/api/types';
 import AlertList from '@/components/AlertList';
 import IndexChart from '@/components/IndexChart';
@@ -37,7 +37,6 @@ import {
 import {
   useAdvisories,
   useAgro,
-  useAlertAction,
   useArchiveParcel,
   useFarms,
   useIndexSeries,
@@ -51,6 +50,9 @@ import {
 import { confirmDestructive, notify } from '@/features/parcels/dialog';
 import { useParcelObservations } from '@/features/scouting/byParcel';
 import { arvoScore, dfLocale, scoreBand, scoreColor, trendBand } from '@/features/insights/format';
+import { worstOpenAlert } from '@/features/insights/alerts';
+import { useAlertActions } from '@/features/insights/useAlertActions';
+import { mediaUri, useMediaToken } from '@/features/media';
 import { colors, fonts, gradients, radius, spacing, statusColors, statusForSeverity } from '@/theme';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -77,7 +79,8 @@ export default function ParcelDetailScreen() {
   const update = useUpdateParcel(id);
   const archive = useArchiveParcel();
   const refresh = useRefreshImagery(id);
-  const alertAction = useAlertAction(id);
+  const alertAction = useAlertActions(['alerts', 'parcel', id]);
+  const mediaToken = useMediaToken();
 
   const parcel = parcelQ.data;
 
@@ -89,15 +92,18 @@ export default function ParcelDetailScreen() {
   const [eDate, setEDate] = useState('');
   const [editErr, setEditErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (parcel && editing) {
+  // Hydrate the form in the toggle handler, not an effect — a background refetch swapping
+  // the parcel object identity must not clobber what the user is typing mid-edit.
+  function toggleEditing() {
+    if (!editing && parcel) {
       setEName(parcel.name);
       setECrop((parcel.crop as CropKey) ?? null);
       setEVariety(parcel.variety ?? '');
       setEDate(parcel.planting_date ?? '');
       setEditErr(null);
     }
-  }, [editing, parcel]);
+    setEditing((v) => !v);
+  }
 
   if (parcelQ.isLoading) {
     return (
@@ -122,10 +128,7 @@ export default function ParcelDetailScreen() {
   const p = parcel;
 
   // health status = worst open alert on this parcel
-  const rank: Record<string, number> = { info: 1, warning: 2, critical: 3 };
-  const worstOpen = (alertsQ.data ?? [])
-    .filter((a) => a.state === 'open')
-    .sort((a, b) => (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0))[0];
+  const worstOpen = worstOpenAlert(alertsQ.data ?? []);
   const status = statusForSeverity(worstOpen?.severity);
 
   // Index-raster overlay gate: backend build must serve imagery AND the selected index's latest
@@ -136,15 +139,16 @@ export default function ParcelDetailScreen() {
   const latestDelta = series.length > 1 && index === 'ndvi'
     ? latestPoint!.mean - series[series.length - 2].mean
     : null;
+  // Tile URLs carry short-lived media tokens (session JWTs are rejected in query strings).
   const overlayAvailable =
-    (metaQ.data?.features.imagery ?? false) && !!latestPoint?.scene_id;
+    (metaQ.data?.features.imagery ?? false) && !!latestPoint?.scene_id && !!mediaToken;
   const overlayOn = overlayAvailable && showOverlay;
   const [bw, bs, be, bn] = p.bbox;
   const padX = (be - bw) * 0.3;
   const padY = (bn - bs) * 0.3;
   const overlay = overlayOn
     ? {
-        urlTemplate: `${API_URL}/api/v1/tiles/${p.id}/${index}/{z}/{x}/{y}.png?token=${getAuthToken()}`,
+        urlTemplate: `${API_URL}/api/v1/tiles/${p.id}/${index}/{z}/{x}/{y}.png?token=${mediaToken}`,
         opacity: 0.85,
         bounds: [bw - padX, bs - padY, be + padX, bn + padY] as [number, number, number, number],
       }
@@ -195,9 +199,12 @@ export default function ParcelDetailScreen() {
   }
 
   function openReport() {
-    // NB: the report endpoint is auth-gated; this opens it in the system browser without the bearer
-    // token (we never put secrets in URLs). Backend adds a share link in P1 — see final report notes.
-    const url = `${API_URL}/api/v1/reports/parcels/${p.id}/season?lang=${i18n.language}`;
+    // Opened in the system browser with a short-lived media token — never the session JWT.
+    if (!mediaToken) {
+      notify(t('parcel.report'), t('parcel.report_error'));
+      return;
+    }
+    const url = `${API_URL}/api/v1/reports/parcels/${p.id}/season?lang=${i18n.language}&token=${mediaToken}`;
     Linking.openURL(url).catch(() => notify(t('parcel.report'), t('parcel.report_error')));
   }
 
@@ -221,7 +228,13 @@ export default function ParcelDetailScreen() {
               {t(cropLabelKey(parcel.crop))} · {formatArea(parcel.area_ha)} · {farmName}
             </Text>
           </View>
-          <Pressable onPress={() => setEditing((v) => !v)} hitSlop={8} style={styles.iconBtn}>
+          <Pressable
+            onPress={toggleEditing}
+            hitSlop={8}
+            style={styles.iconBtn}
+            accessibilityRole="button"
+            accessibilityLabel={editing ? t('common.cancel') : t('common.edit')}
+          >
             <Ionicons name={editing ? 'close' : 'pencil'} size={20} color={colors.primary} />
           </Pressable>
         </View>
@@ -254,7 +267,7 @@ export default function ParcelDetailScreen() {
               style={styles.input}
               value={eDate}
               onChangeText={setEDate}
-              placeholder="AAAA-MM-GG"
+              placeholder={t('parcel.date_placeholder')}
               placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
             />
@@ -396,11 +409,7 @@ export default function ParcelDetailScreen() {
             <AlertList
               alerts={alertsQ.data ?? []}
               parcelNames={{ [parcel.id]: parcel.name }}
-              onAction={(alertId, action) => {
-                const until =
-                  action === 'snooze' ? new Date(Date.now() + 86400000).toISOString() : undefined;
-                alertAction.mutate({ id: alertId, action, until });
-              }}
+              onAction={(alertId, action) => alertAction.mutate({ id: alertId, action })}
             />
           )}
         </View>
@@ -418,7 +427,7 @@ export default function ParcelDetailScreen() {
                 <View key={o.id} style={styles.obsRow}>
                   {thumb ? (
                     <Image
-                      source={{ uri: `${API_URL}${thumb.path}` }}
+                      source={{ uri: mediaUri(thumb.path, mediaToken) }}
                       style={styles.obsThumb}
                       contentFit="cover"
                     />
@@ -449,7 +458,11 @@ export default function ParcelDetailScreen() {
         ) : null}
 
         {/* record observation + report + archive */}
-        <Pressable onPress={() => router.push('/observation/new')}>
+        <Pressable
+          onPress={() =>
+            router.push({ pathname: '/observation/new', params: { parcelId: p.id } })
+          }
+        >
           <TintCard gradient={gradients.forest} style={styles.observeBtn}>
             <Ionicons name="add" size={20} color={colors.onPrimary} />
             <Text style={styles.observeTxt}>{t('parcel.record_observation')}</Text>

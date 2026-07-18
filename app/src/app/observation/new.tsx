@@ -5,7 +5,7 @@ import * as Crypto from 'expo-crypto';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -34,13 +34,16 @@ interface LocalPhoto {
 export default function Screen() {
   const { t } = useTranslation();
   const router = useRouter();
+  // "Scout here"/"Record observation" from a parcel context preselects that parcel;
+  // otherwise GPS auto-picks the nearest one below.
+  const { parcelId: initialParcelId } = useLocalSearchParams<{ parcelId?: string }>();
   const parcelsQ = useParcels();
   const parcels = useMemo(() => parcelsQ.data ?? [], [parcelsQ.data]);
 
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [locStatus, setLocStatus] = useState<LocStatus>('pending');
-  const [parcelId, setParcelId] = useState<string | null>(null);
-  const [parcelTouched, setParcelTouched] = useState(false);
+  const [parcelId, setParcelId] = useState<string | null>(initialParcelId ?? null);
+  const [parcelTouched, setParcelTouched] = useState(!!initialParcelId);
   const [autoPicked, setAutoPicked] = useState(false);
   const [note, setNote] = useState('');
   const [tags, setTags] = useState<string[]>([]);
@@ -312,7 +315,13 @@ export default function Screen() {
               {photos.map((p) => (
                 <View key={p.uri} style={styles.thumbWrap}>
                   <Image source={{ uri: p.uri }} style={styles.thumb} contentFit="cover" />
-                  <Pressable style={styles.thumbRemove} onPress={() => removePhoto(p.uri)}>
+                  <Pressable
+                    style={styles.thumbRemove}
+                    onPress={() => removePhoto(p.uri)}
+                    hitSlop={12}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common.cancel')}
+                  >
                     <Ionicons name="close" size={14} color="#fff" />
                   </Pressable>
                 </View>

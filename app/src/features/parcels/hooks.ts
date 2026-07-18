@@ -1,5 +1,6 @@
 // OWNER: fe-map — react-query hooks for parcels/farms/indices/weather/alerts used by the map tab
 // and parcel screens. Server state only; all access goes through the shared api client.
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/api/client';
@@ -16,8 +17,39 @@ import type {
   WeatherDaily,
 } from '@/api/types';
 
+const PARCELS_CACHE_KEY = 'arvo.cache.parcels';
+
+/** The one canonical ['parcels'] query. AsyncStorage fallback keeps parcel-name lookup and
+ * the scouting nearest-parcel auto-pick working offline; every screen shares this cache
+ * entry (two registrations of the same key with different behaviours caused cache roulette). */
 export function useParcels() {
-  return useQuery({ queryKey: ['parcels'], queryFn: () => api.get<Parcel[]>('/parcels') });
+  return useQuery({
+    queryKey: ['parcels'],
+    staleTime: 5 * 60 * 1000,
+    // 'always' so the queryFn runs even when the client is considered offline (web) — the
+    // AsyncStorage fallback below then serves the last-known parcels.
+    networkMode: 'always',
+    queryFn: async (): Promise<Parcel[]> => {
+      try {
+        const parcels = await api.get<Parcel[]>('/parcels');
+        void AsyncStorage.setItem(PARCELS_CACHE_KEY, JSON.stringify(parcels));
+        return parcels;
+      } catch (e) {
+        const cached = await AsyncStorage.getItem(PARCELS_CACHE_KEY);
+        if (cached) return JSON.parse(cached) as Parcel[];
+        throw e;
+      }
+    },
+  });
+}
+
+/** Wipe the offline parcels fallback (logout / org switch — see AuthContext). */
+export async function clearParcelsCache(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(PARCELS_CACHE_KEY);
+  } catch {
+    // cache is best-effort
+  }
 }
 
 export function useParcel(id: string) {
@@ -153,18 +185,14 @@ export interface RefreshImageryResult {
 }
 
 export function useRefreshImagery(id: string) {
-  return useMutation({
-    mutationFn: () => api.post<RefreshImageryResult>(`/parcels/${id}/imagery/refresh`, {}),
-  });
-}
-
-export type AlertAction = 'ack' | 'dismiss' | 'snooze';
-
-export function useAlertAction(parcelId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, action, until }: { id: string; action: AlertAction; until?: string }) =>
-      api.post<Alert>(`/alerts/${id}/${action}`, action === 'snooze' ? { until } : undefined),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts', 'parcel', parcelId] }),
+    mutationFn: () => api.post<RefreshImageryResult>(`/parcels/${id}/imagery/refresh`, {}),
+    // A successful refresh may have computed new observations — the chart, sparkline and
+    // latest-stats caches for this parcel are all stale now.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['indices'] });
+      void qc.invalidateQueries({ queryKey: ['scenes', id] });
+    },
   });
 }

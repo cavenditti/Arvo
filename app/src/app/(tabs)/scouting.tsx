@@ -4,7 +4,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { format } from 'date-fns';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ActivityIndicator,
@@ -16,9 +16,10 @@ import {
   View,
 } from 'react-native';
 
-import { API_URL } from '@/api/client';
 import type { Observation } from '@/api/types';
-import { useParcels } from '@/features/scouting/parcels';
+import { dfLocale } from '@/features/insights/format';
+import { mediaUri, useMediaToken } from '@/features/media';
+import { useParcelNames } from '@/features/parcels/names';
 import { useScouting, useSync } from '@/offline/hooks';
 import { ensureStarted, sync } from '@/offline/queue';
 import { colors, fonts, radius, spacing } from '@/theme';
@@ -30,13 +31,7 @@ export default function Screen() {
   const offline = net.isConnected === false;
   const snap = useScouting();
   const { pendingCount, syncing, error, syncNow } = useSync();
-  const parcelsQ = useParcels();
-
-  const parcelNames = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const p of parcelsQ.data ?? []) map[p.id] = p.name;
-    return map;
-  }, [parcelsQ.data]);
+  const parcelNames = useParcelNames();
 
   useEffect(() => {
     ensureStarted();
@@ -112,7 +107,12 @@ export default function Screen() {
         )}
       />
 
-      <Pressable style={styles.fab} onPress={() => router.push('/observation/new')}>
+      <Pressable
+        style={styles.fab}
+        onPress={() => router.push('/observation/new')}
+        accessibilityRole="button"
+        accessibilityLabel={t('scouting.new_observation')}
+      >
         <Ionicons name="add" size={30} color="#fff" />
       </Pressable>
     </View>
@@ -131,10 +131,12 @@ function ObservationCard({
   pending: boolean;
 }) {
   const { t } = useTranslation();
-  const thumbUri = obs.photos.length > 0 ? API_URL + obs.photos[0].path : pendingThumb;
+  const mediaToken = useMediaToken();
+  const thumbUri =
+    obs.photos.length > 0 ? mediaUri(obs.photos[0].path, mediaToken) : pendingThumb;
   let when = '';
   try {
-    when = format(new Date(obs.taken_at), 'd MMM · HH:mm');
+    when = format(new Date(obs.taken_at), 'd MMM · HH:mm', { locale: dfLocale() });
   } catch {
     when = '';
   }

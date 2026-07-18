@@ -198,15 +198,27 @@ export async function queuePhoto(entry: PhotoQueueEntry): Promise<void> {
 
 function isNetworkError(e: unknown): boolean {
   if (e instanceof TypeError) return true;
+  // Fetch timeouts (AbortController in api/client) are connectivity, not app errors.
+  if (e instanceof Error && (e.name === 'AbortError' || e.name === 'TimeoutError')) return true;
   const m = e instanceof Error ? e.message : String(e);
-  return /network request failed|failed to fetch|network error/i.test(m);
+  return /network request failed|failed to fetch|network error|abort/i.test(m);
 }
+
+/** Photo whose local URI can no longer be read (e.g. a blob: URI after a web reload). */
+class DeadPhotoError extends Error {}
 
 async function uploadPhoto(obsId: string, entry: PhotoQueueEntry): Promise<{ path: string }> {
   const form = new FormData();
   if (Platform.OS === 'web') {
-    const resp = await fetch(entry.localUri);
-    const blob = await resp.blob();
+    // blob: URIs die with the document; after a reload they are permanently unreadable
+    // and must be purged (not retried forever).
+    let blob: Blob;
+    try {
+      const resp = await fetch(entry.localUri);
+      blob = await resp.blob();
+    } catch {
+      throw new DeadPhotoError();
+    }
     form.append('file', blob, entry.name);
   } else {
     // React Native multipart file part
@@ -223,19 +235,32 @@ async function uploadPhoto(obsId: string, entry: PhotoQueueEntry): Promise<{ pat
 }
 
 async function drainPhotos(): Promise<void> {
+  // Purge entries that can never upload (observation gone or tombstoned) so
+  // pendingCount can actually reach 0.
+  await mutate((st) => ({
+    ...st,
+    photoQueue: st.photoQueue.filter(
+      (p) => st.observations[p.obsId] !== undefined && !st.observations[p.obsId].deleted,
+    ),
+  }));
   const s = await loadStore();
-  // Only upload photos whose observation the server already knows (not in outbox) and isn't a tombstone.
-  const pending = s.photoQueue.filter(
-    (p) =>
-      !s.outbox.includes(p.obsId) &&
-      s.observations[p.obsId] !== undefined &&
-      !s.observations[p.obsId].deleted,
-  );
+  // Only upload photos whose observation the server already knows (not in outbox).
+  const pending = s.photoQueue.filter((p) => !s.outbox.includes(p.obsId));
   for (const entry of pending) {
     let uploaded: { path: string };
     try {
       uploaded = await uploadPhoto(entry.obsId, entry);
-    } catch {
+    } catch (e) {
+      if (e instanceof DeadPhotoError) {
+        // Drop the unreadable entry and keep draining the rest.
+        await mutate((st) => ({
+          ...st,
+          photoQueue: st.photoQueue.filter(
+            (q) => !(q.obsId === entry.obsId && q.localUri === entry.localUri),
+          ),
+        }));
+        continue;
+      }
       break; // transient/network — leave queued, retry next sync
     }
     await mutate((st) => {
@@ -261,10 +286,16 @@ async function drainPhotos(): Promise<void> {
 }
 
 let mutexHeld = false;
+let rerunRequested = false;
 
-/** Push the outbox, merge server changes (LWW), then drain the photo queue. Mutex-guarded. */
+/** Push the outbox, merge server changes (LWW), then drain the photo queue. Mutex-guarded;
+ * a call that lands while a sync is in flight schedules exactly one follow-up run, so an
+ * edit made mid-flight is pushed promptly instead of waiting for the next trigger. */
 export async function sync(): Promise<void> {
-  if (mutexHeld) return;
+  if (mutexHeld) {
+    rerunRequested = true;
+    return;
+  }
   mutexHeld = true; // acquire synchronously, before any await, so the guard actually holds
   let began = false;
   try {
@@ -286,9 +317,18 @@ export async function sync(): Promise<void> {
     const res = await api.post<SyncResponse>('/observations/sync', req);
 
     const appliedSet = new Set(res.applied);
+    // What we actually sent, per id: an id leaves the outbox only if the row was applied AND
+    // hasn't been re-edited while the request was in flight — otherwise the newer local edit
+    // would silently never sync.
+    const pushedStamp = new Map(upserts.map((o) => [o.id, o.updated_at]));
     await mutate((st) => {
       const observations = { ...st.observations };
-      let outbox = st.outbox.filter((id) => !appliedSet.has(id));
+      let outbox = st.outbox.filter((id) => {
+        if (st.observations[id] === undefined) return false; // orphan id — drop
+        if (!appliedSet.has(id)) return true;
+        const sent = pushedStamp.get(id);
+        return sent !== undefined && st.observations[id].updated_at !== sent;
+      });
       for (const ch of res.changes) {
         const local = observations[ch.id];
         if (outbox.includes(ch.id)) {
@@ -311,7 +351,25 @@ export async function sync(): Promise<void> {
   } finally {
     mutexHeld = false;
     if (began) setSyncing(false);
+    if (rerunRequested) {
+      rerunRequested = false;
+      void sync();
+    }
   }
+}
+
+/** Wipe the offline store (logout / org switch): another account's outbox must never be
+ * pushed under the new token, and its observations must never be shown. */
+export async function resetStore(): Promise<void> {
+  await mutate(() => ({ ...EMPTY }));
+  lastError = null;
+  try {
+    await AsyncStorage.removeItem(KEY);
+  } catch {
+    // in-memory state is already clean
+  }
+  rebuildSnapshot();
+  notify();
 }
 
 // --- lifecycle triggers ---------------------------------------------------------------------

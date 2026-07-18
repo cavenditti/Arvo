@@ -13,11 +13,12 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 
 import { api } from '@/api/client';
 import { INDEX_NAMES } from '@/api/types';
-import type { Alert, IndexName, IndexPoint, LatestIndices, Org, Parcel, Role, User } from '@/api/types';
+import type { Alert, IndexName, IndexPoint, LatestIndices, Org, Role, User } from '@/api/types';
 import { kindGlyph } from '@/components/glyphs';
 import MapView from '@/components/MapView';
 import type { ParcelFeature } from '@/components/types';
-import { Card, GlyphBadge, GlyphCard, MonoLabel, MonoValue, Pill, StatusChip } from '@/components/ui';
+import { Card, GlyphBadge, GlyphCard, MonoLabel, MonoValue, Pill, StatusChip, initials } from '@/components/ui';
+import { sortBySeverityThenRecency, worstSeverityByParcel } from '@/features/insights/alerts';
 import {
   INDEX_DOMAIN,
   arvoScore,
@@ -28,8 +29,10 @@ import {
   scoreColor,
   trendBand,
 } from '@/features/insights/format';
+import { lastPassDelta, sevenDayDelta } from '@/features/insights/series';
 import { NEUTRAL_FILL } from '@/features/parcels/crops';
 import { useLatestIndices, useParcels } from '@/features/parcels/hooks';
+import { useParcelNames } from '@/features/parcels/names';
 import {
   colors,
   fonts,
@@ -51,43 +54,6 @@ const MAP_HEIGHT = 380;
 const STATUS_ORDER: Status[] = ['healthy', 'watch', 'attention'];
 // react-native-web adds `hovered` to the Pressable interaction state (not in the RN types).
 type HoverState = { hovered?: boolean };
-
-/** Worst open severity per parcel ('critical' > 'warning' > 'info'). */
-function worstSeverity(alerts: Alert[]): Record<string, string> {
-  const rank: Record<string, number> = { info: 1, warning: 2, critical: 3 };
-  const out: Record<string, string> = {};
-  for (const a of alerts) {
-    if (!a.parcel_id) continue;
-    if ((rank[a.severity] ?? 0) > (rank[out[a.parcel_id]] ?? 0)) out[a.parcel_id] = a.severity;
-  }
-  return out;
-}
-
-/** 7-day change: latest mean minus the closest observation ≥6.5 days earlier. */
-function sevenDayDelta(series: IndexPoint[]): number | null {
-  if (series.length < 2) return null;
-  const last = series[series.length - 1];
-  const lastT = parseISO(last.observed_at).getTime();
-  const ref = [...series]
-    .reverse()
-    .find((p) => lastT - parseISO(p.observed_at).getTime() >= 6.5 * DAY_MS);
-  return ref ? last.mean - ref.mean : null;
-}
-
-/** Change vs the immediately previous pass (last two points of the series). */
-function lastPassDelta(series: IndexPoint[]): number | null {
-  if (series.length < 2) return null;
-  return series[series.length - 1].mean - series[series.length - 2].mean;
-}
-
-function initials(name?: string | null): string {
-  if (!name) return '—';
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '—';
-  const a = parts[0][0] ?? '';
-  const b = parts.length > 1 ? (parts[parts.length - 1][0] ?? '') : '';
-  return (a + b).toUpperCase() || '—';
-}
 
 export default function FieldsWeb() {
   const { t } = useTranslation();
@@ -113,10 +79,11 @@ export default function FieldsWeb() {
   });
   const openAlerts = openAlertsQ.data ?? [];
 
-  // per-parcel NDVI spark series — same key as the native rows, so the cache is shared.
+  // per-parcel NDVI spark series — same key as the parcel detail chart, so the whole app
+  // shares one cache entry per parcel+index.
   const sparkResults = useQueries({
     queries: parcels.map((p) => ({
-      queryKey: ['indices', p.id, 'ndvi', 'spark'],
+      queryKey: ['indices', p.id, 'ndvi'],
       queryFn: () => api.get<Spark>(`/parcels/${p.id}/indices?index=ndvi`),
       staleTime: 5 * 60 * 1000,
     })),
@@ -129,9 +96,8 @@ export default function FieldsWeb() {
     return m;
   }, [parcels, sparkResults]);
 
-  const severityByParcel = worstSeverity(openAlerts);
-  const parcelNames: Record<string, string> = {};
-  for (const p of parcels) parcelNames[p.id] = p.name;
+  const severityByParcel = worstSeverityByParcel(openAlerts);
+  const parcelNames = useParcelNames();
 
   // latest acquisition across parcels → header + map-card date chips
   let lastPass: string | null = null;
@@ -179,15 +145,7 @@ export default function FieldsWeb() {
   const newCount = openAlerts.filter(
     (a) => Date.now() - new Date(a.created_at).getTime() < DAY_MS,
   ).length;
-  const topAlerts = [...openAlerts]
-    .sort((a, b) => {
-      const rank: Record<string, number> = { info: 1, warning: 2, critical: 3 };
-      return (
-        (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0) ||
-        b.created_at.localeCompare(a.created_at)
-      );
-    })
-    .slice(0, 4);
+  const topAlerts = sortBySeverityThenRecency(openAlerts).slice(0, 4);
 
   // overall condition: average Arvo Score, trend, and alert-derived status distribution
   const parcelScores = parcels
@@ -431,7 +389,8 @@ export default function FieldsWeb() {
               {t('fields.field_health', { defaultValue: 'Field health' })}
             </Text>
             <View style={styles.healthTop}>
-              <MonoValue size={40} weight="500" color={colors.success}>
+              {/* The numeral tracks the score band, like the surface gradient behind it. */}
+              <MonoValue size={40} weight="500" color={avgScore == null ? colors.textFaint : scoreColor(avgScore)}>
                 {avgScore == null ? '—' : Math.round(avgScore)}
               </MonoValue>
               <View style={styles.healthMeta}>

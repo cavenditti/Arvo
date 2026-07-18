@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { G, Line, Rect, Text as SvgText } from 'react-native-svg';
 
 import type { Advisory, AdvisoryKind, AgroSummary, Parcel, WeatherDaily } from '@/api/types';
-import { kindGlyph, weatherGlyph, type GlyphName } from '@/components/glyphs';
+import { kindGlyph, weatherGlyph, weatherTone } from '@/components/glyphs';
 import { Card, GlyphCard, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
 import { useAdvisories, useAgro, useParcels, useWeather } from '@/features/parcels/hooks';
 import { dfLocale } from '@/features/insights/format';
@@ -40,13 +40,6 @@ const KIND_LABEL: Record<AdvisoryKind, { key: string; def: string }> = {
 
 function fmtTemp(v: number | null | undefined): string {
   return v == null ? '—' : `${Math.round(v)}°`;
-}
-
-/** Deeper tone of a weather-day backdrop, keyed by glyph family (docs/DESIGN.md §5). */
-function weatherGlyphTone(glyph: GlyphName): string {
-  if (glyph === 'sun') return colors.warning; // hot / clear
-  if (glyph === 'rain' || glyph === 'frost') return colors.info; // wet / cold
-  return colors.textFaint; // cloud / mild
 }
 
 /** Deeper tone of a severity backdrop (clay→accent, straw→warning, eucalyptus→info). */
@@ -167,7 +160,7 @@ export default function WeatherScreen() {
                   key={d.date}
                   gradient={weatherGradient(d.t_min, d.t_max, d.precip_mm)}
                   glyph={glyph}
-                  glyphColor={weatherGlyphTone(glyph)}
+                  glyphColor={weatherTone(glyph)}
                   glyphOpacity={0.18}
                   glyphSize={140}
                   style={[styles.dayCell, i === 0 && styles.dayCellToday]}

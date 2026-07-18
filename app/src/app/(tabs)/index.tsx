@@ -18,10 +18,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { api } from '@/api/client';
-import type { Alert, IndexName, IndexPoint, LatestIndices, Org, Parcel, Role, User } from '@/api/types';
+import type { Alert, LatestIndices, Org, Parcel, Role, User } from '@/api/types';
 import { kindGlyph } from '@/components/glyphs';
 import { GlyphBadge, MonoLabel, StatusChip, TintCard } from '@/components/ui';
+import { sortBySeverityThenRecency, worstSeverityByParcel } from '@/features/insights/alerts';
 import { arvoScore, cropLabel, dfLocale, scoreColor, trendBand } from '@/features/insights/format';
+import { sevenDayDelta } from '@/features/insights/series';
+import { useIndexSeries, useLatestIndices, useParcels } from '@/features/parcels/hooks';
+import { useParcelNames } from '@/features/parcels/names';
 import {
   colors,
   fonts,
@@ -34,20 +38,7 @@ import {
 } from '@/theme';
 
 type Me = { user: User; org: Org; role: Role };
-type LatestBatch = Record<string, LatestIndices>;
 
-const DAY_MS = 86_400_000;
-
-/** Worst open severity per parcel ('critical' > 'warning' > 'info'). */
-function worstSeverity(alerts: Alert[]): Record<string, string> {
-  const rank: Record<string, number> = { info: 1, warning: 2, critical: 3 };
-  const out: Record<string, string> = {};
-  for (const a of alerts) {
-    if (!a.parcel_id) continue;
-    if ((rank[a.severity] ?? 0) > (rank[out[a.parcel_id]] ?? 0)) out[a.parcel_id] = a.severity;
-  }
-  return out;
-}
 
 export default function Dashboard() {
   const { t } = useTranslation();
@@ -57,30 +48,23 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
 
   const me = useQuery({ queryKey: ['auth', 'me'], queryFn: () => api.get<Me>('/auth/me') });
-  const parcels = useQuery({ queryKey: ['parcels'], queryFn: () => api.get<Parcel[]>('/parcels') });
+  const parcels = useParcels();
 
   const ids = (parcels.data ?? []).map((p) => p.id);
-  const latest = useQuery({
-    queryKey: ['indices', 'latest', ids],
-    queryFn: () => api.get<LatestBatch>(`/indices/latest?parcel_ids=${ids.join(',')}`),
-    enabled: ids.length > 0,
-  });
+  // Shared hook so the cache key matches every other consumer of the batch endpoint.
+  const latest = useLatestIndices(ids);
   const openAlerts = useQuery({
     queryKey: ['alerts', 'open'],
     queryFn: () => api.get<Alert[]>('/alerts?state=open'),
   });
 
-  const severityByParcel = worstSeverity(openAlerts.data ?? []);
-  const parcelNames: Record<string, string> = {};
-  for (const p of parcels.data ?? []) parcelNames[p.id] = p.name;
+  const severityByParcel = worstSeverityByParcel(openAlerts.data ?? []);
+  const parcelNames = useParcelNames();
 
   // banner = worst open alert (critical first, then warning), newest wins ties
-  const banner = (openAlerts.data ?? [])
-    .filter((a) => a.severity !== 'info')
-    .sort((a, b) => {
-      const rank: Record<string, number> = { warning: 1, critical: 2 };
-      return (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0) || b.created_at.localeCompare(a.created_at);
-    })[0];
+  const banner = sortBySeverityThenRecency(
+    (openAlerts.data ?? []).filter((a) => a.severity !== 'info'),
+  )[0];
 
   // latest acquisition across parcels → "14 JUL PASS"
   let lastPass: string | null = null;
@@ -246,24 +230,10 @@ function ParcelRow({
   const crop = cropLabel(parcel.crop);
   const score = arvoScore(latest);
 
-  // 7-day delta from the cached series (shared with the parcel detail chart)
-  const { data } = useQuery({
-    queryKey: ['indices', parcel.id, 'ndvi', 'spark'],
-    queryFn: () =>
-      api.get<{ index: IndexName; series: IndexPoint[] }>(`/parcels/${parcel.id}/indices?index=ndvi`),
-    staleTime: 5 * 60 * 1000,
-  });
-  let delta: number | null = null;
-  const series = data?.series ?? [];
-  if (series.length >= 2) {
-    const last = series[series.length - 1];
-    const lastT = parseISO(last.observed_at).getTime();
-    // closest observation at least ~7 days before the latest one
-    const ref = [...series]
-      .reverse()
-      .find((p) => lastT - parseISO(p.observed_at).getTime() >= 6.5 * DAY_MS);
-    if (ref) delta = last.mean - ref.mean;
-  }
+  // 7-day delta from the cached series — same key + fetch as the parcel detail chart,
+  // so the dashboard and detail genuinely share one cache entry.
+  const { data } = useIndexSeries(parcel.id, 'ndvi');
+  const delta = sevenDayDelta(data?.series ?? []);
 
   return (
     <Pressable style={({ pressed }) => [styles.row, pressed && styles.pressed]} onPress={onPress}>

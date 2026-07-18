@@ -11,7 +11,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { api } from '@/api/client';
 import type { Alert, Org, Parcel, Role, User } from '@/api/types';
 import Logo from '@/components/Logo';
-import { GlyphBadge, MonoLabel } from '@/components/ui';
+import { GlyphBadge, MonoLabel, initials } from '@/components/ui';
 import { colors, fonts, radius, spacing } from '@/theme';
 
 type Me = { user: User; org: Org; role: Role };
@@ -66,13 +66,7 @@ export default function PortalShell({ children }: { children: ReactNode }) {
   const totalHa = (parcels.data ?? []).reduce((s, p) => s + p.area_ha, 0);
   const openCount = openAlerts.data?.length ?? 0;
   const fullName = me.data?.user.full_name ?? '—';
-  const initials = fullName
-    .split(' ')
-    .map((w) => w[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
+  const avatarInitials = initials(fullName);
 
   return (
     <View style={styles.root}>
@@ -137,7 +131,7 @@ export default function PortalShell({ children }: { children: ReactNode }) {
                 ) : null}
                 {disabled ? (
                   <View style={styles.soonChip}>
-                    <Text style={styles.soonText}>A</Text>
+                    <Text style={styles.soonText}>{t('portal.soon')}</Text>
                   </View>
                 ) : null}
               </Pressable>
@@ -155,7 +149,7 @@ export default function PortalShell({ children }: { children: ReactNode }) {
             ]}
           >
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initials}</Text>
+              <Text style={styles.avatarText}>{avatarInitials}</Text>
             </View>
             <View style={styles.flex1}>
               <Text style={styles.userName} numberOfLines={1}>

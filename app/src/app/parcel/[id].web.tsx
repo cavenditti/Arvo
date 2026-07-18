@@ -2,7 +2,7 @@
 // (this route is outside the (tabs) group). Two-column layout: chart + stat tiles + scouting on the
 // left, minimap + weather + alerts + manage on the right. Reuses the same hooks/patterns as the
 // native parcel/[id].tsx screen. Theme tokens only.
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -12,7 +12,7 @@ import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
-import { API_URL, api, getAuthToken } from '@/api/client';
+import { API_URL, api } from '@/api/client';
 import { INDEX_NAMES, type IndexName, type Meta, type Observation } from '@/api/types';
 import AlertList from '@/components/AlertList';
 import IndexChart from '@/components/IndexChart';
@@ -25,7 +25,6 @@ import { CROP_OPTIONS, type CropKey, cropLabelKey, formatArea, isValidDate } fro
 import {
   useAdvisories,
   useAgro,
-  useAlertAction,
   useArchiveParcel,
   useIndexSeries,
   useLatestIndices,
@@ -37,6 +36,9 @@ import {
 } from '@/features/parcels/hooks';
 import { useParcelObservations } from '@/features/scouting/byParcel';
 import { arvoScore, dfLocale, scoreBand, scoreColor, trendBand } from '@/features/insights/format';
+import { worstOpenAlert } from '@/features/insights/alerts';
+import { useAlertActions } from '@/features/insights/useAlertActions';
+import { mediaUri, useMediaToken } from '@/features/media';
 import { colors, fonts, gradients, radius, spacing, statusColors, statusForSeverity } from '@/theme';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -63,7 +65,8 @@ export default function ParcelDetailWeb() {
   const update = useUpdateParcel(id);
   const archive = useArchiveParcel();
   const refresh = useRefreshImagery(id);
-  const alertAction = useAlertAction(id);
+  const alertAction = useAlertActions(['alerts', 'parcel', id]);
+  const mediaToken = useMediaToken();
 
   const parcel = parcelQ.data;
 
@@ -75,15 +78,18 @@ export default function ParcelDetailWeb() {
   const [eDate, setEDate] = useState('');
   const [editErr, setEditErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (parcel && editing) {
+  // Hydrate the form in the toggle handler, not an effect — a focus-triggered background
+  // refetch must not clobber what the user is typing (web refetches on every tab switch).
+  function toggleEditing() {
+    if (!editing && parcel) {
       setEName(parcel.name);
       setECrop((parcel.crop as CropKey) ?? null);
       setEVariety(parcel.variety ?? '');
       setEDate(parcel.planting_date ?? '');
       setEditErr(null);
     }
-  }, [editing, parcel]);
+    setEditing((v) => !v);
+  }
 
   const locale = dfLocale();
   const series = seriesQ.data?.series ?? [];
@@ -105,8 +111,9 @@ export default function ParcelDetailWeb() {
   })();
 
   // Index-raster overlay gate (same rule as native): backend serves imagery AND the selected
-  // index's latest observation is scene-backed.
-  const overlayAvailable = (metaQ.data?.features.imagery ?? false) && !!latestPoint?.scene_id;
+  // index's latest observation is scene-backed AND a media token is available for tile URLs.
+  const overlayAvailable =
+    (metaQ.data?.features.imagery ?? false) && !!latestPoint?.scene_id && !!mediaToken;
   const overlayOn = overlayAvailable && showOverlay;
 
   function saveEdit() {
@@ -150,8 +157,12 @@ export default function ParcelDetailWeb() {
   }
 
   function openReport(pid: string) {
-    // Auth-gated endpoint opened in a new tab without the bearer token (never put secrets in URLs).
-    const url = `${API_URL}/api/v1/reports/parcels/${pid}/season?lang=${i18n.language}`;
+    // Opened in a new tab with a short-lived media token — never the session JWT.
+    if (!mediaToken) {
+      notify(t('parcel.report'), t('parcel.report_error'));
+      return;
+    }
+    const url = `${API_URL}/api/v1/reports/parcels/${pid}/season?lang=${i18n.language}&token=${mediaToken}`;
     Linking.openURL(url).catch(() => notify(t('parcel.report'), t('parcel.report_error')));
   }
 
@@ -175,10 +186,7 @@ export default function ParcelDetailWeb() {
     const p = parcel;
 
     // worst open alert → parcel health status
-    const rank: Record<string, number> = { info: 1, warning: 2, critical: 3 };
-    const worstOpen = (alertsQ.data ?? [])
-      .filter((a) => a.state === 'open')
-      .sort((a, b) => (rank[b.severity] ?? 0) - (rank[a.severity] ?? 0))[0];
+    const worstOpen = worstOpenAlert(alertsQ.data ?? []);
     const status = statusForSeverity(worstOpen?.severity);
 
     const [bw, bs, be, bn] = p.bbox;
@@ -186,7 +194,7 @@ export default function ParcelDetailWeb() {
     const padY = (bn - bs) * 0.3;
     const overlay = overlayOn
       ? {
-          urlTemplate: `${API_URL}/api/v1/tiles/${p.id}/${index}/{z}/{x}/{y}.png?token=${getAuthToken()}`,
+          urlTemplate: `${API_URL}/api/v1/tiles/${p.id}/${index}/{z}/{x}/{y}.png?token=${mediaToken}`,
           opacity: 0.85,
           bounds: [bw - padX, bs - padY, be + padX, bn + padY] as [number, number, number, number],
         }
@@ -231,7 +239,12 @@ export default function ParcelDetailWeb() {
                 <MonoLabel color={colors.textMuted}>{latestDate}</MonoLabel>
               </View>
             ) : null}
-            <Pressable style={styles.outlineBtn} onPress={() => router.push('/observation/new')}>
+            <Pressable
+              style={styles.outlineBtn}
+              onPress={() =>
+                router.push({ pathname: '/observation/new', params: { parcelId: p.id } })
+              }
+            >
               <Ionicons name="add" size={16} color={colors.primary} />
               <Text style={styles.outlineBtnTxt}>{t('parcel.record_note', { defaultValue: 'Record note' })}</Text>
             </Pressable>
@@ -304,7 +317,7 @@ export default function ParcelDetailWeb() {
                 <View style={styles.legend}>
                   <MonoLabel color={colors.primary}>— {t('parcel.legend_mean', { defaultValue: 'field mean' })}</MonoLabel>
                   <MonoLabel color={colors.textFaint}>p10–p90</MonoLabel>
-                  <MonoLabel color={colors.textFaint}>✕ {t('parcel.legend_cloud', { defaultValue: 'cloud-flagged' })}</MonoLabel>
+                  <MonoLabel color={colors.textFaint}>○ {t('parcel.legend_cloud', { defaultValue: 'cloud-flagged' })}</MonoLabel>
                 </View>
               {seriesQ.isLoading ? (
                 <View style={[styles.chartLoading, { height: 320 }]}>
@@ -408,11 +421,7 @@ export default function ParcelDetailWeb() {
                 <AlertList
                   alerts={alertsQ.data ?? []}
                   parcelNames={{ [p.id]: p.name }}
-                  onAction={(alertId, action) => {
-                    const until =
-                      action === 'snooze' ? new Date(Date.now() + 86400000).toISOString() : undefined;
-                    alertAction.mutate({ id: alertId, action, until });
-                  }}
+                  onAction={(alertId, action) => alertAction.mutate({ id: alertId, action })}
                 />
               )}
             </SectionCard>
@@ -429,7 +438,7 @@ export default function ParcelDetailWeb() {
                   <Text style={styles.manageBtnTxt}>{t('parcel.refresh_imagery')}</Text>
                 </Pressable>
 
-                <Pressable style={styles.manageBtn} onPress={() => setEditing((v) => !v)}>
+                <Pressable style={styles.manageBtn} onPress={toggleEditing}>
                   <Ionicons name={editing ? 'close' : 'pencil'} size={16} color={colors.primary} />
                   <Text style={styles.manageBtnTxt}>{t('parcel.edit_fields', { defaultValue: 'Edit fields' })}</Text>
                 </Pressable>
@@ -461,7 +470,7 @@ export default function ParcelDetailWeb() {
                       style={styles.input}
                       value={eDate}
                       onChangeText={setEDate}
-                      placeholder="YYYY-MM-DD"
+                      placeholder={t('parcel.date_placeholder')}
                       placeholderTextColor={colors.textFaint}
                       autoCapitalize="none"
                     />
@@ -531,12 +540,13 @@ function StatTile({ label, value, color }: { label: string; value: string; color
 function ObsRow({ o }: { o: Observation }) {
   const { t } = useTranslation();
   const locale = dfLocale();
+  const mediaToken = useMediaToken();
   const thumb = o.photos[0];
   const tag = o.tags[0];
   return (
     <View style={styles.obsRow}>
       {thumb ? (
-        <Image source={{ uri: `${API_URL}${thumb.path}` }} style={styles.obsThumb} contentFit="cover" />
+        <Image source={{ uri: mediaUri(thumb.path, mediaToken) }} style={styles.obsThumb} contentFit="cover" />
       ) : (
         <View style={[styles.obsThumb, styles.obsThumbEmpty]} />
       )}

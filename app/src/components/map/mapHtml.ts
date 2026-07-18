@@ -47,8 +47,10 @@ export const mapHtml = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
 <style>
   html, body, #map { height: 100%; margin: 0; padding: 0; }
   #map { background: #DFE6DF; }
@@ -74,6 +76,13 @@ export const mapHtml = `<!DOCTYPE html>
 <script>
 (function(){
   var DEFAULT_FILL = '#4F8F4A';
+  // Leaflet tooltips render string content via innerHTML; names/labels are user input and
+  // must never execute inside this document (the native WebView also sees tile URLs).
+  function esc(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
   var map, parcelLayer, markerLayer, mode = 'view';
   var drawPts = [], drawLine = null, drawPoly = null, drawDots = [];
   var overlayLayer = null, overlayKey = null;
@@ -126,7 +135,7 @@ export const mapHtml = `<!DOCTYPE html>
         } });
         gj.eachLayer(function(layer){
           layer.on('click', function(){ if (mode !== 'draw') post({ type: 'select', id: pc.id }); });
-          if (pc.name) layer.bindTooltip(pc.name, { permanent: true, direction: 'center', className: 'parcel-label' });
+          if (pc.name) layer.bindTooltip(esc(pc.name), { permanent: true, direction: 'center', className: 'parcel-label' });
         });
         gj.addTo(parcelLayer);
         var b = gj.getBounds();
@@ -137,7 +146,7 @@ export const mapHtml = `<!DOCTYPE html>
       var cm = L.circleMarker([m.lat, m.lon], {
         radius: 6, color: '#FBFAF7', weight: 2, fillColor: '#A5432B', fillOpacity: 1
       });
-      if (m.label) cm.bindTooltip(m.label);
+      if (m.label) cm.bindTooltip(esc(m.label));
       cm.addTo(markerLayer);
       var ll = L.latLng(m.lat, m.lon);
       bounds = bounds ? bounds.extend(ll) : L.latLngBounds(ll, ll);

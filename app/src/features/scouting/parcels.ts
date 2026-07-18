@@ -1,33 +1,9 @@
-// OWNER: fe-scouting — parcels cache (react-query) with an AsyncStorage fallback so parcel
-// name lookup + nearest-parcel auto-pick keep working offline, plus nearest-centroid helpers.
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-
-import { api } from '@/api/client';
+// OWNER: fe-scouting — nearest-centroid helpers for offline auto-pick. The parcels query
+// itself lives in features/parcels/hooks (one canonical ['parcels'] registration); this
+// module re-exports it so scouting imports stay stable.
 import type { Parcel } from '@/api/types';
 
-const PARCELS_CACHE_KEY = 'arvo.cache.parcels';
-
-export function useParcels(): UseQueryResult<Parcel[]> {
-  return useQuery({
-    queryKey: ['parcels'],
-    staleTime: 5 * 60 * 1000,
-    // 'always' so the queryFn runs even when the client is considered offline (web) — the
-    // AsyncStorage fallback below then serves the last-known parcels for offline auto-pick.
-    networkMode: 'always',
-    queryFn: async (): Promise<Parcel[]> => {
-      try {
-        const parcels = await api.get<Parcel[]>('/parcels');
-        void AsyncStorage.setItem(PARCELS_CACHE_KEY, JSON.stringify(parcels));
-        return parcels;
-      } catch (e) {
-        const cached = await AsyncStorage.getItem(PARCELS_CACHE_KEY);
-        if (cached) return JSON.parse(cached) as Parcel[];
-        throw e;
-      }
-    },
-  });
-}
+export { useParcels } from '@/features/parcels/hooks';
 
 /** Great-circle distance in km (haversine). */
 export function distanceKm(aLat: number, aLon: number, bLat: number, bLon: number): number {

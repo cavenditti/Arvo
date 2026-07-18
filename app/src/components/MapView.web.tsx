@@ -41,6 +41,9 @@ export default function MapView(props: MapViewProps) {
         const msg = JSON.parse(e.data);
         if (msg.type === 'ready') {
           readyRef.current = true;
+          // A fresh document announcing ready has no map state — clear the dedupe so the
+          // init is re-sent even if the payload string hasn't changed.
+          lastSent.current = '';
           send();
         } else if (msg.type === 'select' && msg.id) {
           onSelectParcel?.(msg.id);
