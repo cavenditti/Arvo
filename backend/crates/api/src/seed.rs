@@ -14,6 +14,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use arvo_core::agro::{self, AdvisoryKind, ForecastDay, Severity};
+use arvo_core::anomaly;
 
 use crate::imagery::synth;
 use crate::jobs;
@@ -130,6 +131,14 @@ pub async fn run(state: &AppState, demo: bool) -> anyhow::Result<()> {
     // --- anomaly detector → index_drop alert for Vigneto Nord ---
     let created = jobs::detect_all(state).await?;
     tracing::info!(created, "seed: anomaly detector run");
+
+    // The detector prefers real sentinel-2 series when they exist (source precedence), so on
+    // machines that have run `make ingest` the synthetic dip alone can no longer produce the
+    // demo alert. The demo promise (AGENTS §Seed: Vigneto Nord carries an anomaly alert) is
+    // guaranteed here directly from the synthetic dip instead.
+    for p in parcels.iter().filter(|p| p.anomaly) {
+        seed_demo_drop_alert(pool, org_id, p.id).await?;
+    }
 
     // --- scouting observations (one deleted tombstone) ---
     seed_observations(pool, org_id, demo_user, &parcels).await?;
@@ -631,6 +640,63 @@ async fn seed_advisory_alerts(
         .execute(pool)
         .await?;
     }
+    Ok(())
+}
+
+/// Upsert the demo `index_drop` alert from the synthetic NDVI dip (deduped per parcel+day,
+/// same key shape as the real detector so the two can never double-report one day).
+async fn seed_demo_drop_alert(
+    pool: &sqlx::PgPool,
+    org_id: Uuid,
+    parcel_id: Uuid,
+) -> anyhow::Result<()> {
+    let series: Vec<(chrono::DateTime<Utc>, f64)> = sqlx::query_as(
+        "SELECT observed_at, mean FROM index_observations
+         WHERE parcel_id = $1 AND index_name = 'ndvi' AND source = 'demo'
+         ORDER BY observed_at ASC",
+    )
+    .bind(parcel_id)
+    .fetch_all(pool)
+    .await?;
+    let points: Vec<anomaly::SeriesPoint> = series
+        .iter()
+        .map(|(observed_at, mean)| anomaly::SeriesPoint {
+            observed_at: *observed_at,
+            mean: *mean,
+        })
+        .collect();
+    let Some(event) = anomaly::detect_latest(&points) else {
+        return Ok(()); // series too short (early season) — nothing to report
+    };
+
+    let name: String = sqlx::query_scalar("SELECT name FROM parcels WHERE id = $1")
+        .bind(parcel_id)
+        .fetch_one(pool)
+        .await?;
+    let date = event.observed_at.date_naive();
+    let pct = (event.drop_pct * 100.0).round() as i64;
+    sqlx::query(
+        "INSERT INTO alerts (org_id, parcel_id, kind, severity, title, message, data, dedupe_key)
+         VALUES ($1, $2, 'index_drop', $3, $4, $5, $6, $7)
+         ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+    )
+    .bind(org_id)
+    .bind(parcel_id)
+    .bind(event.severity.as_str())
+    .bind(format!("NDVI drop on {name}"))
+    .bind(format!(
+        "NDVI dropped {pct}% below the {}-day baseline ({:.2} → {:.2})",
+        anomaly::BASELINE_WINDOW_DAYS,
+        event.baseline,
+        event.value
+    ))
+    .bind(json!({
+        "index": "ndvi", "value": event.value, "baseline": event.baseline,
+        "drop_pct": event.drop_pct, "source": "demo",
+    }))
+    .bind(format!("index_drop:{parcel_id}:{date}"))
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
