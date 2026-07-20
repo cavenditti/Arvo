@@ -1,4 +1,4 @@
-// SPINE — Campo tab shell: Fields · Map · [Scout +] · Insights · Me, raised center FAB,
+// SPINE — Campo tab shell: Fields · Map · Plants · [Scout +] · Insights · Me, raised Scout FAB,
 // open-alert badge on Insights. Screens with custom headers opt out via headerShown:false.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
@@ -45,6 +45,14 @@ export default function TabsLayout() {
           title: t('tabs.map'),
           headerShown: false,
           tabBarIcon: ({ color, size }) => <Ionicons name="navigate-outline" color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="plants"
+        options={{
+          title: t('tabs.plants'),
+          headerShown: false,
+          tabBarIcon: ({ color, size }) => <Ionicons name="leaf-outline" color={color} size={size} />,
         }}
       />
       <Tabs.Screen

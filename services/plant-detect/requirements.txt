@@ -1,0 +1,11 @@
+# Pinned, CPU-only, no model weights. rasterio ships its own GDAL in the wheel, so the image
+# needs no apt packages — but only from 1.4.4 does it publish a **linux/arm64** wheel, and
+# that is what an Apple-silicon `make detect-up` builds. Do not pin it lower (1.4.4 also sets
+# the Python floor: >= 3.10).
+numpy==1.26.4
+scipy==1.11.4
+scikit-image==0.22.0
+rasterio==1.4.4
+fastapi==0.110.0
+pydantic==2.6.4
+uvicorn==0.29.0

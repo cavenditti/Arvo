@@ -35,8 +35,13 @@ export default function Screen() {
   const { t } = useTranslation();
   const router = useRouter();
   // "Scout here"/"Record observation" from a parcel context preselects that parcel;
-  // otherwise GPS auto-picks the nearest one below.
-  const { parcelId: initialParcelId } = useLocalSearchParams<{ parcelId?: string }>();
+  // otherwise GPS auto-picks the nearest one below. `plantId` arrives from the plant detail
+  // screen and pins the note to that plant (FR-P-060, docs/API-PLANT.md §Per-plant scouting) —
+  // it is carried through, never edited here.
+  const { parcelId: initialParcelId, plantId } = useLocalSearchParams<{
+    parcelId?: string;
+    plantId?: string;
+  }>();
   const parcelsQ = useParcels();
   const parcels = useMemo(() => parcelsQ.data ?? [], [parcelsQ.data]);
 
@@ -143,9 +148,13 @@ export default function Screen() {
   const save = () => {
     const id = Crypto.randomUUID();
     const now = new Date().toISOString();
+    // The pin belongs to the parcel we arrived from — if the user re-picks another parcel the
+    // plant no longer applies, and storing both would pair a plant with a foreign parcel.
+    const pinnedPlantId = plantId && parcelId === initialParcelId ? plantId : null;
     const obs: Observation = {
       id,
       parcel_id: parcelId,
+      plant_id: pinnedPlantId,
       note: note.trim(),
       tags,
       photos: [],

@@ -63,6 +63,11 @@ jobs:
         run: |
           cargo run -p arvo-api -- migrate
           cargo run -p arvo-api -- seed --demo
+      # Part C2 of the smoke run shells out to `cargo run -p arvo-worker -- run --once`.
+      # Building it here keeps compile errors out of the smoke log and off the smoke timing.
+      - name: Build worker
+        working-directory: backend
+        run: cargo build -p arvo-worker
       - name: Serve API
         working-directory: backend
         run: |

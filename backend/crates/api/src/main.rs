@@ -34,10 +34,13 @@ enum Cmd {
     Serve,
     /// Apply pending migrations and exit
     Migrate,
-    /// Seed the database (use --demo for the full demo tenant)
+    /// Seed the database (--demo for the full demo tenant, --demo-plants for the Phase-P orchard)
     Seed {
         #[arg(long)]
         demo: bool,
+        /// Seed only the Phase-P plant tier on top of an existing --demo tenant
+        #[arg(long)]
+        demo_plants: bool,
     },
     /// Refresh STAC scenes (and compute indices when built with --features imagery)
     IngestImagery {
@@ -73,9 +76,13 @@ async fn main() -> anyhow::Result<()> {
             MIGRATOR.run(&pool).await?;
             println!("migrations applied");
         }
-        Cmd::Seed { demo } => {
+        Cmd::Seed { demo, demo_plants } => {
             MIGRATOR.run(&pool).await?;
-            seed::run(&state, demo).await?;
+            if demo_plants {
+                seed::run_demo_plants(&state).await?;
+            } else {
+                seed::run(&state, demo).await?;
+            }
         }
         Cmd::IngestImagery { parcel } => {
             imagery::ingest_all(&state, parcel).await?;

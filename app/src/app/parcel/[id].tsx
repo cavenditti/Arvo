@@ -469,6 +469,24 @@ export default function ParcelDetailScreen() {
           </TintCard>
         </Pressable>
 
+        {/* per-plant tier (Phase P): the plant map for this parcel, and flight registration */}
+        <View style={styles.plantRow}>
+          <Pressable
+            style={styles.plantBtn}
+            onPress={() => router.push({ pathname: '/plants', params: { parcelId: p.id } })}
+          >
+            <Ionicons name="leaf-outline" size={18} color={colors.primary} />
+            <Text style={styles.reportTxt}>{t('plants.open_map')}</Text>
+          </Pressable>
+          <Pressable
+            style={styles.plantBtn}
+            onPress={() => router.push({ pathname: '/capture/new', params: { parcelId: p.id } })}
+          >
+            <Ionicons name="airplane-outline" size={18} color={colors.primary} />
+            <Text style={styles.reportTxt}>{t('plants.empty_cta')}</Text>
+          </Pressable>
+        </View>
+
         <Pressable style={styles.reportBtn} onPress={openReport}>
           <Ionicons name="document-text" size={18} color={colors.primary} />
           <Text style={styles.reportTxt}>{t('parcel.report')}</Text>
@@ -643,6 +661,20 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.primary,
+  },
+  plantRow: { flexDirection: 'row', gap: spacing.sm },
+  plantBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
   },
   reportTxt: { color: colors.primary, fontFamily: fonts.bodySemiBold, fontSize: 15 },
   archiveBtn: {

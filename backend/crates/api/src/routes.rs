@@ -33,7 +33,13 @@ pub fn app(state: AppState) -> Router {
         .merge(modules::indices::router())
         .merge(modules::alerts::router())
         .merge(modules::observations::router())
-        .merge(modules::reports::router());
+        .merge(modules::reports::router())
+        // Phase P — per-plant tier (docs/API-PLANT.md). Plant MVT tiles are NOT feature-gated:
+        // ST_AsMVT is pure PostGIS, so the plant map works in a default (no-GDAL) build.
+        .merge(modules::plants::router())
+        .merge(modules::captures::router())
+        .merge(modules::plant_insights::router())
+        .merge(modules::plant_tiles::router());
 
     // Raster tiles + GeoTIFF export (FR-0-027) — only in `imagery` builds (needs GDAL).
     #[cfg(feature = "imagery")]

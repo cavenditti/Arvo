@@ -44,6 +44,7 @@ pub fn router() -> Router<AppState> {
 struct ObservationRow {
     id: Uuid,
     parcel_id: Option<Uuid>,
+    plant_id: Option<Uuid>,
     note: String,
     tags: Vec<String>,
     photos: Value,
@@ -56,7 +57,8 @@ struct ObservationRow {
     author_name: Option<String>,
 }
 
-const OBS_SELECT: &str = "SELECT o.id, o.parcel_id, o.note, o.tags, o.photos, o.lon, o.lat,
+const OBS_SELECT: &str =
+    "SELECT o.id, o.parcel_id, o.plant_id, o.note, o.tags, o.photos, o.lon, o.lat,
         o.taken_at, o.updated_at, o.deleted, o.author_id, u.full_name AS author_name
  FROM observations o
  LEFT JOIN users u ON u.id = o.author_id";
@@ -68,6 +70,8 @@ struct Upsert {
     id: Uuid,
     #[serde(default)]
     parcel_id: Option<Uuid>,
+    #[serde(default)]
+    plant_id: Option<Uuid>,
     #[serde(default)]
     note: String,
     #[serde(default)]
@@ -131,13 +135,32 @@ async fn sync(
         // Anything else (foreign org, hard-deleted parcel from a cascaded farm delete) is
         // stored as NULL instead of failing the whole batch with an FK error — otherwise a
         // legitimate offline outbox replay would wedge on a 500 forever.
-        let parcel_id: Option<Uuid> = match up.parcel_id {
+        let mut parcel_id: Option<Uuid> = match up.parcel_id {
             Some(pid) => {
                 sqlx::query_scalar("SELECT id FROM parcels WHERE id = $1 AND org_id = $2")
                     .bind(pid)
                     .bind(user.org_id)
                     .fetch_optional(&mut *tx)
                     .await?
+            }
+            None => None,
+        };
+        // The optional plant pin (FR-P-060) follows exactly the same rule as `parcel_id`.
+        let plant_id: Option<Uuid> = match up.plant_id {
+            Some(pid) => {
+                let found: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
+                    "SELECT id, parcel_id FROM plants WHERE id = $1 AND org_id = $2",
+                )
+                .bind(pid)
+                .bind(user.org_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+                // A resolved plant supplies the parcel when the client left it empty, so a
+                // plant-pinned note still surfaces in that parcel's scouting list.
+                if let Some((_, plant_parcel)) = found {
+                    parcel_id = parcel_id.or(plant_parcel);
+                }
+                found.map(|(id, _)| id)
             }
             None => None,
         };
@@ -152,13 +175,14 @@ async fn sync(
             None => {
                 sqlx::query(
                     "INSERT INTO observations
-                       (id, org_id, parcel_id, author_id, lon, lat, note, tags, photos, taken_at, deleted, updated_at, server_updated_at)
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now())
+                       (id, org_id, parcel_id, plant_id, author_id, lon, lat, note, tags, photos, taken_at, deleted, updated_at, server_updated_at)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now())
                      ON CONFLICT (id) DO NOTHING",
                 )
                 .bind(up.id)
                 .bind(user.org_id)
                 .bind(parcel_id)
+                .bind(plant_id)
                 .bind(user.user_id)
                 .bind(up.lon)
                 .bind(up.lat)
@@ -178,13 +202,14 @@ async fn sync(
                 if up.updated_at > stored_updated {
                     sqlx::query(
                         "UPDATE observations SET
-                           parcel_id = $2, lon = $3, lat = $4, note = $5, tags = $6,
-                           photos = $7, taken_at = $8, deleted = $9, updated_at = $10,
+                           parcel_id = $2, plant_id = $3, lon = $4, lat = $5, note = $6, tags = $7,
+                           photos = $8, taken_at = $9, deleted = $10, updated_at = $11,
                            server_updated_at = now()
-                         WHERE id = $1 AND org_id = $11 AND updated_at < $10",
+                         WHERE id = $1 AND org_id = $12 AND updated_at < $11",
                     )
                     .bind(up.id)
                     .bind(parcel_id)
+                    .bind(plant_id)
                     .bind(up.lon)
                     .bind(up.lat)
                     .bind(&up.note)
@@ -247,10 +272,12 @@ async fn sync(
 struct ListQuery {
     #[serde(default)]
     parcel_id: Option<Uuid>,
+    #[serde(default)]
+    plant_id: Option<Uuid>,
     limit: Option<i64>,
 }
 
-/// GET /observations?parcel_id=&limit=100 — non-deleted, newest first.
+/// GET /observations?parcel_id=&plant_id=&limit=100 — non-deleted, newest first.
 async fn list(
     State(state): State<AppState>,
     user: AuthUser,
@@ -260,12 +287,14 @@ async fn list(
     let rows: Vec<ObservationRow> = sqlx::query_as(&format!(
         "{} WHERE o.org_id = $1 AND o.deleted = false
            AND ($2::uuid IS NULL OR o.parcel_id = $2)
+           AND ($3::uuid IS NULL OR o.plant_id = $3)
          ORDER BY o.taken_at DESC
-         LIMIT $3",
+         LIMIT $4",
         OBS_SELECT
     ))
     .bind(user.org_id)
     .bind(q.parcel_id)
+    .bind(q.plant_id)
     .bind(limit)
     .fetch_all(&state.pool)
     .await?;

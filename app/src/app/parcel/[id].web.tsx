@@ -426,6 +426,29 @@ export default function ParcelDetailWeb() {
               )}
             </SectionCard>
 
+            {/* per-plant tier (Phase P): the plant map for this parcel, and flight registration */}
+            <SectionCard title={t('plants.section_title')}>
+              <Text style={styles.plantHint}>{t('plants.subtitle')}</Text>
+              <View style={styles.manageBtns}>
+                <Pressable
+                  style={styles.manageBtn}
+                  onPress={() => router.push({ pathname: '/plants', params: { parcelId: p.id } })}
+                >
+                  <Ionicons name="leaf-outline" size={16} color={colors.primary} />
+                  <Text style={styles.manageBtnTxt}>{t('plants.open_map')}</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.manageBtn}
+                  onPress={() =>
+                    router.push({ pathname: '/capture/new', params: { parcelId: p.id } })
+                  }
+                >
+                  <Ionicons name="add" size={16} color={colors.primary} />
+                  <Text style={styles.manageBtnTxt}>{t('plants.empty_cta')}</Text>
+                </Pressable>
+              </View>
+            </SectionCard>
+
             {/* manage */}
             <SectionCard title={t('parcel.manage', { defaultValue: 'Manage' })}>
               <View style={styles.manageBtns}>
@@ -757,6 +780,7 @@ const styles = StyleSheet.create({
   },
   manageBtnTxt: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.primary },
   dangerTxt: { color: colors.danger },
+  plantHint: { fontSize: 12.5, lineHeight: 18, fontFamily: fonts.body, color: colors.textMuted },
 
   // edit form
   editForm: { gap: spacing.sm, paddingVertical: spacing.xs },

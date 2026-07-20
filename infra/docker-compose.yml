@@ -20,5 +20,37 @@ services:
       # Unclean shutdowns (laptop sleep/power loss) need WAL recovery + fsync
       # before accepting connections; don't let `--wait` give up during that.
       start_period: 60s
+
+  # --- Plant tier (Phase P) ---------------------------------------------------------------
+  # Both services below sit behind compose profiles, so a plain `docker compose up`
+  # (`make db-up`) still starts exactly one thing: the database. Nothing here touches `db`,
+  # its image, or the `arvo-db` volume.
+
+  plant-detect:
+    profiles: ["plant"]
+    build: ../services/plant-detect
+    container_name: arvo-plant-detect
+    ports:
+      # LOOPBACK ONLY. The service has no authentication and reads capture rasters straight
+      # out of the store mount, so it must never be reachable off-host (NFR-P-SEC). The worker
+      # talks to it over PLANT_DETECT_URL; nothing else needs the port.
+      - "127.0.0.1:${PLANT_DETECT_PORT:-8788}:8788"
+    environment:
+      STORE_DIR: /var/store
+      PORT: 8788
+      WEB_CONCURRENCY: ${PLANT_DETECT_WORKERS:-2}
+      PLANT_DETECT_ALLOW_ABS_PATHS: ${PLANT_DETECT_ALLOW_ABS_PATHS:-0}
+    volumes:
+      # Read-only: detection only ever reads the ortho/DSM it is pointed at.
+      - ../backend/var/store:/var/store:ro
+
+  odm:
+    profiles: ["odm"]
+    image: ${ODM_IMAGE:-opendronemap/odm:latest}
+    # Not a server. The `sfm` stage shells out to `docker run --rm <image>` itself, with that
+    # capture's own mounts (crates/worker/src/sfm.rs), so this entry exists to pin the image
+    # ODM_IMAGE names and give `make odm-pull` something to pull. Running it prints usage.
+    command: ["--help"]
+
 volumes:
   arvo-db:

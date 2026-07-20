@@ -10,6 +10,9 @@ pub struct Config {
     /// Raster tile cache (imagery builds). Kept here so all env reads live in one place.
     #[cfg_attr(not(feature = "imagery"), allow(dead_code))]
     pub tile_cache_dir: PathBuf,
+    /// Object store root: capture raw photos, orthomosaics and DSMs (docs/API-PLANT.md
+    /// §"Storage layout"). Local disk in P-MVP; `arvo-worker` reads the same `STORE_DIR`.
+    pub store_dir: PathBuf,
     /// CORS allowlist. Empty = permissive (dev default; release logs a warning).
     pub allowed_origins: Vec<String>,
     pub db_max_connections: u32,
@@ -43,6 +46,8 @@ impl Config {
             PathBuf::from(std::env::var("UPLOAD_DIR").unwrap_or_else(|_| "./var/uploads".into()));
         let tile_cache_dir =
             PathBuf::from(std::env::var("TILE_CACHE_DIR").unwrap_or_else(|_| "./var/tiles".into()));
+        let store_dir =
+            PathBuf::from(std::env::var("STORE_DIR").unwrap_or_else(|_| "./var/store".into()));
         let allowed_origins = std::env::var("ALLOWED_ORIGINS")
             .map(|v| {
                 v.split(',')
@@ -61,6 +66,7 @@ impl Config {
             port,
             upload_dir,
             tile_cache_dir,
+            store_dir,
             allowed_origins,
             db_max_connections,
         })
