@@ -9,7 +9,7 @@ import { format, formatDistanceToNow, parseISO } from 'date-fns';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { api } from '@/api/client';
 import { INDEX_NAMES } from '@/api/types';
@@ -43,6 +43,7 @@ import {
   statusForSeverity,
   statusGradient,
   type Status,
+  WEB_COMPACT_BREAKPOINT,
 } from '@/theme';
 
 type Me = { org: Org };
@@ -56,6 +57,8 @@ const STATUS_ORDER: Status[] = ['healthy', 'watch', 'attention'];
 export default function FieldsWeb() {
   const { t } = useTranslation();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const compact = width < WEB_COMPACT_BREAKPOINT;
 
   const [selectedIndex, setSelectedIndex] = useState<IndexName | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -231,13 +234,13 @@ export default function FieldsWeb() {
   return (
     <View style={styles.page}>
       {/* page header */}
-      <View style={styles.pageHeader}>
+      <View style={[styles.pageHeader, compact && styles.pageHeaderCompact]}>
         <View style={styles.flex1}>
           <Text style={styles.h1}>{t('dashboard.title')}</Text>
           <Text style={styles.subtitle}>{subtitle}</Text>
         </View>
-        <View style={styles.headerRight}>
-          <View style={styles.search}>
+        <View style={[styles.headerRight, compact && styles.headerRightCompact]}>
+          <View style={[styles.search, compact && styles.searchCompact]}>
             <Ionicons name="search" size={15} color={colors.textFaint} />
             <TextInput
               value={search}
@@ -250,6 +253,91 @@ export default function FieldsWeb() {
         </View>
       </View>
 
+      {compact ? (
+        <View style={styles.compactContent}>
+          {topAlerts[0] ? (() => {
+            const alert = topAlerts[0];
+            const tint = severityTint[alert.severity];
+            const where = alert.parcel_id
+              ? (parcelNames[alert.parcel_id] ?? t('fields.all_parcels', { defaultValue: 'All parcels' }))
+              : t('fields.all_parcels', { defaultValue: 'All parcels' });
+            return (
+              <InteractivePressable
+                onPress={() => alert.parcel_id ? router.push(`/parcel/${alert.parcel_id}`) : router.push('/alerts')}
+                style={[styles.compactAlert, { backgroundColor: tint.bg }]}
+                hoverStyle={styles.compactAlertHover}
+              >
+                <GlyphBadge glyph={kindGlyph(alert.kind)} fg={tint.fg} bg={colors.card} size={28} />
+                <View style={styles.flex1}>
+                  <Text style={styles.compactAlertTitle} numberOfLines={1}>{alert.title}</Text>
+                  <Text style={styles.compactAlertMeta} numberOfLines={1}>{where}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={17} color={tint.fg} />
+              </InteractivePressable>
+            );
+          })() : null}
+
+          <View style={styles.compactListMeta}>
+            <View style={styles.flex1}>
+              <MonoLabel>{t('fields.parcels', { defaultValue: 'Parcels' })}</MonoLabel>
+              <Text style={styles.compactScoreHelp}>{t('score.short_explanation')}</Text>
+            </View>
+            <InteractivePressable
+              onPress={() => setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))}
+              style={styles.compactSort}
+              hoverStyle={styles.softHover}
+            >
+              <Ionicons name={sortDir === 'desc' ? 'arrow-down' : 'arrow-up'} size={15} color={colors.primary} />
+              <Text style={styles.compactSortText}>{t('score.name')}</Text>
+            </InteractivePressable>
+          </View>
+
+          <View style={styles.compactParcelList}>
+            {sorted.length === 0 ? (
+              <View style={styles.tableEmpty}>
+                <Text style={styles.muted}>
+                  {search ? t('fields.no_matches', { defaultValue: 'No matching parcels' }) : t('dashboard.empty_title')}
+                </Text>
+              </View>
+            ) : sorted.map((p) => {
+              const status = statusForSeverity(severityByParcel[p.id]);
+              const score = arvoScore(latest[p.id]);
+              const seven = sevenDayDelta(sparkByParcel[p.id] ?? []);
+              const band = trendBand(seven);
+              return (
+                <InteractivePressable
+                  key={p.id}
+                  onPress={() => router.push(`/parcel/${p.id}`)}
+                  style={styles.compactParcelRow}
+                  hoverStyle={styles.rowHover}
+                >
+                  <View style={[styles.compactScoreBadge, { backgroundColor: scoreColor(score?.value) }]}>
+                    <Text style={styles.compactScoreValue}>{score?.value == null ? '—' : Math.round(score.value)}</Text>
+                  </View>
+                  <View style={styles.compactParcelInfo}>
+                    <Text style={styles.compactParcelName} numberOfLines={1}>{p.name}</Text>
+                    <Text style={styles.compactParcelMeta} numberOfLines={1}>
+                      {`${cropLabel(p.crop)} · ${p.area_ha.toFixed(1)} ha`}
+                    </Text>
+                  </View>
+                  <View style={styles.compactParcelRight}>
+                    <StatusChip status={status} label={t(`status.${status}`)} />
+                    <View style={styles.compactTrend}>
+                      <Ionicons
+                        name={band === 'improving' ? 'trending-up' : band === 'declining' ? 'trending-down' : 'remove'}
+                        size={14}
+                        color={band === 'declining' ? colors.accent : colors.primary}
+                      />
+                      <Text style={styles.trendText}>{t(`trend.${band}`)}</Text>
+                    </View>
+                  </View>
+                </InteractivePressable>
+              );
+            })}
+          </View>
+        </View>
+      ) : (
+      <>
       {/* map + right rail */}
       <View style={styles.topRow}>
         <View style={styles.mapCard}>
@@ -552,6 +640,8 @@ export default function FieldsWeb() {
           })
         )}
       </View>
+      </>
+      )}
     </View>
   );
 }
@@ -578,9 +668,11 @@ const styles = StyleSheet.create({
 
   // header
   pageHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  pageHeaderCompact: { flexDirection: 'column', alignItems: 'stretch', gap: spacing.sm },
   h1: { fontFamily: fonts.display, fontSize: 28, color: colors.text },
   subtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 3 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  headerRightCompact: { width: '100%' },
   search: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -594,6 +686,33 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   searchInput: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text },
+  searchCompact: { width: '100%', minWidth: 0, height: 42 },
+  compactContent: { gap: spacing.md },
+  compactAlert: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  compactAlertHover: { transform: [{ translateY: -1 }] },
+  compactAlertTitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.text },
+  compactAlertMeta: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  compactListMeta: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  compactScoreHelp: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, marginTop: 3 },
+  compactSort: { flexDirection: 'row', alignItems: 'center', gap: 5, padding: spacing.sm, borderRadius: radius.sm },
+  compactSortText: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.primary },
+  compactParcelList: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, overflow: 'hidden' },
+  compactParcelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.borderSoft },
+  compactScoreBadge: { width: 48, height: 48, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
+  compactScoreValue: { fontFamily: fonts.monoSemiBold, fontSize: 17, color: colors.onPrimary },
+  compactParcelInfo: { flex: 1, minWidth: 0 },
+  compactParcelName: { fontFamily: fonts.display, fontSize: 16, color: colors.text },
+  compactParcelMeta: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, marginTop: 3 },
+  compactParcelRight: { alignItems: 'flex-end', gap: 5 },
+  compactTrend: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   // top row
   topRow: { flexDirection: 'row', gap: spacing.lg, alignItems: 'stretch' },
 

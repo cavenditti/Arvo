@@ -58,6 +58,9 @@ export const gradients: Record<string, [string, string]> = {
   forest: ['#2C5A40', '#1F4430'],
 };
 
+/** Below this width, the web app follows the native phone/tablet navigation and stacking. */
+export const WEB_COMPACT_BREAKPOINT = 960;
+
 export const severityColor: Record<string, string> = {
   info: colors.info,
   warning: colors.warning,

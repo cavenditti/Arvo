@@ -4,7 +4,7 @@
 // readings, insights and the status lifecycle on the right.
 // Terra rules: no state dots, no left-border stripes, fonts are family tokens (never fontWeight).
 import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -42,7 +42,7 @@ import { useParcel } from '@/features/parcels/hooks';
 import { usePlant } from '@/features/plants/hooks';
 import { PHYSICAL_METRICS, metricLabelKey, plantName } from '@/features/plants/ranking';
 import { useParcelObservations } from '@/features/scouting/byParcel';
-import { colors, fonts, gradients, radius, severityTint, spacing, statusColors } from '@/theme';
+import { colors, fonts, gradients, radius, severityTint, spacing, statusColors, WEB_COMPACT_BREAKPOINT } from '@/theme';
 
 // Legal transitions, docs/API-PLANT.md §Plants (POST /plants/{id}/status). `removed` is terminal.
 const TRANSITIONS: Record<PlantStatus, PlantStatus[]> = {
@@ -65,6 +65,8 @@ const HISTORY_METRICS: PlantMetric[] = ['ndvi', 'ndre', 'canopy_m2', 'height_m']
 export default function PlantDetailWebScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const compact = width < WEB_COMPACT_BREAKPOINT;
   const { id } = useLocalSearchParams<{ id: string }>();
   const plantId = id ?? '';
 
@@ -188,7 +190,7 @@ export default function PlantDetailWebScreen() {
     body = (
       <View style={styles.page}>
         {/* breadcrumb + primary actions */}
-        <View style={styles.crumbRow}>
+        <View style={[styles.crumbRow, compact && styles.crumbRowCompact]}>
           <View style={styles.crumbLeft}>
             <InteractivePressable style={styles.crumbLink} hoverStyle={styles.softHover} onPress={() => router.push('/')}>
               <Ionicons name="arrow-back" size={15} color={colors.textMuted} />
@@ -205,7 +207,7 @@ export default function PlantDetailWebScreen() {
               {name}
             </Text>
           </View>
-          <View style={styles.crumbActions}>
+          <View style={[styles.crumbActions, compact && styles.crumbActionsCompact]}>
             <InteractivePressable
               style={styles.outlineBtn}
               hoverStyle={styles.outlineBtnHover}
@@ -231,7 +233,7 @@ export default function PlantDetailWebScreen() {
         </View>
 
         {/* title + condition hero (the card IS the plant's condition, docs/DESIGN.md §5) */}
-        <View style={styles.titleBlock}>
+        <View style={[styles.titleBlock, compact && styles.titleBlockCompact]}>
           <View style={styles.titleLeft}>
             <View style={styles.titleRow}>
               <Text style={styles.h1} numberOfLines={1}>
@@ -249,7 +251,7 @@ export default function PlantDetailWebScreen() {
             glyph={tone.glyph}
             glyphColor={tone.tone}
             glyphSize={128}
-            style={styles.hero}
+            style={[styles.hero, compact && styles.heroCompact]}
           >
             {headline ? (
               <>
@@ -271,9 +273,9 @@ export default function PlantDetailWebScreen() {
           </GlyphCard>
         </View>
 
-        <View style={styles.grid}>
+        <View style={[styles.grid, compact && styles.gridCompact]}>
           {/* LEFT */}
-          <View style={styles.colLeft}>
+          <View style={[styles.colLeft, compact && styles.colCompact]}>
             {/* per-metric series */}
             <View style={styles.card}>
               <View style={styles.cardHead}>
@@ -409,7 +411,7 @@ export default function PlantDetailWebScreen() {
           </View>
 
           {/* RIGHT */}
-          <View style={styles.colRight}>
+          <View style={[styles.colRight, compact && styles.colCompact]}>
             {/* identity */}
             <View style={styles.card}>
               <View style={styles.cardHead}>
@@ -934,6 +936,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.sm,
   },
+  crumbRowCompact: { alignItems: 'stretch' },
   crumbLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -947,6 +950,7 @@ const styles = StyleSheet.create({
   crumbSep: { fontSize: 13, fontFamily: fonts.body, color: colors.textFaint },
   crumbCurrent: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text, flexShrink: 1 },
   crumbActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  crumbActionsCompact: { width: '100%', flexWrap: 'wrap' },
   outlineBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -978,17 +982,21 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.md,
   },
+  titleBlockCompact: { flexDirection: 'column' },
   titleLeft: { gap: spacing.xs, flexShrink: 1, minWidth: 0 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   h1: { fontSize: 28, fontFamily: fonts.displayBold, color: colors.text, letterSpacing: -0.5 },
   metaLine: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
   hero: { minWidth: 230, borderRadius: radius.lg, padding: spacing.md, gap: 2 },
+  heroCompact: { width: '100%', minWidth: 0 },
   heroValue: { lineHeight: 40, letterSpacing: -1 },
 
   // grid
   grid: { flexDirection: 'row', gap: spacing.lg, alignItems: 'flex-start', flexWrap: 'wrap' },
+  gridCompact: { flexDirection: 'column', gap: spacing.md },
   colLeft: { flex: 1.7, minWidth: 420, gap: spacing.md },
   colRight: { flex: 1, minWidth: 300, gap: spacing.md },
+  colCompact: { flex: 0, minWidth: 0, width: '100%' },
 
   // cards
   card: {

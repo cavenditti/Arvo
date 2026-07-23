@@ -4,7 +4,7 @@ import { format, parseISO } from 'date-fns';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { API_URL } from '@/api/client';
 import type { Parcel } from '@/api/types';
@@ -17,7 +17,7 @@ import { formatArea } from '@/features/parcels/crops';
 import { notify } from '@/features/parcels/dialog';
 import { useIndexSeries, useParcels } from '@/features/parcels/hooks';
 import { useCaptures } from '@/features/plants/hooks';
-import { colors, fonts, radius, spacing } from '@/theme';
+import { colors, fonts, radius, spacing, WEB_COMPACT_BREAKPOINT } from '@/theme';
 
 type FieldView = 'overview' | 'plants';
 
@@ -31,6 +31,9 @@ export default function FieldWorkspaceHeader({
 }) {
   const { t, i18n } = useTranslation();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const compact = width < WEB_COMPACT_BREAKPOINT;
+  const narrow = width < 420;
   const mediaToken = useMediaToken();
   const locale = dfLocale();
   const parcelsQ = useParcels();
@@ -93,8 +96,8 @@ export default function FieldWorkspaceHeader({
 
   return (
     <View style={styles.root}>
-      <View style={styles.mainRow}>
-        <View ref={fieldMenuRef} style={styles.fieldPickerWrap}>
+      <View style={[styles.mainRow, compact && styles.mainRowCompact]}>
+        <View ref={fieldMenuRef} style={[styles.fieldPickerWrap, compact && styles.fieldPickerWrapCompact]}>
           <InteractivePressable
             style={styles.fieldPickerTrigger}
             hoverStyle={styles.fieldPickerHover}
@@ -106,7 +109,7 @@ export default function FieldWorkspaceHeader({
             }}
           >
             <View style={styles.fieldPickerText}>
-              <Text style={styles.title} numberOfLines={1}>{parcel.name}</Text>
+              <Text style={[styles.title, compact && styles.titleCompact]} numberOfLines={1}>{parcel.name}</Text>
               <Text style={styles.meta} numberOfLines={1}>{meta}</Text>
               <View style={styles.latestDataRow}>
                 <Text style={styles.latestDataLabel}>{t('fields.latest_data')}:</Text>
@@ -138,7 +141,7 @@ export default function FieldWorkspaceHeader({
             />
           </InteractivePressable>
           {fieldOpen ? (
-            <ScrollView style={styles.menu} contentContainerStyle={styles.menuContent}>
+            <ScrollView style={[styles.menu, compact && styles.menuCompact]} contentContainerStyle={styles.menuContent}>
               {parcels.map((item) => {
                 const selected = item.id === parcel.id;
                 return (
@@ -171,9 +174,15 @@ export default function FieldWorkspaceHeader({
           ) : null}
         </View>
 
-        <View style={styles.headerTools}>
-          <View style={styles.headerActionRow}>
-            <View ref={newMenuRef} style={styles.newMenuWrap}>
+        <View style={[styles.headerTools, compact && styles.headerToolsCompact]}>
+          <View
+            style={[
+              styles.headerActionRow,
+              compact && styles.headerActionRowCompact,
+              narrow && styles.headerActionRowNarrow,
+            ]}
+          >
+            <View ref={newMenuRef} style={[styles.newMenuWrap, narrow && styles.newMenuWrapNarrow]}>
               <InteractivePressable
                 style={styles.newTrigger}
                 hoverStyle={styles.newTriggerHover}
@@ -192,7 +201,7 @@ export default function FieldWorkspaceHeader({
                 />
               </InteractivePressable>
               {newOpen ? (
-                <View style={styles.actionMenu}>
+                <View style={[styles.actionMenu, compact && styles.actionMenuCompact]}>
                   <ActionMenuItem
                     icon="create-outline"
                     label={t('parcel.record_note')}
@@ -260,11 +269,13 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     zIndex: 60,
   },
+  mainRowCompact: { flexDirection: 'column', alignItems: 'stretch', gap: spacing.sm },
   fieldPickerWrap: {
     width: 280,
     position: 'relative',
     zIndex: 60,
   },
+  fieldPickerWrapCompact: { width: '100%' },
   fieldPickerTrigger: {
     minHeight: 64,
     flexDirection: 'row',
@@ -282,6 +293,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     letterSpacing: -0.5,
   },
+  titleCompact: { fontSize: 24 },
   meta: { marginTop: 2, fontFamily: fonts.body, fontSize: 12.5, color: colors.textMuted },
   menu: {
     position: 'absolute',
@@ -300,6 +312,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
+  menuCompact: { width: '100%' },
   menuContent: { padding: spacing.xs, gap: 2 },
   menuItem: {
     minHeight: 48,
@@ -320,13 +333,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 1,
   },
+  headerToolsCompact: { width: '100%', marginLeft: 0, alignItems: 'stretch' },
   headerActionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  headerActionRowCompact: { justifyContent: 'space-between' },
+  headerActionRowNarrow: { flexDirection: 'column', alignItems: 'stretch' },
   latestDataRow: { minHeight: 15, marginTop: 2, flexDirection: 'row', alignItems: 'center', gap: 5 },
   latestDataLabel: { fontFamily: fonts.bodyMedium, fontSize: 10.5, color: colors.textFaint },
   latestDataSource: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   latestDataValue: { fontFamily: fonts.monoSemiBold, fontSize: 10, color: colors.textMuted },
   latestDataDivider: { width: 1, height: 10, backgroundColor: colors.border },
   newMenuWrap: { position: 'relative', zIndex: 70 },
+  newMenuWrapNarrow: { alignSelf: 'flex-start' },
   newTrigger: {
     minHeight: 38,
     flexDirection: 'row',
@@ -355,6 +372,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
+  actionMenuCompact: { left: 0, right: 'auto' },
   actionMenuItem: {
     minHeight: 44,
     flexDirection: 'row',

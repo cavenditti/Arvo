@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -57,6 +58,7 @@ import {
   spacing,
   statusColors,
   statusForSeverity,
+  WEB_COMPACT_BREAKPOINT,
 } from '@/theme';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -66,6 +68,9 @@ type RailTab = 'weather' | 'alerts' | 'manage';
 export default function ParcelDetailWeb() {
   const { t } = useTranslation();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const compact = width < WEB_COMPACT_BREAKPOINT;
+  const ColumnContainer = compact ? View : ScrollView;
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const parcelQ = useParcel(id);
@@ -217,13 +222,16 @@ export default function ParcelDetailWeb() {
     const varianceHigh = (latestPoint?.stddev ?? 0) > 0.08;
 
     body = (
-      <View style={styles.page}>
+      <View style={[styles.page, compact && styles.pageCompact]}>
         <FieldWorkspaceHeader parcel={p} active="overview" />
 
         {/* two-column grid */}
-        <View style={styles.grid}>
+        <View style={[styles.grid, compact && styles.gridCompact]}>
           {/* LEFT */}
-          <ScrollView style={styles.colLeft} contentContainerStyle={styles.columnContent}>
+          <ColumnContainer
+            style={[styles.colLeft, compact && styles.colCompact]}
+          >
+            <View style={styles.columnContent}>
             {/* score explanation + advanced chart, collapsed by default */}
             <View style={styles.card}>
               <View style={styles.conditionHead}>
@@ -231,7 +239,7 @@ export default function ParcelDetailWeb() {
                   <Text style={styles.cardTitle}>{t('parcel.current_condition')}</Text>
                   <StatusChip status={status} label={t(`status.${status}`)} />
                 </View>
-                <View style={styles.conditionTools}>
+                <View style={[styles.conditionTools, compact && styles.conditionToolsCompact]}>
                   {score ? (
                     <View style={styles.scoreSummary}>
                       <View style={[styles.scoreRing, { borderColor: scoreColor(score.value) }]}>
@@ -343,10 +351,11 @@ export default function ParcelDetailWeb() {
               )}
             </View>
             <Text style={styles.disclaimer}>{t('common.decision_support')}</Text>
-          </ScrollView>
+            </View>
+          </ColumnContainer>
 
           {/* RIGHT */}
-          <View style={styles.colRight}>
+          <View style={[styles.colRight, compact && styles.colCompact]}>
             {/* minimap */}
             <View style={styles.mapCard}>
               <MapView
@@ -424,7 +433,8 @@ export default function ParcelDetailWeb() {
               })}
             </View>
 
-            <ScrollView style={styles.railScroll} contentContainerStyle={styles.railContent}>
+            <ColumnContainer style={styles.railScroll}>
+              <View style={styles.railContent}>
               {railTab === 'weather' ? (
                 <SectionCard title={t('parcel.weather')}>
                   {weatherQ.isLoading ? (
@@ -531,7 +541,8 @@ export default function ParcelDetailWeb() {
                   </View>
                 </SectionCard>
               ) : null}
-            </ScrollView>
+              </View>
+            </ColumnContainer>
           </View>
         </View>
       </View>
@@ -647,6 +658,7 @@ function ObsRow({ o }: { o: Observation }) {
 
 const styles = StyleSheet.create({
   page: { flex: 1, minHeight: 0, gap: spacing.md },
+  pageCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
   center: { alignItems: 'center', justifyContent: 'center', gap: spacing.md, paddingVertical: spacing.xl * 3 },
   flex1: { flex: 1, minWidth: 0 },
 
@@ -677,9 +689,11 @@ const styles = StyleSheet.create({
 
   // grid
   grid: { flex: 1, minHeight: 0, flexDirection: 'row', gap: spacing.lg, alignItems: 'stretch' },
+  gridCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', flexDirection: 'column', gap: spacing.md },
   colLeft: { flex: 1.7, minWidth: 420, minHeight: 0 },
   columnContent: { gap: spacing.md, paddingBottom: spacing.sm },
   colRight: { flex: 1, minWidth: 300, minHeight: 0, gap: spacing.sm },
+  colCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', minWidth: 0, width: '100%' },
 
   // cards
   card: {
@@ -710,6 +724,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     flexWrap: 'wrap',
   },
+  conditionToolsCompact: { width: '100%', justifyContent: 'flex-start' },
   scoreExplanation: {
     width: '100%',
     fontSize: 13,

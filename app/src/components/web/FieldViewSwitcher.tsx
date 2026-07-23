@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { InteractivePressable } from '@/components/ui';
 import { colors, fonts, radius, spacing } from '@/theme';
@@ -18,6 +18,8 @@ export default function FieldViewSwitcher({
 }) {
   const { t } = useTranslation();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const narrow = width < 420;
 
   const items: {
     key: FieldView;
@@ -40,7 +42,7 @@ export default function FieldViewSwitcher({
   ];
 
   return (
-    <View style={styles.track} accessibilityRole="tablist">
+    <View style={[styles.track, narrow && styles.trackNarrow]} accessibilityRole="tablist">
       {items.map((item) => {
         const selected = item.key === active;
         return (
@@ -49,7 +51,7 @@ export default function FieldViewSwitcher({
             accessibilityRole="tab"
             accessibilityState={{ selected }}
             onPress={item.onPress}
-            style={[styles.item, selected && styles.itemActive]}
+            style={[styles.item, narrow && styles.itemNarrow, selected && styles.itemActive]}
             hoverStyle={!selected ? styles.itemHover : undefined}
           >
             <Ionicons
@@ -76,6 +78,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.cardAlt,
   },
+  trackNarrow: { width: '100%', alignSelf: 'stretch' },
   item: {
     minHeight: 34,
     flexDirection: 'row',
@@ -84,6 +87,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     borderRadius: radius.sm,
   },
+  itemNarrow: { flex: 1, justifyContent: 'center', paddingHorizontal: spacing.sm },
   itemActive: { backgroundColor: colors.primary },
   itemHover: { backgroundColor: colors.card },
   label: { fontFamily: fonts.bodySemiBold, fontSize: 12.5, color: colors.textMuted },

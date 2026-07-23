@@ -10,7 +10,7 @@ import { formatDistanceToNow, parseISO } from 'date-fns';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import type { TextStyle } from 'react-native';
 
 import { api } from '@/api/client';
@@ -21,7 +21,7 @@ import { GlyphBadge, InteractivePressable, MonoValue, Pill, TintCard } from '@/c
 import { useOutsideDismiss } from '@/components/useOutsideDismiss';
 import { dfLocale } from '@/features/insights/format';
 import { readSnoozeDays, setSnoozeDays } from '@/features/insights/snooze';
-import { alertStateTint, colors, fonts, radius, severityGradient, severityTint, spacing } from '@/theme';
+import { alertStateTint, colors, fonts, radius, severityGradient, severityTint, spacing, WEB_COMPACT_BREAKPOINT } from '@/theme';
 
 type Segment = 'open' | 'snoozed' | 'resolved';
 type SevFilter = 'all' | Severity;
@@ -58,6 +58,8 @@ export default function AlertsWebScreen() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const compact = width < WEB_COMPACT_BREAKPOINT;
 
   const [sevFilter, setSevFilter] = useState<SevFilter>('all');
   const [segment, setSegment] = useState<Segment>('open');
@@ -151,13 +153,13 @@ export default function AlertsWebScreen() {
   return (
     <View style={styles.root}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, compact && styles.headerCompact]}>
         <View style={styles.flex1}>
           <Text style={styles.h1}>{t('alerts.title')}</Text>
           <Text style={styles.subtitle}>{subtitle}</Text>
         </View>
-        <View style={styles.headerRight}>
-          <View style={styles.search}>
+        <View style={[styles.headerRight, compact && styles.headerRightCompact]}>
+          <View style={[styles.search, compact && styles.searchCompact]}>
             <Ionicons name="search-outline" size={15} color={colors.textFaint} />
             <TextInput
               value={query}
@@ -168,7 +170,7 @@ export default function AlertsWebScreen() {
             />
           </View>
           {/* Non-functional placeholder (alert rules are a later feature) */}
-          <View style={styles.rulesBtn}>
+          <View style={[styles.rulesBtn, compact && styles.rulesBtnCompact]}>
             <Text style={styles.rulesBtnText}>
               {t('alerts.alert_rules', { defaultValue: 'Alert rules' })}
             </Text>
@@ -177,7 +179,7 @@ export default function AlertsWebScreen() {
       </View>
 
       {/* Filters */}
-      <View style={styles.filterRow}>
+      <View style={[styles.filterRow, compact && styles.filterRowCompact]}>
         <View style={styles.chips}>
           <SeverityChip
             label={t('alerts.filter_all')}
@@ -195,8 +197,8 @@ export default function AlertsWebScreen() {
           ))}
         </View>
 
-        <View style={styles.filterRight}>
-          <View style={styles.segment}>
+        <View style={[styles.filterRight, compact && styles.filterRightCompact]}>
+          <View style={[styles.segment, compact && styles.segmentCompact]}>
             {SEGMENTS.map((s) => {
               const active = segment === s.key;
               return (
@@ -214,7 +216,7 @@ export default function AlertsWebScreen() {
             })}
           </View>
 
-          <View ref={parcelMenuRef} style={styles.parcelWrap}>
+          <View ref={parcelMenuRef} style={[styles.parcelWrap, compact && styles.parcelWrapCompact]}>
             <InteractivePressable
               style={styles.parcelTrigger}
               hoverStyle={styles.controlHover}
@@ -441,9 +443,11 @@ const styles = StyleSheet.create({
 
   // Header
   header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  headerCompact: { flexDirection: 'column', alignItems: 'stretch' },
   h1: { fontFamily: fonts.displayBold, fontSize: 28, color: colors.text, letterSpacing: -0.5 },
   subtitle: { fontFamily: fonts.body, fontSize: 12.5, color: colors.textFaint, marginTop: 2 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  headerRightCompact: { width: '100%' },
   search: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -457,6 +461,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   searchInput: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text },
+  searchCompact: { flex: 1, minWidth: 0, height: 40 },
   rulesBtn: {
     height: 34,
     justifyContent: 'center',
@@ -467,6 +472,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   rulesBtnText: { fontFamily: fonts.bodySemiBold, fontSize: 12.5, color: colors.textMuted },
+  rulesBtnCompact: { display: 'none' },
   // Filters
   filterRow: {
     flexDirection: 'row',
@@ -476,6 +482,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     zIndex: 10, // keep the parcel dropdown above the cards
   },
+  filterRowCompact: { alignItems: 'stretch' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, alignItems: 'center' },
   chip: {
     flexDirection: 'row',
@@ -493,6 +500,7 @@ const styles = StyleSheet.create({
   chipTextActive: { fontFamily: fonts.bodyBold, color: colors.onPrimary },
 
   filterRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  filterRightCompact: { width: '100%', flexWrap: 'wrap', alignItems: 'stretch' },
   segment: {
     flexDirection: 'row',
     gap: 2,
@@ -500,6 +508,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: 3,
   },
+  segmentCompact: { flex: 1, minWidth: 230 },
   segBtn: { paddingHorizontal: spacing.md - 4, paddingVertical: 5, borderRadius: radius.sm },
   segBtnActive: {
     backgroundColor: colors.card,
@@ -510,6 +519,7 @@ const styles = StyleSheet.create({
   segTextActive: { color: colors.text },
 
   parcelWrap: { position: 'relative', zIndex: 20 },
+  parcelWrapCompact: { flex: 1, minWidth: 120 },
   parcelTrigger: {
     flexDirection: 'row',
     alignItems: 'center',

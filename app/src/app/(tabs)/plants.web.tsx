@@ -6,7 +6,7 @@
 // a tap on the map opens /plant/{id}, and "register a flight" opens /capture/new?parcelId=…
 // Terra: no state dots, no left-border stripes, fonts are family tokens (never fontWeight).
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { format, parseISO } from 'date-fns';
@@ -36,7 +36,7 @@ import {
   plantName,
   weakestN,
 } from '@/features/plants/ranking';
-import { colors, fonts, radius, severityTint, spacing } from '@/theme';
+import { colors, fonts, radius, severityTint, spacing, WEB_COMPACT_BREAKPOINT } from '@/theme';
 
 // Keep the contextual rail deliberately short; it scrolls independently from the map workspace.
 const LIST_LIMIT = 8;
@@ -53,6 +53,10 @@ export default function PlantsWebScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const locale = dfLocale();
+  const { width } = useWindowDimensions();
+  const compact = width < WEB_COMPACT_BREAKPOINT;
+  const mapHeight = compact ? 320 : MAP_HEIGHT;
+  const ColumnContainer = compact ? View : ScrollView;
 
   // `?parcelId=` — how the parcel detail screen enters this workspace on a specific parcel.
   const { parcelId: paramParcelId } = useLocalSearchParams<{ parcelId?: string }>();
@@ -147,7 +151,7 @@ export default function PlantsWebScreen() {
   const noPlants = summaryQ.isSuccess && summary?.total === 0;
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, compact && styles.rootCompact]}>
       <FieldWorkspaceHeader parcel={parcel} active="plants" />
 
       {/* metric tabs + capture meta */}
@@ -169,9 +173,12 @@ export default function PlantsWebScreen() {
         })}
       </View>
 
-      <View style={styles.grid}>
+      <View style={[styles.grid, compact && styles.gridCompact]}>
         {/* LEFT — the map */}
-        <ScrollView style={styles.colLeft} contentContainerStyle={styles.columnContent}>
+        <ColumnContainer
+          style={[styles.colLeft, compact && styles.colCompact]}
+        >
+          <View style={styles.columnContent}>
           <View style={styles.mapCard}>
             {tileUrl ? (
               <PlantMap
@@ -180,11 +187,11 @@ export default function PlantsWebScreen() {
                 parcelGeometry={parcel.geometry}
                 metric={metric}
                 scale={domain}
-                height={MAP_HEIGHT}
+                height={mapHeight}
                 onSelectPlant={openPlant}
               />
             ) : (
-              <View style={[styles.mapLoading, { height: MAP_HEIGHT }]}>
+              <View style={[styles.mapLoading, { height: mapHeight }]}>
                 <ActivityIndicator color={colors.primary} />
                 <Text style={styles.muted}>{t('plantmap.loading')}</Text>
               </View>
@@ -216,11 +223,12 @@ export default function PlantsWebScreen() {
             <Text style={styles.attribution}>{t('plantmap.attribution')}</Text>
           </View>
           <Text style={styles.disclaimer}>{t('common.decision_support')}</Text>
-        </ScrollView>
+          </View>
+        </ColumnContainer>
 
         {/* RIGHT — one bounded contextual panel at a time */}
-        <View style={styles.colRight}>
-          <View style={[styles.card, styles.sideCard]}>
+        <View style={[styles.colRight, compact && styles.colCompact]}>
+          <View style={[styles.card, styles.sideCard, compact && styles.sideCardCompact]}>
             <View style={styles.sideTabs}>
               <InteractivePressable
                 style={[styles.sideTab, sidePanel === 'weakest' && styles.sideTabActive]}
@@ -251,7 +259,8 @@ export default function PlantsWebScreen() {
                 ) : null}
               </InteractivePressable>
             </View>
-            <ScrollView style={styles.sideScroll} contentContainerStyle={styles.sideContent}>
+            <ColumnContainer style={styles.sideScroll}>
+              <View style={styles.sideContent}>
               {sidePanel === 'weakest' ? (
                 noPlants ? (
                   <View style={styles.emptyBox}>
@@ -337,7 +346,8 @@ export default function PlantsWebScreen() {
                   )}
                 </>
               )}
-            </ScrollView>
+              </View>
+            </ColumnContainer>
           </View>
         </View>
       </View>
@@ -347,6 +357,7 @@ export default function PlantsWebScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0, gap: spacing.md },
+  rootCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
   flex1: { flex: 1, minWidth: 0 },
   center: {
     alignItems: 'center',
@@ -373,9 +384,11 @@ const styles = StyleSheet.create({
 
   // grid
   grid: { flex: 1, minHeight: 0, flexDirection: 'row', gap: spacing.lg, alignItems: 'stretch' },
+  gridCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', flexDirection: 'column', gap: spacing.md },
   colLeft: { flex: 1.7, minWidth: 420, minHeight: 0 },
   columnContent: { gap: spacing.md, paddingBottom: spacing.sm },
   colRight: { flex: 1, minWidth: 300, minHeight: 0 },
+  colCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', minWidth: 0, width: '100%' },
 
   // map
   mapCard: {
@@ -410,6 +423,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   sideCard: { flex: 1, minHeight: 0 },
+  sideCardCompact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
   sideTabs: {
     flexDirection: 'row',
     gap: 4,

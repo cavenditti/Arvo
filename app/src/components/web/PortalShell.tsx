@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter, usePathname } from 'expo-router';
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { api } from '@/api/client';
 import type { Alert } from '@/api/types';
@@ -14,7 +14,7 @@ import { useAuth } from '@/auth/AuthContext';
 import Logo from '@/components/Logo';
 import { GlyphBadge, InteractivePressable, MonoLabel, initials } from '@/components/ui';
 import { useOutsideDismiss } from '@/components/useOutsideDismiss';
-import { colors, fonts, radius, spacing } from '@/theme';
+import { colors, fonts, radius, spacing, WEB_COMPACT_BREAKPOINT } from '@/theme';
 
 type NavItem = {
   key: string;
@@ -52,10 +52,44 @@ const NAV: NavItem[] = [
   { key: 'devices', labelKey: 'portal.devices', fallback: 'Devices', icon: 'hardware-chip-outline' },
 ];
 
+const MOBILE_NAV: NavItem[] = [
+  {
+    key: 'fields',
+    labelKey: 'tabs.dashboard',
+    fallback: 'Fields',
+    icon: 'grid-outline',
+    path: '/',
+    match: (p) =>
+      p === '/' ||
+      p.startsWith('/parcel') ||
+      p.startsWith('/plants') ||
+      p.startsWith('/plant/') ||
+      p.startsWith('/capture'),
+  },
+  { key: 'map', labelKey: 'tabs.map', fallback: 'Map', icon: 'navigate-outline', path: '/map' },
+  { key: 'scouting', labelKey: 'tabs.scouting', fallback: 'Scout', icon: 'add', path: '/scouting' },
+  {
+    key: 'insights',
+    labelKey: 'tabs.alerts',
+    fallback: 'Insights',
+    icon: 'warning-outline',
+    path: '/alerts',
+  },
+  {
+    key: 'settings',
+    labelKey: 'tabs.settings',
+    fallback: 'Me',
+    icon: 'person-outline',
+    path: '/settings',
+  },
+];
+
 export default function PortalShell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const router = useRouter();
   const pathname = usePathname();
+  const { width } = useWindowDimensions();
+  const compact = width < WEB_COMPACT_BREAKPOINT;
   const { user, org, orgs, role, switchOrg } = useAuth();
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [switchingOrg, setSwitchingOrg] = useState<string | null>(null);
@@ -94,8 +128,9 @@ export default function PortalShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <View style={styles.root}>
-      <View style={styles.sidebar}>
+    <View style={[styles.root, compact && styles.rootCompact]}>
+      {!compact ? (
+        <View style={styles.sidebar}>
         <View style={styles.brandRow}>
           <Logo size={34} />
           <Text style={styles.brand}>Arvo</Text>
@@ -226,26 +261,72 @@ export default function PortalShell({ children }: { children: ReactNode }) {
             <Ionicons name="settings-outline" size={14} color={colors.textFaint} />
           </InteractivePressable>
         </View>
-      </View>
+        </View>
+      ) : null}
 
       {pathname === '/map' ? (
         // full-bleed pages (the map) need a real flex fill, not a content-sized scroll area
         <View style={styles.mainFull}>{children}</View>
+      ) : fieldWorkspace && compact ? (
+        <ScrollView key={pathname} style={styles.main} contentContainerStyle={styles.compactWorkspaceScroll}>
+          <View style={[styles.workspaceMain, styles.workspaceMainCompact]}>{children}</View>
+        </ScrollView>
       ) : fieldWorkspace ? (
         <View style={styles.mainFull}>
           <View style={styles.workspaceMain}>{children}</View>
         </View>
       ) : (
-        <ScrollView style={styles.main} contentContainerStyle={styles.mainContent}>
+        <ScrollView
+          key={pathname}
+          style={styles.main}
+          contentContainerStyle={[styles.mainContent, compact && styles.mainContentCompact]}
+        >
           {children}
         </ScrollView>
       )}
+
+      {compact ? (
+        <View style={styles.mobileTabBar}>
+          {MOBILE_NAV.map((item) => {
+            const active = item.match ? item.match(pathname) : pathname === item.path;
+            const scouting = item.key === 'scouting';
+            const color = active ? colors.primary : colors.textFaint;
+            return (
+              <InteractivePressable
+                key={item.key}
+                accessibilityLabel={t(item.labelKey, { defaultValue: item.fallback })}
+                onPress={() => item.path && router.push(item.path)}
+                style={[styles.mobileTab, scouting && styles.mobileScoutTab]}
+              >
+                <View style={[styles.mobileIconWrap, scouting && styles.mobileScoutIcon]}>
+                  <Ionicons
+                    name={item.icon}
+                    size={scouting ? 26 : 21}
+                    color={scouting ? colors.onPrimary : color}
+                  />
+                  {item.key === 'insights' && openCount > 0 ? (
+                    <View style={styles.mobileBadge}>
+                      <Text style={styles.mobileBadgeText}>{openCount}</Text>
+                    </View>
+                  ) : null}
+                </View>
+                {!scouting ? (
+                  <Text style={[styles.mobileTabLabel, active && styles.mobileTabLabelActive]}>
+                    {t(item.labelKey, { defaultValue: item.fallback })}
+                  </Text>
+                ) : null}
+              </InteractivePressable>
+            );
+          })}
+        </View>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, flexDirection: 'row', backgroundColor: colors.bg },
+  rootCompact: { flexDirection: 'column' },
   flex1: { flex: 1, minWidth: 0 },
   sidebar: {
     width: 232,
@@ -398,5 +479,56 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
+  workspaceMainCompact: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    minHeight: 0,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  compactWorkspaceScroll: { flexGrow: 1, paddingBottom: spacing.md },
   mainContent: { padding: spacing.lg, maxWidth: 1280, width: '100%', alignSelf: 'center' },
+  mainContentCompact: { padding: spacing.sm, paddingBottom: spacing.lg },
+  mobileTabBar: {
+    height: 66,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingHorizontal: spacing.xs,
+    zIndex: 100,
+  },
+  mobileTab: { flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center', gap: 3 },
+  mobileScoutTab: { alignSelf: 'stretch' },
+  mobileIconWrap: { position: 'relative', alignItems: 'center', justifyContent: 'center' },
+  mobileScoutIcon: {
+    width: 50,
+    height: 50,
+    marginTop: -22,
+    borderRadius: 25,
+    backgroundColor: colors.primary,
+    borderWidth: 3,
+    borderColor: colors.card,
+    shadowColor: '#000',
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  mobileTabLabel: { fontFamily: fonts.bodySemiBold, fontSize: 10, color: colors.textFaint },
+  mobileTabLabelActive: { color: colors.primary },
+  mobileBadge: {
+    position: 'absolute',
+    top: -7,
+    right: -13,
+    minWidth: 17,
+    height: 17,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accent,
+  },
+  mobileBadgeText: { fontFamily: fonts.bodyBold, fontSize: 9, color: colors.onPrimary },
 });
