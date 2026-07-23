@@ -205,6 +205,8 @@
   "portal.reports": "Report",
   "portal.devices": "Dispositivi",
   "portal.parcels": "particelle",
+  "portal.workspace": "Spazio di lavoro",
+  "portal.switch_workspace": "Cambia spazio di lavoro",
   "fields.hectares": "{{ha}} ha",
   "fields.search_placeholder": "Cerca particelle",
   "fields.latest_pass": "Ultimo passaggio",

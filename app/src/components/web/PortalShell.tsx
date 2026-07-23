@@ -4,17 +4,17 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter, usePathname } from 'expo-router';
-import type { ReactNode } from 'react';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { api } from '@/api/client';
-import type { Alert, Org, Parcel, Role, User } from '@/api/types';
+import type { Alert } from '@/api/types';
+import { useAuth } from '@/auth/AuthContext';
 import Logo from '@/components/Logo';
 import { GlyphBadge, InteractivePressable, MonoLabel, initials } from '@/components/ui';
+import { useOutsideDismiss } from '@/components/useOutsideDismiss';
 import { colors, fonts, radius, spacing } from '@/theme';
-
-type Me = { user: User; org: Org; role: Role };
 
 type NavItem = {
   key: string;
@@ -56,19 +56,39 @@ export default function PortalShell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const router = useRouter();
   const pathname = usePathname();
+  const { user, org, orgs, role, switchOrg } = useAuth();
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [switchingOrg, setSwitchingOrg] = useState<string | null>(null);
+  const workspaceRef = useRef<View | null>(null);
+  const closeWorkspace = useCallback(() => setWorkspaceOpen(false), []);
+  useOutsideDismiss(workspaceRef, workspaceOpen, closeWorkspace);
 
-  const me = useQuery({ queryKey: ['auth', 'me'], queryFn: () => api.get<Me>('/auth/me') });
-  const parcels = useQuery({ queryKey: ['parcels'], queryFn: () => api.get<Parcel[]>('/parcels') });
   const openAlerts = useQuery({
     queryKey: ['alerts', 'open'],
     queryFn: () => api.get<Alert[]>('/alerts?state=open'),
   });
 
-  const parcelCount = (parcels.data ?? []).length;
-  const totalHa = (parcels.data ?? []).reduce((s, p) => s + p.area_ha, 0);
   const openCount = openAlerts.data?.length ?? 0;
-  const fullName = me.data?.user.full_name ?? '—';
+  const fullName = user?.full_name ?? '—';
   const avatarInitials = initials(fullName);
+  const canSwitchWorkspace = orgs.length > 1;
+
+  async function onSwitchWorkspace(orgId: string) {
+    if (orgId === org?.id) {
+      setWorkspaceOpen(false);
+      return;
+    }
+    if (switchingOrg) return;
+    setSwitchingOrg(orgId);
+    try {
+      await switchOrg(orgId);
+      setWorkspaceOpen(false);
+    } catch {
+      // Keep the current workspace and menu open so the user can retry.
+    } finally {
+      setSwitchingOrg(null);
+    }
+  }
 
   return (
     <View style={styles.root}>
@@ -78,24 +98,64 @@ export default function PortalShell({ children }: { children: ReactNode }) {
           <Text style={styles.brand}>Arvo</Text>
         </View>
 
-        {/* Organization settings live in one place; the chevron now leads there instead of
-            looking like a selector that does nothing. */}
-        <InteractivePressable
-          style={styles.orgCard}
-          hoverStyle={styles.orgCardHover}
-          onPress={() => router.push('/settings')}
-        >
-          <GlyphBadge glyph="sprout" fg={colors.success} bg={colors.primarySoft} size={22} />
-          <View style={styles.flex1}>
-            <Text style={styles.orgName} numberOfLines={1}>
-              {me.data?.org.name ?? '—'}
-            </Text>
-            <Text style={styles.orgMeta} numberOfLines={1}>
-              {parcelCount} {t('portal.parcels', { defaultValue: 'parcels' })} · {totalHa.toFixed(1)} ha
-            </Text>
+        <View ref={workspaceRef} style={styles.workspaceBlock}>
+          <View style={styles.orgCard}>
+            <GlyphBadge glyph="sprout" fg={colors.success} bg={colors.primarySoft} size={22} />
+            <View style={styles.flex1}>
+              <MonoLabel size={9}>{t('portal.workspace')}</MonoLabel>
+              <Text style={styles.orgName} numberOfLines={1}>
+                {org?.name ?? '—'}
+              </Text>
+            </View>
           </View>
-          <Ionicons name="chevron-forward" size={14} color={colors.textFaint} />
-        </InteractivePressable>
+          {canSwitchWorkspace ? (
+            <InteractivePressable
+              style={styles.switchWorkspaceButton}
+              hoverStyle={styles.switchWorkspaceHover}
+              accessibilityState={{ expanded: workspaceOpen }}
+              onPress={() => setWorkspaceOpen((open) => !open)}
+            >
+              <Ionicons name="swap-horizontal-outline" size={14} color={colors.primary} />
+              <Text style={styles.switchWorkspaceText}>{t('portal.switch_workspace')}</Text>
+              <Ionicons
+                name={workspaceOpen ? 'chevron-up' : 'chevron-down'}
+                size={13}
+                color={colors.textFaint}
+              />
+            </InteractivePressable>
+          ) : null}
+          {workspaceOpen ? (
+            <View style={styles.workspaceMenu}>
+              {orgs.map((membership) => {
+                const active = membership.id === org?.id;
+                return (
+                  <InteractivePressable
+                    key={membership.id}
+                    style={[styles.workspaceItem, active && styles.workspaceItemActive]}
+                    hoverStyle={!active ? styles.workspaceItemHover : undefined}
+                    onPress={() => void onSwitchWorkspace(membership.id)}
+                    disabled={switchingOrg !== null && switchingOrg !== membership.id}
+                  >
+                    <View style={styles.flex1}>
+                      <Text
+                        style={[styles.workspaceItemName, active && styles.workspaceItemNameActive]}
+                        numberOfLines={1}
+                      >
+                        {membership.name}
+                      </Text>
+                      <MonoLabel size={9}>{t(`roles.${membership.role}`)}</MonoLabel>
+                    </View>
+                    {switchingOrg === membership.id ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : active ? (
+                      <Ionicons name="checkmark" size={16} color={colors.primary} />
+                    ) : null}
+                  </InteractivePressable>
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
 
         <View style={styles.nav}>
           {NAV.map((item) => {
@@ -157,7 +217,7 @@ export default function PortalShell({ children }: { children: ReactNode }) {
               <Text style={styles.userName} numberOfLines={1}>
                 {fullName}
               </Text>
-              <MonoLabel size={10}>{me.data?.role ? t(`roles.${me.data.role}`) : ''}</MonoLabel>
+              <MonoLabel size={10}>{role ? t(`roles.${role}`) : ''}</MonoLabel>
             </View>
             <Ionicons name="settings-outline" size={14} color={colors.textFaint} />
           </InteractivePressable>
@@ -195,11 +255,11 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
   },
   brand: { fontSize: 17, fontFamily: fonts.displayBold, color: colors.text, letterSpacing: -0.2 },
+  workspaceBlock: { position: 'relative', zIndex: 30, marginTop: spacing.sm },
   orgCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    marginTop: spacing.sm,
     paddingVertical: 9,
     paddingHorizontal: 11,
     borderRadius: radius.md,
@@ -208,8 +268,53 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   orgName: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
-  orgCardHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
-  orgMeta: { fontFamily: fonts.mono, fontSize: 10, color: colors.textFaint, marginTop: 2 },
+  switchWorkspaceButton: {
+    minHeight: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: spacing.xs,
+    paddingHorizontal: 10,
+    borderRadius: radius.sm,
+  },
+  switchWorkspaceHover: { backgroundColor: colors.primarySoft },
+  switchWorkspaceText: {
+    flex: 1,
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 11.5,
+    color: colors.primary,
+  },
+  workspaceMenu: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: spacing.xs,
+    padding: spacing.xs,
+    gap: 2,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    shadowColor: '#000',
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+  workspaceItem: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+  },
+  workspaceItemActive: { backgroundColor: colors.primarySoft },
+  workspaceItemHover: { backgroundColor: colors.cardAlt },
+  workspaceItemName: { fontFamily: fonts.bodyMedium, fontSize: 12.5, color: colors.text },
+  workspaceItemNameActive: { fontFamily: fonts.bodySemiBold, color: colors.primary },
   nav: { marginTop: spacing.lg, gap: 2 },
   navItem: {
     flexDirection: 'row',

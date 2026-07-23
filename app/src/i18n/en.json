@@ -205,6 +205,8 @@
   "portal.reports": "Reports",
   "portal.devices": "Devices",
   "portal.parcels": "parcels",
+  "portal.workspace": "Workspace",
+  "portal.switch_workspace": "Switch workspace",
   "fields.hectares": "{{ha}} ha",
   "fields.search_placeholder": "Search parcels",
   "fields.latest_pass": "Latest pass",
