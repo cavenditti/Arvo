@@ -172,6 +172,7 @@ export default function PortalShell({ children }: { children: ReactNode }) {
                 onPress={() => item.path && router.push(item.path)}
                 style={[styles.navItem, active && styles.navItemActive]}
                 hoverStyle={!active && !disabled ? styles.navItemHover : undefined}
+                focusStyle={styles.navItemFocus}
               >
                 <Ionicons
                   name={item.icon}
@@ -320,12 +321,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    paddingHorizontal: 11,
-    paddingVertical: 9,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
     borderRadius: radius.sm,
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
   navItemActive: { backgroundColor: colors.primarySoft },
   navItemHover: { backgroundColor: colors.cardAlt },
+  navItemFocus: { borderColor: colors.focus },
   navLabel: { fontSize: 13.5, fontFamily: fonts.bodyMedium, color: colors.textMuted, flex: 1 },
   navLabelActive: { color: colors.primary, fontFamily: fonts.bodySemiBold },
   navLabelDisabled: { color: colors.textFaint },
