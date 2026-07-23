@@ -66,7 +66,7 @@ export default function PlantMap(props: PlantMapProps) {
         // MapLibre keeps its tile/glyph state in a worker-backed cache; without DOM storage the
         // WebGL context still runs, but Android throws on the first IndexedDB touch.
         domStorageEnabled
-        source={{ html: plantMapHtml }}
+        source={{ html: plantMapHtml() }}
         onMessage={onMessage}
         style={styles.flex}
         scrollEnabled={false}

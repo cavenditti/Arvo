@@ -72,28 +72,40 @@ export function buildPlantInit(props: PlantMapProps, labels: PlantMapLabels): Pl
   };
 }
 
-// MapLibre GL JS is CDN-loaded (binding MVP decision: no npm package, no native module), pinned to
-// an exact version AND to a subresource-integrity digest, exactly like the leaflet tags in
-// ./mapHtml.ts. The sha384 digests below were computed from the dist/ files inside the
-// maplibre-gl@4.7.1 npm tarball — whose own sha512 matched the one the registry publishes — and
-// confirmed byte-identical to what unpkg and jsDelivr serve. `crossorigin="anonymous"` is what
-// makes the browser actually enforce them (unpkg answers `access-control-allow-origin: *`, so the
-// check also holds from the opaque origin the native WebView and the sandboxed iframe run in).
-// The pin is defence in depth, not decoration: this document renders third-party code next to an
-// org-scoped media token (it rides in the MVT tile URL), so a tampered CDN response is a real
-// threat even though PlantMap.web now sandboxes the frame to an opaque origin (`allow-scripts`
-// only — see PlantMap.web.tsx) and the native WebView loads it with no app origin at all.
-// Never bump the version without recomputing BOTH digests, and never guess one — a wrong digest
-// silently blocks the load and leaves a dead map.
-export const plantMapHtml = `<!DOCTYPE html>
+// MapLibre GL JS loads two ways, chosen by the caller (the rest of the document is identical):
+//  • MAPLIBRE_CDN — native (react-native-webview). Pinned to an exact version AND an SRI digest,
+//    exactly like the leaflet tags in ./mapHtml.ts. `crossorigin="anonymous"` makes the browser
+//    enforce the pin (unpkg answers `access-control-allow-origin: *`, so it holds from the WebView's
+//    opaque origin too). The sha384 digests were computed from the dist/ files in the
+//    maplibre-gl@4.7.1 npm tarball and confirmed byte-identical to what unpkg serves. The pin is
+//    defence in depth: this document renders third-party code next to an org-scoped media token (it
+//    rides in the MVT tile URL). Never bump the version without recomputing BOTH digests, and never
+//    guess one — a wrong digest silently blocks the load and leaves a dead map.
+//  • MAPLIBRE_SELF_HOSTED — web portal. Served from app/public/vendor (identical bytes,
+//    sha384-verified against the CDN pins at vendor time). The iframe stays OPAQUE
+//    (`allow-scripts` only — see PlantMap.web.tsx for why `allow-same-origin` breaks MapLibre's
+//    worker bridge); a classic <script src> needs no CORS from an opaque origin, and the relative
+//    /vendor path resolves against the parent's base URL. Self-hosting removes the third-party CDN
+//    from the serving path entirely (no SRI needed) and keeps the map working offline in the field.
+export const MAPLIBRE_CDN = {
+  css: `<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous" />`,
+  js: `<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj" crossorigin="anonymous"></script>`,
+};
+export const MAPLIBRE_SELF_HOSTED = {
+  css: `<link rel="stylesheet" href="/vendor/maplibre-gl.css" />`,
+  js: `<script src="/vendor/maplibre-gl.js"></script>`,
+};
+
+// `lib` selects where maplibre-gl comes from; the returned document string is otherwise identical
+// on both platforms. Native calls plantMapHtml() (CDN); web calls plantMapHtml(MAPLIBRE_SELF_HOSTED).
+export function plantMapHtml(lib = MAPLIBRE_CDN) {
+  return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
-  integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous" />
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
-  integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj" crossorigin="anonymous"></script>
+${lib.css}
+${lib.js}
 <style>
   html, body, #map { height: 100%; margin: 0; padding: 0; }
   #map { background: #DFE6DF; }
@@ -441,3 +453,4 @@ export const plantMapHtml = `<!DOCTYPE html>
 </script>
 </body>
 </html>`;
+}
