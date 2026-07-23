@@ -395,7 +395,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 1280,
     alignSelf: 'center',
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
   mainContent: { padding: spacing.lg, maxWidth: 1280, width: '100%', alignSelf: 'center' },
 });

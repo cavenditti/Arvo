@@ -53,16 +53,16 @@ export default function FieldWorkspaceHeader({
 
   return (
     <View style={styles.root}>
-      <View style={styles.topRow}>
-        <View style={styles.titleBlock}>
-          <MonoLabel size={10}>{t('fields.field_workspace')}</MonoLabel>
-          <Text style={styles.title} numberOfLines={1}>{parcel.name}</Text>
-          <Text style={styles.meta} numberOfLines={1}>{meta}</Text>
+      <View style={styles.mainRow}>
+        <View style={styles.identityGroup}>
+          <View style={styles.titleBlock}>
+            <MonoLabel size={10}>{t('fields.field_workspace')}</MonoLabel>
+            <Text style={styles.title} numberOfLines={1}>{parcel.name}</Text>
+            <Text style={styles.meta} numberOfLines={1}>{meta}</Text>
+          </View>
+          <FieldViewSwitcher parcelId={parcel.id} active={active} />
         </View>
-      </View>
 
-      <View style={styles.bottomRow}>
-        <FieldViewSwitcher parcelId={parcel.id} active={active} />
         <View style={styles.bottomControls}>
           <View ref={menuRef} style={styles.selectWrap}>
             <InteractivePressable
@@ -123,16 +123,25 @@ export default function FieldWorkspaceHeader({
 const styles = StyleSheet.create({
   root: {
     flexShrink: 0,
-    gap: spacing.sm,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     zIndex: 50,
   },
-  topRow: {
+  mainRow: {
     minHeight: 58,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    zIndex: 60,
+  },
+  identityGroup: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
   },
   titleBlock: { flex: 1, minWidth: 0 },
   title: {
@@ -143,7 +152,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   meta: { marginTop: 2, fontFamily: fonts.body, fontSize: 12.5, color: colors.textMuted },
-  selectWrap: { width: 240, position: 'relative', zIndex: 60 },
+  selectWrap: { width: 220, position: 'relative', zIndex: 60 },
   selectTrigger: {
     minHeight: 38,
     flexDirection: 'row',
@@ -189,15 +198,13 @@ const styles = StyleSheet.create({
   menuItemText: { flex: 1, minWidth: 0 },
   menuItemName: { fontFamily: fonts.bodyMedium, fontSize: 12.5, color: colors.text },
   menuItemNameActive: { fontFamily: fonts.bodySemiBold, color: colors.primary },
-  bottomRow: {
-    minHeight: 40,
+  bottomControls: {
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
+    gap: spacing.sm,
     zIndex: 60,
   },
-  bottomControls: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, zIndex: 60 },
   actions: {
     width: 344,
     minHeight: 38,
