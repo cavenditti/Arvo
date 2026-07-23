@@ -20,6 +20,7 @@ import { dfLocale } from '@/features/insights/format';
 import { useParcels } from '@/features/parcels/hooks';
 import { plantColor, rampForMetric } from '@/features/plants/colors';
 import {
+  useCaptures,
   usePlantMetricScale,
   usePlantRanking,
   usePlantSummary,
@@ -62,11 +63,19 @@ export default function PlantsWebScreen() {
   const [metric, setMetric] = useState<PlantMetric>('ndvi');
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // An explicit pick wins over the deep link, which wins over "the first parcel".
+  // An explicit pick wins over the deep link. With neither, prefer the parcel of the newest
+  // extracted flight (one that actually HAS plants) over "the first parcel" — landing here from
+  // the nav must show real data, not the empty state of a plantless first parcel.
+  const capturesQ = useCaptures(undefined, { status: 'extracted', limit: 1 });
   const wantedId = pickedId ?? paramParcelId ?? null;
+  const defaultPlantParcelId = capturesQ.data?.[0]?.parcel_id ?? null;
   const parcel = useMemo(
-    () => parcels.find((p) => p.id === wantedId) ?? parcels[0] ?? null,
-    [parcels, wantedId],
+    () =>
+      parcels.find((p) => p.id === wantedId) ??
+      parcels.find((p) => p.id === defaultPlantParcelId) ??
+      parcels[0] ??
+      null,
+    [parcels, wantedId, defaultPlantParcelId],
   );
   const parcelId = parcel?.id ?? '';
 

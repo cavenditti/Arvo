@@ -39,6 +39,14 @@ const NAV: NavItem[] = [
   },
   { key: 'map', labelKey: 'tabs.map', fallback: 'Map', icon: 'navigate-outline', path: '/map' },
   {
+    key: 'plants',
+    labelKey: 'tabs.plants',
+    fallback: 'Plants',
+    icon: 'leaf-outline',
+    path: '/plants',
+    match: (p) => p.startsWith('/plants') || p.startsWith('/plant/') || p.startsWith('/capture'),
+  },
+  {
     key: 'insights',
     labelKey: 'alerts.title',
     fallback: 'Insights',

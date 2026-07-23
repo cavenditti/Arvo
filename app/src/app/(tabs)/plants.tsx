@@ -20,6 +20,7 @@ import { dfLocale } from '@/features/insights/format';
 import { useParcels } from '@/features/parcels/hooks';
 import { plantColor, rampForMetric } from '@/features/plants/colors';
 import {
+  useCaptures,
   usePlantMetricScale,
   usePlantRanking,
   usePlantSummary,
@@ -68,12 +69,20 @@ export default function PlantsScreen() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [panelHeight, setPanelHeight] = useState(0);
 
-  // An explicit pick wins over the deep link, which wins over "the first parcel" — so the tab is
-  // useful without a selection step and a refetch never moves the map.
+  // An explicit pick wins over the deep link — so the tab is useful without a selection step and
+  // a refetch never moves the map. With neither, prefer the parcel of the newest extracted flight
+  // (one that actually HAS plants) over "the first parcel": landing on the tab must show real
+  // data, not the empty state of a plantless first parcel.
+  const capturesQ = useCaptures(undefined, { status: 'extracted', limit: 1 });
   const wantedId = pickedId ?? paramParcelId ?? null;
+  const defaultPlantParcelId = capturesQ.data?.[0]?.parcel_id ?? null;
   const parcel = useMemo(
-    () => parcels.find((p) => p.id === wantedId) ?? parcels[0] ?? null,
-    [parcels, wantedId],
+    () =>
+      parcels.find((p) => p.id === wantedId) ??
+      parcels.find((p) => p.id === defaultPlantParcelId) ??
+      parcels[0] ??
+      null,
+    [parcels, wantedId, defaultPlantParcelId],
   );
   const parcelId = parcel?.id ?? '';
 
