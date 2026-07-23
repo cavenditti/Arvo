@@ -69,6 +69,15 @@ export default function FieldsWeb() {
     () => (parcelsQ.data ?? []).filter((p) => !p.archived),
     [parcelsQ.data],
   );
+  const q = search.trim().toLocaleLowerCase();
+  const filteredParcels = useMemo(() => parcels.filter((p) => {
+    if (!q) return true;
+    return p.name.toLocaleLowerCase().includes(q) || cropLabel(p.crop).toLocaleLowerCase().includes(q);
+  }), [parcels, q]);
+  const filteredParcelIds = useMemo(
+    () => new Set(filteredParcels.map((p) => p.id)),
+    [filteredParcels],
+  );
   const ids = useMemo(() => parcels.map((p) => p.id), [parcels]);
   const latestQ = useLatestIndices(ids);
   const latest: LatestBatch = latestQ.data ?? {};
@@ -98,24 +107,24 @@ export default function FieldsWeb() {
   const severityByParcel = worstSeverityByParcel(openAlerts);
   const parcelNames = useParcelNames();
 
-  // latest acquisition across parcels → header + map-card date chips
+  // Latest acquisition across the currently visible parcels → map-card date.
   let lastPass: string | null = null;
-  for (const li of Object.values(latest)) {
-    const at = li.ndvi?.observed_at;
+  for (const p of filteredParcels) {
+    const li = latest[p.id];
+    const at = li?.ndvi?.observed_at;
     if (at && (!lastPass || at > lastPass)) lastPass = at;
   }
 
-  const totalHa = parcels.reduce((s, p) => s + p.area_ha, 0);
+  const totalHa = filteredParcels.reduce((s, p) => s + p.area_ha, 0);
   const org = me.data?.org?.name;
   const subtitle = [
     org,
-    t('dashboard.parcel_count', { count: parcels.length }),
+    t('dashboard.parcel_count', { count: filteredParcels.length }),
     t('fields.hectares', { ha: totalHa.toFixed(1), defaultValue: '{{ha}} ha' }),
   ]
     .filter(Boolean)
     .join(' · ');
 
-  const dateStr = lastPass ? format(parseISO(lastPass), 'd MMM', { locale: dfLocale() }) : null;
   const mapDateStr = lastPass
     ? format(parseISO(lastPass), 'd MMM yyyy', { locale: dfLocale() })
     : null;
@@ -123,7 +132,7 @@ export default function FieldsWeb() {
   // The default map is score-first; scientific layers are an opt-in advanced view.
   const mapFeatures = useMemo<ParcelFeature[]>(() => {
     const lb = latestQ.data ?? {};
-    return parcels.map((p) => {
+    return filteredParcels.map((p) => {
       if (!selectedIndex) {
         const score = arvoScore(lb[p.id])?.value ?? null;
         return { parcel: p, color: score == null ? NEUTRAL_FILL : scoreColor(score) };
@@ -131,7 +140,7 @@ export default function FieldsWeb() {
       const v = lb[p.id]?.[selectedIndex]?.mean ?? null;
       return { parcel: p, color: v == null ? NEUTRAL_FILL : indexColor(selectedIndex, v) };
     });
-  }, [parcels, latestQ.data, selectedIndex]);
+  }, [filteredParcels, latestQ.data, selectedIndex]);
 
   // legend gradient — score by default, raw domain only in advanced mode
   const [domainMin, domainMax] = selectedIndex ? INDEX_DOMAIN[selectedIndex] : [0, 100];
@@ -141,19 +150,22 @@ export default function FieldsWeb() {
   });
 
   // needs-attention: top open alerts (severity then recency); "N NEW" = created <24h
-  const newCount = openAlerts.filter(
+  const visibleOpenAlerts = openAlerts.filter(
+    (a) => !a.parcel_id || filteredParcelIds.has(a.parcel_id),
+  );
+  const newCount = visibleOpenAlerts.filter(
     (a) => renderedAt - new Date(a.created_at).getTime() < DAY_MS,
   ).length;
-  const topAlerts = sortBySeverityThenRecency(openAlerts).slice(0, 4);
+  const topAlerts = sortBySeverityThenRecency(visibleOpenAlerts).slice(0, 4);
 
   // overall condition: average Arvo Score, trend, and alert-derived status distribution
-  const parcelScores = parcels
+  const parcelScores = filteredParcels
     .map((p) => arvoScore(latest[p.id])?.value)
     .filter((v): v is number => v != null);
   const avgScore = parcelScores.length
     ? parcelScores.reduce((a, b) => a + b, 0) / parcelScores.length
     : null;
-  const passDeltas = parcels
+  const passDeltas = filteredParcels
     .map((p) => lastPassDelta(sparkByParcel[p.id] ?? []))
     .filter((v): v is number => v != null);
   const avgDelta = passDeltas.length
@@ -164,12 +176,12 @@ export default function FieldsWeb() {
     watch: { count: 0, area: 0 },
     attention: { count: 0, area: 0 },
   };
-  for (const p of parcels) {
+  for (const p of filteredParcels) {
     const s = statusForSeverity(severityByParcel[p.id]);
     statusAgg[s].count += 1;
     statusAgg[s].area += p.area_ha;
   }
-  const totalCount = parcels.length;
+  const totalCount = filteredParcels.length;
 
   // dominant status = the one with most parcels; ties resolve to the worse status.
   const worseRank: Record<Status, number> = { healthy: 0, watch: 1, attention: 2 };
@@ -183,12 +195,7 @@ export default function FieldsWeb() {
   }
 
   // parcels table: score-first; advanced users can opt into sorting by a raw index.
-  const q = search.trim().toLowerCase();
-  const filtered = parcels.filter((p) => {
-    if (!q) return true;
-    return p.name.toLowerCase().includes(q) || cropLabel(p.crop).toLowerCase().includes(q);
-  });
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = [...filteredParcels].sort((a, b) => {
     const va = selectedIndex
       ? latest[a.id]?.[selectedIndex]?.mean
       : arvoScore(latest[a.id])?.value;
@@ -240,14 +247,6 @@ export default function FieldsWeb() {
               style={styles.searchInput}
             />
           </View>
-          {dateStr ? (
-            <View style={styles.passChip}>
-              <Ionicons name="leaf" size={12} color={colors.success} />
-              <MonoLabel size={11} color={colors.primaryDark}>
-                {`${t('fields.latest_pass', { defaultValue: 'Latest pass' })} · ${dateStr}`}
-              </MonoLabel>
-            </View>
-          ) : null}
         </View>
       </View>
 
@@ -293,32 +292,42 @@ export default function FieldsWeb() {
             ) : null}
           </View>
           <View style={styles.mapWrap}>
-            <MapView
-              parcels={mapFeatures}
-              mode="view"
-              height={MAP_HEIGHT}
-              onSelectParcel={(id) => router.push(`/parcel/${id}`)}
-            />
-            <View style={styles.legend} pointerEvents="none">
-              <MonoLabel size={9}>{selectedIndex ? `${t(`index.${selectedIndex}.name`)} · ${indexLabel}` : t('map.score_legend')}</MonoLabel>
-              <View style={styles.legendBar}>
-                {legendStops.map((c, i) => (
-                  <View
-                    key={i}
-                    style={[
-                      styles.legendStop,
-                      { backgroundColor: c },
-                      i === 0 && styles.legendStopL,
-                      i === legendStops.length - 1 && styles.legendStopR,
-                    ]}
-                  />
-                ))}
+            {filteredParcels.length === 0 ? (
+              <View style={styles.mapEmpty}>
+                <Ionicons name="search" size={20} color={colors.textFaint} />
+                <Text style={styles.muted}>
+                  {t('fields.no_matches', { defaultValue: 'No matching parcels' })}
+                </Text>
               </View>
-              <View style={styles.legendRange}>
-                <MonoLabel size={9}>{selectedIndex ? domainMin.toFixed(1) : t('map.score_low')}</MonoLabel>
-                <MonoLabel size={9}>{selectedIndex ? domainMax.toFixed(1) : t('map.score_high')}</MonoLabel>
-              </View>
-            </View>
+            ) : (
+              <>
+                <MapView
+                  parcels={mapFeatures}
+                  mode="view"
+                  onSelectParcel={(id) => router.push(`/parcel/${id}`)}
+                />
+                <View style={styles.legend} pointerEvents="none">
+                  <MonoLabel size={9}>{selectedIndex ? `${t(`index.${selectedIndex}.name`)} · ${indexLabel}` : t('map.score_legend')}</MonoLabel>
+                  <View style={styles.legendBar}>
+                    {legendStops.map((c, i) => (
+                      <View
+                        key={i}
+                        style={[
+                          styles.legendStop,
+                          { backgroundColor: c },
+                          i === 0 && styles.legendStopL,
+                          i === legendStops.length - 1 && styles.legendStopR,
+                        ]}
+                      />
+                    ))}
+                  </View>
+                  <View style={styles.legendRange}>
+                    <MonoLabel size={9}>{selectedIndex ? domainMin.toFixed(1) : t('map.score_low')}</MonoLabel>
+                    <MonoLabel size={9}>{selectedIndex ? domainMax.toFixed(1) : t('map.score_high')}</MonoLabel>
+                  </View>
+                </View>
+              </>
+            )}
           </View>
         </View>
 
@@ -338,7 +347,11 @@ export default function FieldsWeb() {
               ) : null}
             </View>
             {topAlerts.length === 0 ? (
-              <Text style={styles.muted}>{t('fields.all_clear', { defaultValue: 'All clear' })}</Text>
+              <Text style={styles.muted}>
+                {filteredParcels.length === 0
+                  ? t('fields.no_matches', { defaultValue: 'No matching parcels' })
+                  : t('fields.all_clear', { defaultValue: 'All clear' })}
+              </Text>
             ) : (
               <View style={styles.attnList}>
                 {topAlerts.map((a) => {
@@ -570,17 +583,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   searchInput: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text },
-  passChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    height: 34,
-    paddingHorizontal: 12,
-    backgroundColor: colors.primarySoft,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-  },
   // top row
   topRow: { flexDirection: 'row', gap: spacing.lg, alignItems: 'stretch' },
 
@@ -618,7 +620,8 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   advancedToggleText: { fontFamily: fonts.bodySemiBold, fontSize: 11.5, color: colors.textMuted },
-  mapWrap: { position: 'relative', height: MAP_HEIGHT },
+  mapWrap: { position: 'relative', flex: 1, minHeight: MAP_HEIGHT },
+  mapEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
   legend: {
     position: 'absolute',
     left: spacing.sm,

@@ -15,7 +15,7 @@ import { useTranslation } from 'react-i18next';
 
 import { PLANT_METRICS, type PlantMetric, type ReplantReason } from '@/api/types';
 import PlantMap from '@/components/PlantMap';
-import { InteractivePressable, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
+import { InteractivePressable, MonoLabel, MonoValue, Pill } from '@/components/ui';
 import FieldWorkspaceHeader from '@/components/web/FieldWorkspaceHeader';
 import { dfLocale } from '@/features/insights/format';
 import { useParcels } from '@/features/parcels/hooks';
@@ -36,7 +36,7 @@ import {
   plantName,
   weakestN,
 } from '@/features/plants/ranking';
-import { colors, fonts, gradients, radius, severityTint, spacing } from '@/theme';
+import { colors, fonts, radius, severityTint, spacing } from '@/theme';
 
 // Keep the contextual rail deliberately short; it scrolls independently from the map workspace.
 const LIST_LIMIT = 8;
@@ -148,18 +148,7 @@ export default function PlantsWebScreen() {
 
   return (
     <View style={styles.root}>
-      <FieldWorkspaceHeader
-        parcel={parcel}
-        active="plants"
-        actions={
-          <InteractivePressable onPress={openCapture}>
-            <TintCard gradient={gradients.forest} style={styles.ctaBtn}>
-              <Ionicons name="add" size={16} color={colors.onPrimary} />
-              <Text style={styles.ctaTxt}>{t('plants.empty_cta')}</Text>
-            </TintCard>
-          </InteractivePressable>
-        }
-      />
+      <FieldWorkspaceHeader parcel={parcel} active="plants" />
 
       {/* metric tabs + capture meta */}
       <View style={styles.metricRow}>
@@ -178,10 +167,6 @@ export default function PlantsWebScreen() {
             </InteractivePressable>
           );
         })}
-        <View style={styles.flex1} />
-        <MonoLabel color={colors.textMuted}>
-          {`${t('plants.last_capture')} · ${legendDate}`}
-        </MonoLabel>
       </View>
 
       <View style={styles.grid}>
@@ -371,16 +356,6 @@ const styles = StyleSheet.create({
   },
 
   h2: { fontFamily: fonts.display, fontSize: 17, color: colors.text },
-  ctaBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 0,
-  },
-  ctaTxt: { fontSize: 13, fontFamily: fonts.bodyBold, color: colors.onPrimary },
 
   // metric tabs
   metricRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },

@@ -2,8 +2,17 @@
 // (this route is outside the (tabs) group). Two-column layout: chart + stat tiles + scouting on the
 // left, minimap + weather + alerts + manage on the right. Reuses the same hooks/patterns as the
 // native parcel/[id].tsx screen. Theme tokens only.
-import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, Linking, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useState, type ReactNode } from 'react';
+import {
+  ActivityIndicator,
+  Animated,
+  Easing,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
@@ -17,7 +26,7 @@ import { INDEX_NAMES, type IndexName, type Meta, type Observation } from '@/api/
 import AlertList from '@/components/AlertList';
 import IndexChart from '@/components/IndexChart';
 import MapView from '@/components/MapView';
-import { InteractivePressable, MonoLabel, MonoValue, Pill, StatusChip, TintCard } from '@/components/ui';
+import { InteractivePressable, MonoLabel, MonoValue, Pill, StatusChip } from '@/components/ui';
 import FieldWorkspaceHeader from '@/components/web/FieldWorkspaceHeader';
 import PortalShell from '@/components/web/PortalShell';
 import WeatherPanel from '@/components/WeatherPanel';
@@ -40,14 +49,22 @@ import { arvoScore, dfLocale, scoreBand, scoreColor, trendBand } from '@/feature
 import { worstOpenAlert } from '@/features/insights/alerts';
 import { useAlertActions } from '@/features/insights/useAlertActions';
 import { mediaUri, useMediaToken } from '@/features/media';
-import { colors, fonts, gradients, radius, spacing, statusColors, statusForSeverity } from '@/theme';
+import {
+  colors,
+  fonts,
+  radius,
+  severityTint,
+  spacing,
+  statusColors,
+  statusForSeverity,
+} from '@/theme';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const fmt2 = (v: number | null | undefined) => (v == null ? '—' : v.toFixed(2));
 type RailTab = 'weather' | 'alerts' | 'manage';
 
 export default function ParcelDetailWeb() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
 
@@ -159,16 +176,6 @@ export default function ParcelDetailWeb() {
     });
   }
 
-  function openReport(pid: string) {
-    // Opened in a new tab with a short-lived media token — never the session JWT.
-    if (!mediaToken) {
-      notify(t('parcel.report'), t('parcel.report_error'));
-      return;
-    }
-    const url = `${API_URL}/api/v1/reports/parcels/${pid}/season?lang=${i18n.language}&token=${mediaToken}`;
-    Linking.openURL(url).catch(() => notify(t('parcel.report'), t('parcel.report_error')));
-  }
-
   let body: ReactNode;
   if (parcelQ.isLoading) {
     body = (
@@ -191,6 +198,9 @@ export default function ParcelDetailWeb() {
     // worst open alert → parcel health status
     const worstOpen = worstOpenAlert(alertsQ.data ?? []);
     const status = statusForSeverity(worstOpen?.severity);
+    const fieldAlerts = alertsQ.data ?? [];
+    const alertCount = fieldAlerts.length;
+    const hasCriticalAlert = fieldAlerts.some((alert) => alert.severity === 'critical');
 
     const [bw, bs, be, bn] = p.bbox;
     const padX = (be - bw) * 0.3;
@@ -208,39 +218,7 @@ export default function ParcelDetailWeb() {
 
     body = (
       <View style={styles.page}>
-        <FieldWorkspaceHeader
-          parcel={p}
-          active="overview"
-          actions={
-            <>
-              {latestDate ? (
-                <View style={styles.dateChip}>
-                  <MonoLabel color={colors.textMuted}>{latestDate}</MonoLabel>
-                </View>
-              ) : null}
-              <InteractivePressable
-                style={styles.outlineBtn}
-                hoverStyle={styles.outlineBtnHover}
-                onPress={() =>
-                  router.push({ pathname: '/observation/new', params: { parcelId: p.id } })
-                }
-              >
-                <Ionicons name="add" size={16} color={colors.primary} />
-                <Text style={styles.outlineBtnTxt}>
-                  {t('parcel.record_note', { defaultValue: 'Record note' })}
-                </Text>
-              </InteractivePressable>
-              <InteractivePressable onPress={() => openReport(p.id)}>
-                <TintCard gradient={gradients.forest} style={styles.exportBtn}>
-                  <Ionicons name="document-text-outline" size={16} color={colors.onPrimary} />
-                  <Text style={styles.exportBtnTxt}>
-                    {t('parcel.export_report', { defaultValue: 'Export report' })}
-                  </Text>
-                </TintCard>
-              </InteractivePressable>
-            </>
-          }
-        />
+        <FieldWorkspaceHeader parcel={p} active="overview" />
 
         {/* two-column grid */}
         <View style={styles.grid}>
@@ -401,24 +379,46 @@ export default function ParcelDetailWeb() {
             <View style={styles.railTabs}>
               {(['weather', 'alerts', 'manage'] as RailTab[]).map((tab) => {
                 const active = railTab === tab;
+                const alertsTab = tab === 'alerts';
+                const highlighted = alertsTab && alertCount > 0;
                 const icon = tab === 'weather'
                   ? 'sunny-outline'
                   : tab === 'alerts'
                     ? 'warning-outline'
                     : 'settings-outline';
+                const inactiveColor = highlighted
+                  ? hasCriticalAlert
+                    ? severityTint.critical.fg
+                    : severityTint.warning.fg
+                  : colors.textMuted;
                 return (
                   <InteractivePressable
                     key={tab}
-                    style={[styles.railTab, active && styles.railTabActive]}
+                    style={[
+                      styles.railTab,
+                      highlighted && !active && styles.railTabAlert,
+                      highlighted && hasCriticalAlert && !active && styles.railTabCritical,
+                      active && styles.railTabActive,
+                    ]}
                     hoverStyle={!active ? styles.railTabHover : undefined}
                     onPress={() => setRailTab(tab)}
                   >
-                    <Ionicons name={icon} size={14} color={active ? colors.onPrimary : colors.textMuted} />
-                    <Text style={[styles.railTabText, active && styles.railTabTextActive]}>
+                    <Ionicons name={icon} size={14} color={active ? colors.onPrimary : inactiveColor} />
+                    <Text
+                      style={[
+                        styles.railTabText,
+                        highlighted && !active && styles.railTabAlertText,
+                        highlighted && hasCriticalAlert && !active && styles.railTabCriticalText,
+                        active && styles.railTabTextActive,
+                      ]}
+                    >
                       {tab === 'manage'
                         ? t('parcel.manage', { defaultValue: 'Manage' })
                         : t(`parcel.${tab}`)}
                     </Text>
+                    {alertsTab && alertCount > 0 ? (
+                      <AlertCountBadge count={alertCount} critical={hasCriticalAlert} />
+                    ) : null}
                   </InteractivePressable>
                 );
               })}
@@ -557,6 +557,52 @@ function SectionCard({ title, children }: { title: string; children: ReactNode }
   );
 }
 
+function AlertCountBadge({ count, critical }: { count: number; critical: boolean }) {
+  const [pulse] = useState(() => new Animated.Value(0));
+
+  useEffect(() => {
+    pulse.stopAnimation();
+    pulse.setValue(0);
+    if (!critical) return;
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 650,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 650,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [critical, pulse]);
+
+  return (
+    <Animated.View
+      style={[
+        styles.alertCountBadge,
+        critical ? styles.alertCountBadgeCritical : styles.alertCountBadgeWarning,
+        critical && {
+          opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 0.55] }),
+          transform: [
+            { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] }) },
+          ],
+        },
+      ]}
+    >
+      <Text style={styles.alertCountText}>{count > 99 ? '99+' : count}</Text>
+    </Animated.View>
+  );
+}
+
 function StatTile({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <View style={styles.statTile}>
@@ -603,37 +649,6 @@ const styles = StyleSheet.create({
   page: { flex: 1, minHeight: 0, gap: spacing.md },
   center: { alignItems: 'center', justifyContent: 'center', gap: spacing.md, paddingVertical: spacing.xl * 3 },
   flex1: { flex: 1, minWidth: 0 },
-
-  dateChip: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.cardAlt,
-  },
-  outlineBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
-  outlineBtnTxt: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.primary },
-  outlineBtnHover: { backgroundColor: colors.primarySoft, borderColor: colors.primaryDark },
-  exportBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 0,
-  },
-  exportBtnTxt: { fontSize: 13, fontFamily: fonts.bodyBold, color: colors.onPrimary },
 
   scoreSummary: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   scoreRing: {
@@ -792,9 +807,24 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   railTabActive: { backgroundColor: colors.primary },
+  railTabAlert: { backgroundColor: severityTint.warning.bg },
+  railTabCritical: { backgroundColor: severityTint.critical.bg },
   railTabHover: { backgroundColor: colors.cardAlt },
   railTabText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+  railTabAlertText: { color: severityTint.warning.fg },
+  railTabCriticalText: { color: severityTint.critical.fg },
   railTabTextActive: { color: colors.onPrimary },
+  alertCountBadge: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 5,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  alertCountBadgeWarning: { backgroundColor: severityTint.warning.fg },
+  alertCountBadgeCritical: { backgroundColor: colors.danger },
+  alertCountText: { fontSize: 10, fontFamily: fonts.bodyBold, color: colors.onPrimary },
   railScroll: { flex: 1, minHeight: 0 },
   railContent: { paddingBottom: spacing.sm },
 
