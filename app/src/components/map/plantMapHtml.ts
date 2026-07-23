@@ -81,23 +81,28 @@ export function buildPlantInit(props: PlantMapProps, labels: PlantMapLabels): Pl
 //    defence in depth: this document renders third-party code next to an org-scoped media token (it
 //    rides in the MVT tile URL). Never bump the version without recomputing BOTH digests, and never
 //    guess one — a wrong digest silently blocks the load and leaves a dead map.
-//  • MAPLIBRE_SELF_HOSTED — web portal. Served from app/public/vendor (identical bytes,
-//    sha384-verified against the CDN pins at vendor time). The iframe stays OPAQUE
-//    (`allow-scripts` only — see PlantMap.web.tsx for why `allow-same-origin` breaks MapLibre's
-//    worker bridge); a classic <script src> needs no CORS from an opaque origin, and the relative
-//    /vendor path resolves against the parent's base URL. Self-hosting removes the third-party CDN
-//    from the serving path entirely (no SRI needed) and keeps the map working offline in the field.
+//  • maplibreSelfHosted(origin) — web portal. Served from app/public/vendor (identical bytes,
+//    sha384-verified against the CDN pins at vendor time). The document is loaded from a blob: URL
+//    minted by PlantMap.web.tsx — NOT srcDoc — so it carries a real origin in every browser (a
+//    srcdoc document's location.origin is "null", which MapLibre's worker Actor rejects, and WebKit
+//    additionally refuses workers from opaque origins). Blob URLs are non-hierarchical, so relative
+//    paths cannot resolve against them: the vendor tags REQUIRE absolute URLs, hence the origin
+//    parameter. Self-hosting removes the third-party CDN from the serving path (no SRI needed) and
+//    keeps the map working offline in the field.
 export const MAPLIBRE_CDN = {
   css: `<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" integrity="sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V" crossorigin="anonymous" />`,
   js: `<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" integrity="sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj" crossorigin="anonymous"></script>`,
 };
-export const MAPLIBRE_SELF_HOSTED = {
-  css: `<link rel="stylesheet" href="/vendor/maplibre-gl.css" />`,
-  js: `<script src="/vendor/maplibre-gl.js"></script>`,
-};
+export function maplibreSelfHosted(origin: string) {
+  return {
+    css: `<link rel="stylesheet" href="${origin}/vendor/maplibre-gl.css" />`,
+    js: `<script src="${origin}/vendor/maplibre-gl.js"></script>`,
+  };
+}
 
 // `lib` selects where maplibre-gl comes from; the returned document string is otherwise identical
-// on both platforms. Native calls plantMapHtml() (CDN); web calls plantMapHtml(MAPLIBRE_SELF_HOSTED).
+// on both platforms. Native calls plantMapHtml() (CDN); web calls
+// plantMapHtml(maplibreSelfHosted(window.location.origin)).
 export function plantMapHtml(lib = MAPLIBRE_CDN) {
   return `<!DOCTYPE html>
 <html>

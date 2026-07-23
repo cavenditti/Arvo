@@ -3,10 +3,10 @@
 // MapView.web.tsx: a `ready` handshake that clears the dedupe, and a JSON payload diff so
 // unchanged renders don't reload tiles.
 // Props are FROZEN in ./types (PlantMapProps) — do not change them.
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { buildPlantInit, MAPLIBRE_SELF_HOSTED, plantMapHtml } from './map/plantMapHtml';
+import { buildPlantInit, maplibreSelfHosted, plantMapHtml } from './map/plantMapHtml';
 import type { PlantMapProps } from './types';
 
 export default function PlantMap(props: PlantMapProps) {
@@ -15,6 +15,25 @@ export default function PlantMap(props: PlantMapProps) {
   const ref = useRef<HTMLIFrameElement>(null);
   const readyRef = useRef(false);
   const lastSent = useRef('');
+
+  // The map document is served from a blob: URL minted here, NOT srcDoc. A srcdoc document's
+  // location.origin is the string "null" in every browser, which breaks MapLibre in two ways:
+  // its worker Actor stamps messages with location.origin and silently drops mismatches (the
+  // worker, built from a blob, reports the REAL origin), and WebKit refuses to construct workers
+  // in opaque-origin frames at all. A blob: document instead carries the app's real origin, so
+  // the frame, its blob workers, and the Actor stamps all agree — in Chromium, WebKit and Gecko
+  // alike. Blob URLs are non-hierarchical, so the maplibre tags inside must be absolute
+  // (maplibreSelfHosted(origin)). The document string is static per origin — mint once.
+  const docUrl = useMemo(
+    () =>
+      URL.createObjectURL(
+        new Blob([plantMapHtml(maplibreSelfHosted(window.location.origin))], {
+          type: 'text/html',
+        }),
+      ),
+    [],
+  );
+  useEffect(() => () => URL.revokeObjectURL(docUrl), [docUrl]);
 
   const payloadStr = JSON.stringify(
     buildPlantInit(props, {
@@ -63,20 +82,15 @@ export default function PlantMap(props: PlantMapProps) {
     <iframe
       ref={ref}
       title="plant-map"
-      srcDoc={plantMapHtml(MAPLIBRE_SELF_HOSTED)}
-      // Opaque origin (`allow-scripts`, NO `allow-same-origin`) is REQUIRED, not just preferred.
-      // MapLibre's worker bridge (Actor) stamps every message with the sender's `location.origin`
-      // and silently DROPS messages whose stamp differs from the receiver's own `location.origin`
-      // (an anti-injection check in actor.ts; `file://` is special-cased for WebViews). A srcDoc
-      // document's location.origin is the string "null" regardless of sandbox flags. With the frame
-      // opaque, URL.createObjectURL mints `blob:null/...`, so the worker's location.origin is also
-      // "null" — stamps match, tiles flow. With `allow-same-origin`, the blob inherits the REAL app
-      // origin while the document's location.origin stays "null" — every worker message is silently
-      // dropped and the map wedges at "loading" with zero errors (measured; do not "fix" this again).
-      // Opaque is also the security posture we want: the frame cannot touch the app origin, where
-      // the session JWT lives. maplibre-gl itself is self-hosted (/vendor), so no third-party code
-      // runs next to the org-scoped media token in the MVT tile URL, and the map works offline.
-      sandbox="allow-scripts"
+      src={docUrl}
+      // `allow-same-origin` is required so the blob document keeps its real origin — sandboxing
+      // would otherwise make it opaque, reintroducing both failure modes documented on `docUrl`
+      // above (WebKit refusing opaque-origin workers, and the Actor "null"-origin mismatch). The
+      // frame therefore shares the app origin; acceptable because its content is entirely
+      // first-party — our own document string plus the self-hosted maplibre-gl from /vendor
+      // (sha384-verified against the published pins at vendor time). No third-party code runs next
+      // to the org-scoped media token in the MVT tile URL, and the map works offline in the field.
+      sandbox="allow-scripts allow-same-origin"
       style={{
         border: 'none',
         width: '100%',
