@@ -37,9 +37,9 @@ const NAV: NavItem[] = [
       p.startsWith('/parcel') ||
       p.startsWith('/plants') ||
       p.startsWith('/plant/') ||
-      p.startsWith('/capture'),
+      p.startsWith('/capture') ||
+      p === '/map',
   },
-  { key: 'map', labelKey: 'tabs.map', fallback: 'Map', icon: 'navigate-outline', path: '/map' },
   {
     key: 'insights',
     labelKey: 'alerts.title',

@@ -285,11 +285,22 @@ export default function FieldsWeb() {
                 );
               }) : null}
             </View>
-            {mapDateStr ? (
-              <MonoLabel size={11} color={colors.textMuted}>
-                {mapDateStr}
-              </MonoLabel>
-            ) : null}
+            <View style={styles.mapHeaderActions}>
+              {mapDateStr ? (
+                <MonoLabel size={11} color={colors.textMuted}>
+                  {mapDateStr}
+                </MonoLabel>
+              ) : null}
+              <InteractivePressable
+                accessibilityLabel={t('fields.maximize_map')}
+                onPress={() => router.push('/map')}
+                style={styles.maximizeMapButton}
+                hoverStyle={styles.softHover}
+                focusStyle={styles.maximizeMapFocus}
+              >
+                <Ionicons name="expand-outline" size={16} color={colors.primary} />
+              </InteractivePressable>
+            </View>
           </View>
           <View style={styles.mapWrap}>
             {filteredParcels.length === 0 ? (
@@ -605,6 +616,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSoft,
   },
+  mapHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  maximizeMapButton: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  maximizeMapFocus: { borderColor: colors.focus },
   mapViewControls: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   indexTab: { paddingHorizontal: 11, paddingVertical: 5, borderRadius: radius.sm },
   indexTabActive: { backgroundColor: colors.primary },

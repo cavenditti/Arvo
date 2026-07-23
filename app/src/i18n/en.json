@@ -233,6 +233,7 @@
   "fields.latest_data": "Latest data",
   "fields.satellite_data": "Satellite data",
   "fields.drone_data": "Drone data",
+  "fields.maximize_map": "Maximize map",
   "parcel.record_note": "Record note",
   "parcel.export_report": "Export report",
   "parcel.season_label": "Season {{year}}",
