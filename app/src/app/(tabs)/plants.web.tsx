@@ -1,12 +1,12 @@
 // OWNER: fe-plant-map — Campo web "Plants" workspace (FR-P-051 · FR-P-042 · FR-P-043). Renders
-// inside (tabs)/_layout.web.tsx PortalShell (sidebar + padded, max-width-1280 scroll area), so this
-// file is content only and the map lives in a fixed-height card instead of full-bleed.
+// inside (tabs)/_layout.web.tsx PortalShell (sidebar + bounded field workspace), so this file is
+// content only and its map and contextual side panel scroll independently below a stable header.
 // Same data and helpers as the native plants.tsx: parcel + metric selector driving the MapLibre
 // PlantMap over the parcel-wide metric scale, the weakest-N ranking and the replant list; a row or
 // a tap on the map opens /plant/{id}, and "register a flight" opens /capture/new?parcelId=…
 // Terra: no state dots, no left-border stripes, fonts are family tokens (never fontWeight).
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { format, parseISO } from 'date-fns';
@@ -16,8 +16,7 @@ import { useTranslation } from 'react-i18next';
 import { PLANT_METRICS, type PlantMetric, type ReplantReason } from '@/api/types';
 import PlantMap from '@/components/PlantMap';
 import { InteractivePressable, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
-import FieldViewSwitcher from '@/components/web/FieldViewSwitcher';
-import { useOutsideDismiss } from '@/components/useOutsideDismiss';
+import FieldWorkspaceHeader from '@/components/web/FieldWorkspaceHeader';
 import { dfLocale } from '@/features/insights/format';
 import { useParcels } from '@/features/parcels/hooks';
 import { plantColor, rampForMetric } from '@/features/plants/colors';
@@ -39,9 +38,9 @@ import {
 } from '@/features/plants/ranking';
 import { colors, fonts, gradients, radius, severityTint, spacing } from '@/theme';
 
-// The portal shows a longer list than the phone panel, still paged server-side.
-const LIST_LIMIT = 12;
-const MAP_HEIGHT = 520;
+// Keep the contextual rail deliberately short; it scrolls independently from the map workspace.
+const LIST_LIMIT = 8;
+const MAP_HEIGHT = 460;
 
 // Replant reason → chip tint (labelled chip, never a coloured dot — docs/DESIGN.md §5).
 const REASON_TINT: Record<ReplantReason, { fg: string; bg: string }> = {
@@ -61,18 +60,13 @@ export default function PlantsWebScreen() {
   const parcelsQ = useParcels();
   const parcels = useMemo(() => (parcelsQ.data ?? []).filter((p) => !p.archived), [parcelsQ.data]);
 
-  const [pickedId, setPickedId] = useState<string | null>(null);
   const [metric, setMetric] = useState<PlantMetric>('ndvi');
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<View | null>(null);
-  const closeMenu = useCallback(() => setMenuOpen(false), []);
-  useOutsideDismiss(menuRef, menuOpen, closeMenu);
+  const [sidePanel, setSidePanel] = useState<'weakest' | 'replant'>('weakest');
 
-  // An explicit pick wins over the deep link. With neither, prefer the parcel of the newest
-  // extracted flight (one that actually HAS plants) over "the first parcel" — landing here from
-  // the nav must show real data, not the empty state of a plantless first parcel.
+  // Prefer the deep-linked field, then the parcel of the newest extracted flight, then the first
+  // available field. FieldWorkspaceHeader owns subsequent field changes by updating the route.
   const capturesQ = useCaptures(undefined, { status: 'extracted', limit: 1 });
-  const wantedId = pickedId ?? paramParcelId ?? null;
+  const wantedId = paramParcelId ?? null;
   const defaultPlantParcelId = capturesQ.data?.[0]?.parcel_id ?? null;
   const parcel = useMemo(
     () =>
@@ -154,72 +148,18 @@ export default function PlantsWebScreen() {
 
   return (
     <View style={styles.root}>
-      <View style={styles.crumbRow}>
-        <InteractivePressable
-          style={styles.crumbLink}
-          hoverStyle={styles.linkHover}
-          onPress={() => router.push('/')}
-        >
-          <Ionicons name="arrow-back" size={15} color={colors.textMuted} />
-          <Text style={styles.crumbLinkTxt}>{t('tabs.dashboard')}</Text>
-        </InteractivePressable>
-        <Text style={styles.crumbSep}>/</Text>
-        <Text style={styles.crumbCurrent} numberOfLines={1}>{parcel.name}</Text>
-      </View>
-
-      {/* header */}
-      <View style={styles.header}>
-        <View style={styles.flex1}>
-          <Text style={styles.h1}>{parcel.name}</Text>
-          <Text style={styles.subtitle}>{t('plants.subtitle')}</Text>
-        </View>
-        <View style={styles.headerRight}>
-          <View ref={menuRef} style={styles.menuWrap}>
-            <InteractivePressable
-              style={styles.menuTrigger}
-              hoverStyle={styles.controlHover}
-              accessibilityState={{ expanded: menuOpen }}
-              onPress={() => setMenuOpen((v) => !v)}
-            >
-              <Ionicons name="leaf-outline" size={15} color={colors.primary} />
-              <Text style={styles.menuTriggerTxt} numberOfLines={1}>
-                {parcel.name}
-              </Text>
-              <Ionicons name={menuOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textFaint} />
-            </InteractivePressable>
-            {menuOpen ? (
-              <View style={styles.menu}>
-                {parcels.map((p) => (
-                  <InteractivePressable
-                    key={p.id}
-                    style={[styles.menuItem, p.id === parcel.id && styles.menuItemActive]}
-                    hoverStyle={p.id !== parcel.id ? styles.menuItemHover : undefined}
-                    onPress={() => {
-                      setPickedId(p.id);
-                      setMenuOpen(false);
-                    }}
-                  >
-                    <Text
-                      style={[styles.menuItemTxt, p.id === parcel.id && styles.menuItemTxtActive]}
-                      numberOfLines={1}
-                    >
-                      {p.name}
-                    </Text>
-                  </InteractivePressable>
-                ))}
-              </View>
-            ) : null}
-          </View>
+      <FieldWorkspaceHeader
+        parcel={parcel}
+        active="plants"
+        actions={
           <InteractivePressable onPress={openCapture}>
             <TintCard gradient={gradients.forest} style={styles.ctaBtn}>
               <Ionicons name="add" size={16} color={colors.onPrimary} />
               <Text style={styles.ctaTxt}>{t('plants.empty_cta')}</Text>
             </TintCard>
           </InteractivePressable>
-        </View>
-      </View>
-
-      <FieldViewSwitcher parcelId={parcel.id} active="plants" />
+        }
+      />
 
       {/* metric tabs + capture meta */}
       <View style={styles.metricRow}>
@@ -246,7 +186,7 @@ export default function PlantsWebScreen() {
 
       <View style={styles.grid}>
         {/* LEFT — the map */}
-        <View style={styles.colLeft}>
+        <ScrollView style={styles.colLeft} contentContainerStyle={styles.columnContent}>
           <View style={styles.mapCard}>
             {tileUrl ? (
               <PlantMap
@@ -290,117 +230,138 @@ export default function PlantsWebScreen() {
             </View>
             <Text style={styles.attribution}>{t('plantmap.attribution')}</Text>
           </View>
-        </View>
+          <Text style={styles.disclaimer}>{t('common.decision_support')}</Text>
+        </ScrollView>
 
-        {/* RIGHT — weakest-N + replant */}
+        {/* RIGHT — one bounded contextual panel at a time */}
         <View style={styles.colRight}>
-          <View style={styles.card}>
-            <View style={styles.cardHead}>
-              <Text style={styles.cardTitle}>{t('plants.ranking_weakest')}</Text>
-              {summary ? <MonoLabel>{t('plants.count', { count: summary.total })}</MonoLabel> : null}
+          <View style={[styles.card, styles.sideCard]}>
+            <View style={styles.sideTabs}>
+              <InteractivePressable
+                style={[styles.sideTab, sidePanel === 'weakest' && styles.sideTabActive]}
+                hoverStyle={sidePanel !== 'weakest' ? styles.sideTabHover : undefined}
+                onPress={() => setSidePanel('weakest')}
+              >
+                <Text style={[styles.sideTabText, sidePanel === 'weakest' && styles.sideTabTextActive]}>
+                  {t('plants.ranking_weakest')}
+                </Text>
+                {summary ? (
+                  <MonoLabel color={sidePanel === 'weakest' ? colors.onPrimary : colors.textMuted}>
+                    {summary.total}
+                  </MonoLabel>
+                ) : null}
+              </InteractivePressable>
+              <InteractivePressable
+                style={[styles.sideTab, sidePanel === 'replant' && styles.sideTabActive]}
+                hoverStyle={sidePanel !== 'replant' ? styles.sideTabHover : undefined}
+                onPress={() => setSidePanel('replant')}
+              >
+                <Text style={[styles.sideTabText, sidePanel === 'replant' && styles.sideTabTextActive]}>
+                  {t('replant.title')}
+                </Text>
+                {replantQ.data ? (
+                  <MonoLabel color={sidePanel === 'replant' ? colors.onPrimary : colors.textMuted}>
+                    {replantQ.data.total}
+                  </MonoLabel>
+                ) : null}
+              </InteractivePressable>
             </View>
-            {noPlants ? (
-              <View style={styles.emptyBox}>
-                <Text style={styles.h2}>{t('plants.empty_title')}</Text>
-                <Text style={styles.muted}>{t('plants.empty_body')}</Text>
-                <InteractivePressable style={styles.primaryBtn} onPress={openCapture}>
-                  <Text style={styles.primaryTxt}>{t('plants.empty_cta')}</Text>
-                </InteractivePressable>
-              </View>
-            ) : rankingQ.isLoading ? (
-              <ActivityIndicator color={colors.primary} style={styles.pad} />
-            ) : weakest.length === 0 ? (
-              <Text style={styles.muted}>{t('plants.ranking_empty')}</Text>
-            ) : (
-              <View style={styles.list}>
-                {weakest.map((r) => {
-                  const vs = formatVsBlock(r.vs_block_pct);
-                  return (
-                    <InteractivePressable
-                      key={r.plant_id}
-                      style={styles.row}
-                      hoverStyle={styles.rowHover}
-                      onPress={() => openPlant(r.plant_id)}
-                    >
-                      <View
-                        style={[
-                          styles.swatch,
-                          { backgroundColor: plantColor(r.status, metric, r.normalized) },
-                        ]}
-                      >
-                        <Text style={styles.swatchTxt}>{r.rank}</Text>
-                      </View>
-                      <View style={styles.flex1}>
-                        <Text style={styles.rowName} numberOfLines={1}>
-                          {plantName(r, t('plant.unlabeled'))}
-                        </Text>
-                        <MonoLabel>
-                          {`${formatMetricValue(metric, r.value)}${unit}${
-                            vs ? ` · ${t('plants.vs_block')} ${vs}` : ''
-                          }`}
-                        </MonoLabel>
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+            <ScrollView style={styles.sideScroll} contentContainerStyle={styles.sideContent}>
+              {sidePanel === 'weakest' ? (
+                noPlants ? (
+                  <View style={styles.emptyBox}>
+                    <Text style={styles.h2}>{t('plants.empty_title')}</Text>
+                    <Text style={styles.muted}>{t('plants.empty_body')}</Text>
+                    <InteractivePressable style={styles.primaryBtn} onPress={openCapture}>
+                      <Text style={styles.primaryTxt}>{t('plants.empty_cta')}</Text>
                     </InteractivePressable>
-                  );
-                })}
-              </View>
-            )}
-          </View>
-
-          <View style={styles.card}>
-            <View style={styles.cardHead}>
-              <Text style={styles.cardTitle}>{t('replant.title')}</Text>
-              {replantQ.data ? (
-                <MonoLabel>{t('replant.count', { count: replantQ.data.total })}</MonoLabel>
-              ) : null}
-            </View>
-            <Text style={styles.hint}>{t('replant.subtitle')}</Text>
-            {replantQ.isLoading ? (
-              <ActivityIndicator color={colors.primary} style={styles.pad} />
-            ) : replant.length === 0 ? (
-              <Text style={styles.muted}>{t('replant.empty')}</Text>
-            ) : (
-              <View style={styles.list}>
-                {replant.map((e) => {
-                  const tint = REASON_TINT[e.reason];
-                  return (
-                    <InteractivePressable
-                      key={e.plant_id}
-                      style={styles.row}
-                      hoverStyle={styles.rowHover}
-                      onPress={() => openPlant(e.plant_id)}
-                    >
-                      <View style={styles.flex1}>
-                        <Text style={styles.rowName} numberOfLines={1}>
-                          {plantName(e, t('plant.unlabeled'))}
-                        </Text>
-                        <MonoLabel>
-                          {e.last_seen_at
-                            ? `${t('replant.last_seen')} ${format(parseISO(e.last_seen_at), 'd MMM', {
-                                locale,
-                              })}`
-                            : t('replant.never_seen')}
-                        </MonoLabel>
-                      </View>
-                      <Pill label={t(`replant.reason.${e.reason}`)} fg={tint.fg} bg={tint.bg} />
-                      <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-                    </InteractivePressable>
-                  );
-                })}
-              </View>
-            )}
+                  </View>
+                ) : rankingQ.isLoading ? (
+                  <ActivityIndicator color={colors.primary} style={styles.pad} />
+                ) : weakest.length === 0 ? (
+                  <Text style={styles.muted}>{t('plants.ranking_empty')}</Text>
+                ) : (
+                  <View style={styles.list}>
+                    {weakest.map((r) => {
+                      const vs = formatVsBlock(r.vs_block_pct);
+                      return (
+                        <InteractivePressable
+                          key={r.plant_id}
+                          style={styles.row}
+                          hoverStyle={styles.rowHover}
+                          onPress={() => openPlant(r.plant_id)}
+                        >
+                          <View
+                            style={[
+                              styles.swatch,
+                              { backgroundColor: plantColor(r.status, metric, r.normalized) },
+                            ]}
+                          >
+                            <Text style={styles.swatchTxt}>{r.rank}</Text>
+                          </View>
+                          <View style={styles.flex1}>
+                            <Text style={styles.rowName} numberOfLines={1}>
+                              {plantName(r, t('plant.unlabeled'))}
+                            </Text>
+                            <MonoLabel>
+                              {`${formatMetricValue(metric, r.value)}${unit}${
+                                vs ? ` · ${t('plants.vs_block')} ${vs}` : ''
+                              }`}
+                            </MonoLabel>
+                          </View>
+                          <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+                        </InteractivePressable>
+                      );
+                    })}
+                  </View>
+                )
+              ) : (
+                <>
+                  <Text style={styles.hint}>{t('replant.subtitle')}</Text>
+                  {replantQ.isLoading ? (
+                    <ActivityIndicator color={colors.primary} style={styles.pad} />
+                  ) : replant.length === 0 ? (
+                    <Text style={styles.muted}>{t('replant.empty')}</Text>
+                  ) : (
+                    <View style={styles.list}>
+                      {replant.map((e) => {
+                        const tint = REASON_TINT[e.reason];
+                        return (
+                          <InteractivePressable
+                            key={e.plant_id}
+                            style={styles.row}
+                            hoverStyle={styles.rowHover}
+                            onPress={() => openPlant(e.plant_id)}
+                          >
+                            <View style={styles.flex1}>
+                              <Text style={styles.rowName} numberOfLines={1}>
+                                {plantName(e, t('plant.unlabeled'))}
+                              </Text>
+                              <MonoLabel>
+                                {e.last_seen_at
+                                  ? `${t('replant.last_seen')} ${format(parseISO(e.last_seen_at), 'd MMM', { locale })}`
+                                  : t('replant.never_seen')}
+                              </MonoLabel>
+                            </View>
+                            <Pill label={t(`replant.reason.${e.reason}`)} fg={tint.fg} bg={tint.bg} />
+                            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+                          </InteractivePressable>
+                        );
+                      })}
+                    </View>
+                  )}
+                </>
+              )}
+            </ScrollView>
           </View>
         </View>
       </View>
-
-      <Text style={styles.disclaimer}>{t('common.decision_support')}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { gap: spacing.md },
+  root: { flex: 1, minHeight: 0, gap: spacing.md },
   flex1: { flex: 1, minWidth: 0 },
   center: {
     alignItems: 'center',
@@ -409,54 +370,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xl * 3,
   },
 
-  // header
-  crumbRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minWidth: 0 },
-  crumbLink: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: radius.sm },
-  crumbLinkTxt: { fontSize: 13, fontFamily: fonts.bodyMedium, color: colors.textMuted },
-  crumbSep: { fontSize: 13, fontFamily: fonts.body, color: colors.textFaint },
-  crumbCurrent: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text, flexShrink: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, zIndex: 20 },
-  h1: { fontFamily: fonts.displayBold, fontSize: 28, color: colors.text, letterSpacing: -0.5 },
   h2: { fontFamily: fonts.display, fontSize: 17, color: colors.text },
-  subtitle: { fontFamily: fonts.body, fontSize: 12.5, color: colors.textFaint, marginTop: 2 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  menuWrap: { position: 'relative', zIndex: 20 },
-  menuTrigger: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    maxWidth: 240,
-    paddingHorizontal: spacing.sm + 4,
-    paddingVertical: 7,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-  },
-  menuTriggerTxt: { flexShrink: 1, fontFamily: fonts.bodySemiBold, fontSize: 12.5, color: colors.text },
-  menu: {
-    position: 'absolute',
-    top: 40,
-    right: 0,
-    minWidth: 210,
-    maxHeight: 320,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingVertical: spacing.xs,
-    gap: 1,
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
-  },
-  menuItem: { paddingHorizontal: spacing.sm + 4, paddingVertical: 7, borderRadius: radius.sm },
-  menuItemHover: { backgroundColor: colors.cardAlt },
-  menuItemActive: { backgroundColor: colors.primarySoft },
-  menuItemTxt: { fontFamily: fonts.body, fontSize: 12.5, color: colors.text },
-  menuItemTxtActive: { fontFamily: fonts.bodySemiBold, color: colors.primary },
   ctaBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -483,9 +397,10 @@ const styles = StyleSheet.create({
   metricTabTxtActive: { color: colors.onPrimary },
 
   // grid
-  grid: { flexDirection: 'row', gap: spacing.lg, alignItems: 'flex-start', flexWrap: 'wrap' },
-  colLeft: { flex: 1.7, minWidth: 420, gap: spacing.md },
-  colRight: { flex: 1, minWidth: 300, gap: spacing.md },
+  grid: { flex: 1, minHeight: 0, flexDirection: 'row', gap: spacing.lg, alignItems: 'stretch' },
+  colLeft: { flex: 1.7, minWidth: 420, minHeight: 0 },
+  columnContent: { gap: spacing.md, paddingBottom: spacing.sm },
+  colRight: { flex: 1, minWidth: 300, minHeight: 0 },
 
   // map
   mapCard: {
@@ -519,13 +434,30 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     gap: spacing.sm,
   },
-  cardHead: {
+  sideCard: { flex: 1, minHeight: 0 },
+  sideTabs: {
+    flexDirection: 'row',
+    gap: 4,
+    padding: 4,
+    borderRadius: radius.md,
+    backgroundColor: colors.cardAlt,
+  },
+  sideTab: {
+    flex: 1,
+    minHeight: 36,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
   },
-  cardTitle: { fontSize: 15, fontFamily: fonts.display, color: colors.text },
+  sideTabActive: { backgroundColor: colors.primary },
+  sideTabHover: { backgroundColor: colors.card },
+  sideTabText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+  sideTabTextActive: { color: colors.onPrimary },
+  sideScroll: { flex: 1, minHeight: 0 },
+  sideContent: { gap: spacing.sm, paddingTop: spacing.xs, paddingBottom: spacing.xs },
   hint: { fontSize: 12.5, lineHeight: 18, fontFamily: fonts.body, color: colors.textMuted },
   list: { gap: spacing.xs },
   row: {
@@ -545,7 +477,6 @@ const styles = StyleSheet.create({
   rowName: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.text },
   emptyBox: { alignItems: 'flex-start', gap: spacing.sm, paddingVertical: spacing.sm },
   controlHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
-  linkHover: { backgroundColor: colors.cardAlt },
 
   // shared
   muted: { color: colors.textMuted, fontFamily: fonts.body, fontSize: 14 },

@@ -72,6 +72,9 @@ export default function PortalShell({ children }: { children: ReactNode }) {
   const fullName = user?.full_name ?? '—';
   const avatarInitials = initials(fullName);
   const canSwitchWorkspace = orgs.length > 1;
+  const fieldWorkspace =
+    pathname === '/plants' ||
+    (pathname.startsWith('/parcel/') && pathname !== '/parcel/new');
 
   async function onSwitchWorkspace(orgId: string) {
     if (orgId === org?.id) {
@@ -228,6 +231,10 @@ export default function PortalShell({ children }: { children: ReactNode }) {
       {pathname === '/map' ? (
         // full-bleed pages (the map) need a real flex fill, not a content-sized scroll area
         <View style={styles.mainFull}>{children}</View>
+      ) : fieldWorkspace ? (
+        <View style={styles.mainFull}>
+          <View style={styles.workspaceMain}>{children}</View>
+        </View>
       ) : (
         <ScrollView style={styles.main} contentContainerStyle={styles.mainContent}>
           {children}
@@ -382,5 +389,13 @@ const styles = StyleSheet.create({
   userName: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
   main: { flex: 1 },
   mainFull: { flex: 1 },
+  workspaceMain: {
+    flex: 1,
+    minHeight: 0,
+    width: '100%',
+    maxWidth: 1280,
+    alignSelf: 'center',
+    padding: spacing.lg,
+  },
   mainContent: { padding: spacing.lg, maxWidth: 1280, width: '100%', alignSelf: 'center' },
 });

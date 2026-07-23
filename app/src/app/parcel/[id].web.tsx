@@ -3,7 +3,7 @@
 // left, minimap + weather + alerts + manage on the right. Reuses the same hooks/patterns as the
 // native parcel/[id].tsx screen. Theme tokens only.
 import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, Linking, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Linking, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
@@ -18,11 +18,11 @@ import AlertList from '@/components/AlertList';
 import IndexChart from '@/components/IndexChart';
 import MapView from '@/components/MapView';
 import { InteractivePressable, MonoLabel, MonoValue, Pill, StatusChip, TintCard } from '@/components/ui';
-import FieldViewSwitcher from '@/components/web/FieldViewSwitcher';
+import FieldWorkspaceHeader from '@/components/web/FieldWorkspaceHeader';
 import PortalShell from '@/components/web/PortalShell';
 import WeatherPanel from '@/components/WeatherPanel';
 import { confirmDestructive, notify } from '@/features/parcels/dialog';
-import { CROP_OPTIONS, type CropKey, cropLabelKey, formatArea, isValidDate } from '@/features/parcels/crops';
+import { CROP_OPTIONS, type CropKey, formatArea, isValidDate } from '@/features/parcels/crops';
 import {
   useAdvisories,
   useAgro,
@@ -44,6 +44,7 @@ import { colors, fonts, gradients, radius, spacing, statusColors, statusForSever
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const fmt2 = (v: number | null | undefined) => (v == null ? '—' : v.toFixed(2));
+type RailTab = 'weather' | 'alerts' | 'manage';
 
 export default function ParcelDetailWeb() {
   const { t, i18n } = useTranslation();
@@ -54,6 +55,7 @@ export default function ParcelDetailWeb() {
   const [index, setIndex] = useState<IndexName>('ndvi');
   const [showOverlay, setShowOverlay] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [railTab, setRailTab] = useState<RailTab>('weather');
   const seriesQ = useIndexSeries(id, index);
   const latestQ = useLatestIndices(id ? [id] : []);
   const metaQ = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/meta') });
@@ -201,136 +203,128 @@ export default function ParcelDetailWeb() {
         }
       : undefined;
 
-    const metaLine = [
-      p.crop ? t(cropLabelKey(p.crop)) : null,
-      formatArea(p.area_ha),
-      p.season_year
-        ? t('parcel.season_label', { defaultValue: 'Season {{year}}', year: p.season_year })
-        : null,
-      p.planting_date
-        ? t('parcel.planted_label', {
-            defaultValue: 'planted {{date}}',
-            date: format(parseISO(p.planting_date), 'd MMM yyyy', { locale }),
-          })
-        : null,
-    ]
-      .filter(Boolean)
-      .join(' · ');
-
     const variance = latestPoint?.stddev != null ? latestPoint.stddev * latestPoint.stddev : null;
     const varianceHigh = (latestPoint?.stddev ?? 0) > 0.08;
 
     body = (
       <View style={styles.page}>
-        {/* breadcrumb + primary actions */}
-        <View style={styles.crumbRow}>
-          <View style={styles.crumbLeft}>
-            <InteractivePressable style={styles.crumbLink} hoverStyle={styles.softHover} onPress={() => router.push('/')}>
-              <Ionicons name="arrow-back" size={15} color={colors.textMuted} />
-              <Text style={styles.crumbLinkTxt}>{t('tabs.dashboard')}</Text>
-            </InteractivePressable>
-            <Text style={styles.crumbSep}>/</Text>
-            <Text style={styles.crumbCurrent} numberOfLines={1}>
-              {p.name}
-            </Text>
-          </View>
-          <View style={styles.crumbActions}>
-            {latestDate ? (
-              <View style={styles.dateChip}>
-                <MonoLabel color={colors.textMuted}>{latestDate}</MonoLabel>
-              </View>
-            ) : null}
-            <InteractivePressable
-              style={styles.outlineBtn}
-              hoverStyle={styles.outlineBtnHover}
-              onPress={() =>
-                router.push({ pathname: '/observation/new', params: { parcelId: p.id } })
-              }
-            >
-              <Ionicons name="add" size={16} color={colors.primary} />
-              <Text style={styles.outlineBtnTxt}>{t('parcel.record_note', { defaultValue: 'Record note' })}</Text>
-            </InteractivePressable>
-            <InteractivePressable onPress={() => openReport(p.id)}>
-              <TintCard gradient={gradients.forest} style={styles.exportBtn}>
-                <Ionicons name="document-text-outline" size={16} color={colors.onPrimary} />
-                <Text style={styles.exportBtnTxt}>{t('parcel.export_report', { defaultValue: 'Export report' })}</Text>
-              </TintCard>
-            </InteractivePressable>
-          </View>
-        </View>
-
-        {/* title + plain-language condition summary */}
-        <View style={styles.titleBlock}>
-          <View style={styles.titleLeft}>
-            <View style={styles.titleRow}>
-              <Text style={styles.h1} numberOfLines={1}>
-                {p.name}
-              </Text>
-              <StatusChip status={status} label={t(`status.${status}`)} />
-            </View>
-            <Text style={styles.metaLine}>{metaLine}</Text>
-          </View>
-          {score ? (
-            <View style={styles.scoreSummary}>
-              <View style={[styles.scoreRing, { borderColor: scoreColor(score.value) }]}>
-                <MonoValue size={28}>{score.value}</MonoValue>
-              </View>
-              <View>
-                <MonoLabel>{t('score.name')}</MonoLabel>
-                <Text style={styles.scoreBand}>{t(`score.band.${scoreBand(score.value)}`)}</Text>
-                <Text style={styles.scoreTrend}>{t(`trend.${trendBand(latestDelta)}`)}</Text>
-              </View>
-            </View>
-          ) : null}
-        </View>
-
-        <FieldViewSwitcher parcelId={p.id} active="overview" />
+        <FieldWorkspaceHeader
+          parcel={p}
+          active="overview"
+          actions={
+            <>
+              {latestDate ? (
+                <View style={styles.dateChip}>
+                  <MonoLabel color={colors.textMuted}>{latestDate}</MonoLabel>
+                </View>
+              ) : null}
+              <InteractivePressable
+                style={styles.outlineBtn}
+                hoverStyle={styles.outlineBtnHover}
+                onPress={() =>
+                  router.push({ pathname: '/observation/new', params: { parcelId: p.id } })
+                }
+              >
+                <Ionicons name="add" size={16} color={colors.primary} />
+                <Text style={styles.outlineBtnTxt}>
+                  {t('parcel.record_note', { defaultValue: 'Record note' })}
+                </Text>
+              </InteractivePressable>
+              <InteractivePressable onPress={() => openReport(p.id)}>
+                <TintCard gradient={gradients.forest} style={styles.exportBtn}>
+                  <Ionicons name="document-text-outline" size={16} color={colors.onPrimary} />
+                  <Text style={styles.exportBtnTxt}>
+                    {t('parcel.export_report', { defaultValue: 'Export report' })}
+                  </Text>
+                </TintCard>
+              </InteractivePressable>
+            </>
+          }
+        />
 
         {/* two-column grid */}
         <View style={styles.grid}>
           {/* LEFT */}
-          <View style={styles.colLeft}>
+          <ScrollView style={styles.colLeft} contentContainerStyle={styles.columnContent}>
             {/* score explanation + advanced chart, collapsed by default */}
             <View style={styles.card}>
-              <View style={styles.chartHead}>
-                <View style={styles.flex1}>
+              <View style={styles.conditionHead}>
+                <View style={styles.conditionTitleRow}>
                   <Text style={styles.cardTitle}>{t('parcel.current_condition')}</Text>
-                  <Text style={styles.scoreExplanation}>{t('score.explanation')}</Text>
-                  {score ? <MonoLabel>{t('score.based_on', { count: score.signalCount })}</MonoLabel> : null}
+                  <StatusChip status={status} label={t(`status.${status}`)} />
                 </View>
-                <InteractivePressable style={styles.advancedButton} hoverStyle={styles.softHover} onPress={() => setShowAdvanced((v) => !v)}>
-                  <Ionicons name="options-outline" size={15} color={colors.primary} />
-                  <Text style={styles.linkTxt}>{t(showAdvanced ? 'indices.hide_advanced' : 'indices.advanced')}</Text>
-                  <Ionicons name={showAdvanced ? 'chevron-up' : 'chevron-down'} size={15} color={colors.primary} />
-                </InteractivePressable>
+                <View style={styles.conditionTools}>
+                  {score ? (
+                    <View style={styles.scoreSummary}>
+                      <View style={[styles.scoreRing, { borderColor: scoreColor(score.value) }]}>
+                        <MonoValue size={24}>{score.value}</MonoValue>
+                      </View>
+                      <View>
+                        <MonoLabel>{t('score.name')}</MonoLabel>
+                        <Text style={styles.scoreBand}>{t(`score.band.${scoreBand(score.value)}`)}</Text>
+                        <Text style={styles.scoreTrend}>{t(`trend.${trendBand(latestDelta)}`)}</Text>
+                      </View>
+                    </View>
+                  ) : null}
+                  <InteractivePressable
+                    style={styles.advancedButton}
+                    hoverStyle={styles.softHover}
+                    onPress={() => setShowAdvanced((v) => !v)}
+                  >
+                    <Ionicons name="options-outline" size={15} color={colors.primary} />
+                    <Text style={styles.linkTxt}>
+                      {t(showAdvanced ? 'indices.hide_advanced' : 'indices.advanced')}
+                    </Text>
+                    <Ionicons
+                      name={showAdvanced ? 'chevron-up' : 'chevron-down'}
+                      size={15}
+                      color={colors.primary}
+                    />
+                  </InteractivePressable>
+                </View>
               </View>
-              {showAdvanced ? <>
-                <View style={styles.indexTabs}>
-                  {INDEX_NAMES.map((ix) => {
-                    const active = ix === index;
-                    return (
-                      <InteractivePressable key={ix} onPress={() => setIndex(ix)} style={[styles.indexTab, active && styles.indexTabActive]} hoverStyle={!active ? styles.controlHover : undefined}>
-                        <Text style={[styles.indexTabTxt, active && styles.indexTabTxtActive]}>
-                          {t(`index.${ix}.name`)} · {ix.toUpperCase()}
-                        </Text>
-                      </InteractivePressable>
-                    );
-                  })}
-                </View>
-                <Text style={styles.indexDescription}>{t(`index.${index}.description`)}</Text>
-                <View style={styles.legend}>
-                  <MonoLabel color={colors.primary}>— {t('parcel.legend_mean', { defaultValue: 'field mean' })}</MonoLabel>
-                  <MonoLabel color={colors.textFaint}>p10–p90</MonoLabel>
-                  <MonoLabel color={colors.textFaint}>○ {t('parcel.legend_cloud', { defaultValue: 'cloud-flagged' })}</MonoLabel>
-                </View>
-              {seriesQ.isLoading ? (
-                <View style={[styles.chartLoading, { height: 320 }]}>
-                  <ActivityIndicator color={colors.primary} />
-                </View>
-              ) : (
-                <IndexChart series={last90} index={index} height={320} />
-              )}
-              </> : null}
+              <Text style={styles.scoreExplanation}>{t('score.explanation')}</Text>
+              {score ? (
+                <MonoLabel>{t('score.based_on', { count: score.signalCount })}</MonoLabel>
+              ) : null}
+              {showAdvanced ? (
+                <>
+                  <View style={styles.indexTabs}>
+                    {INDEX_NAMES.map((ix) => {
+                      const active = ix === index;
+                      return (
+                        <InteractivePressable
+                          key={ix}
+                          onPress={() => setIndex(ix)}
+                          style={[styles.indexTab, active && styles.indexTabActive]}
+                          hoverStyle={!active ? styles.controlHover : undefined}
+                        >
+                          <Text style={[styles.indexTabTxt, active && styles.indexTabTxtActive]}>
+                            {t(`index.${ix}.name`)} · {ix.toUpperCase()}
+                          </Text>
+                        </InteractivePressable>
+                      );
+                    })}
+                  </View>
+                  <Text style={styles.indexDescription}>{t(`index.${index}.description`)}</Text>
+                  <View style={styles.legend}>
+                    <MonoLabel color={colors.primary}>
+                      — {t('parcel.legend_mean', { defaultValue: 'field mean' })}
+                    </MonoLabel>
+                    <MonoLabel color={colors.textFaint}>p10–p90</MonoLabel>
+                    <MonoLabel color={colors.textFaint}>
+                      ○ {t('parcel.legend_cloud', { defaultValue: 'cloud-flagged' })}
+                    </MonoLabel>
+                  </View>
+                  {seriesQ.isLoading ? (
+                    <View style={[styles.chartLoading, { height: 320 }]}>
+                      <ActivityIndicator color={colors.primary} />
+                    </View>
+                  ) : (
+                    <IndexChart series={last90} index={index} height={320} />
+                  )}
+                </>
+              ) : null}
             </View>
 
             {/* stat tiles */}
@@ -370,7 +364,8 @@ export default function ParcelDetailWeb() {
                 </View>
               )}
             </View>
-          </View>
+            <Text style={styles.disclaimer}>{t('common.decision_support')}</Text>
+          </ScrollView>
 
           {/* RIGHT */}
           <View style={styles.colRight}>
@@ -381,7 +376,7 @@ export default function ParcelDetailWeb() {
                 mode="view"
                 focus={[p.centroid.lon, p.centroid.lat, 15]}
                 overlay={overlay}
-                height={240}
+                height={220}
               />
               <View style={styles.mapChip}>
                 <MonoLabel color={colors.text}>
@@ -403,62 +398,66 @@ export default function ParcelDetailWeb() {
               ) : null}
             </View>
 
-            {/* weather + agronomy */}
-            <SectionCard title={t('parcel.weather')}>
-              {weatherQ.isLoading ? (
-                <ActivityIndicator color={colors.primary} style={styles.pad} />
-              ) : (
-                <WeatherPanel
-                  daily={weatherQ.data?.daily ?? []}
-                  agro={agroQ.data}
-                  advisories={advisoriesQ.data}
-                />
-              )}
-            </SectionCard>
+            <View style={styles.railTabs}>
+              {(['weather', 'alerts', 'manage'] as RailTab[]).map((tab) => {
+                const active = railTab === tab;
+                const icon = tab === 'weather'
+                  ? 'sunny-outline'
+                  : tab === 'alerts'
+                    ? 'warning-outline'
+                    : 'settings-outline';
+                return (
+                  <InteractivePressable
+                    key={tab}
+                    style={[styles.railTab, active && styles.railTabActive]}
+                    hoverStyle={!active ? styles.railTabHover : undefined}
+                    onPress={() => setRailTab(tab)}
+                  >
+                    <Ionicons name={icon} size={14} color={active ? colors.onPrimary : colors.textMuted} />
+                    <Text style={[styles.railTabText, active && styles.railTabTextActive]}>
+                      {tab === 'manage'
+                        ? t('parcel.manage', { defaultValue: 'Manage' })
+                        : t(`parcel.${tab}`)}
+                    </Text>
+                  </InteractivePressable>
+                );
+              })}
+            </View>
 
-            {/* alerts */}
-            <SectionCard title={t('parcel.alerts')}>
-              {alertsQ.isLoading ? (
-                <ActivityIndicator color={colors.primary} style={styles.pad} />
-              ) : (alertsQ.data?.length ?? 0) === 0 ? (
-                <Text style={styles.muted}>{t('parcel.no_alerts')}</Text>
-              ) : (
-                <AlertList
-                  alerts={alertsQ.data ?? []}
-                  parcelNames={{ [p.id]: p.name }}
-                  onAction={(alertId, action) => alertAction.mutate({ id: alertId, action })}
-                />
-              )}
-            </SectionCard>
+            <ScrollView style={styles.railScroll} contentContainerStyle={styles.railContent}>
+              {railTab === 'weather' ? (
+                <SectionCard title={t('parcel.weather')}>
+                  {weatherQ.isLoading ? (
+                    <ActivityIndicator color={colors.primary} style={styles.pad} />
+                  ) : (
+                    <WeatherPanel
+                      daily={weatherQ.data?.daily ?? []}
+                      agro={agroQ.data}
+                      advisories={advisoriesQ.data}
+                    />
+                  )}
+                </SectionCard>
+              ) : null}
 
-            {/* per-plant tier (Phase P): the plant map for this parcel, and flight registration */}
-            <SectionCard title={t('plants.section_title')}>
-              <Text style={styles.plantHint}>{t('plants.subtitle')}</Text>
-              <View style={styles.manageBtns}>
-                <InteractivePressable
-                  style={styles.manageBtn}
-                  hoverStyle={styles.manageBtnHover}
-                  onPress={() => router.push({ pathname: '/plants', params: { parcelId: p.id } })}
-                >
-                  <Ionicons name="leaf-outline" size={16} color={colors.primary} />
-                  <Text style={styles.manageBtnTxt}>{t('plants.open_map')}</Text>
-                </InteractivePressable>
-                <InteractivePressable
-                  style={styles.manageBtn}
-                  hoverStyle={styles.manageBtnHover}
-                  onPress={() =>
-                    router.push({ pathname: '/capture/new', params: { parcelId: p.id } })
-                  }
-                >
-                  <Ionicons name="add" size={16} color={colors.primary} />
-                  <Text style={styles.manageBtnTxt}>{t('plants.empty_cta')}</Text>
-                </InteractivePressable>
-              </View>
-            </SectionCard>
+              {railTab === 'alerts' ? (
+                <SectionCard title={t('parcel.alerts')}>
+                  {alertsQ.isLoading ? (
+                    <ActivityIndicator color={colors.primary} style={styles.pad} />
+                  ) : (alertsQ.data?.length ?? 0) === 0 ? (
+                    <Text style={styles.muted}>{t('parcel.no_alerts')}</Text>
+                  ) : (
+                    <AlertList
+                      alerts={alertsQ.data ?? []}
+                      parcelNames={{ [p.id]: p.name }}
+                      onAction={(alertId, action) => alertAction.mutate({ id: alertId, action })}
+                    />
+                  )}
+                </SectionCard>
+              ) : null}
 
-            {/* manage */}
-            <SectionCard title={t('parcel.manage', { defaultValue: 'Manage' })}>
-              <View style={styles.manageBtns}>
+              {railTab === 'manage' ? (
+                <SectionCard title={t('parcel.manage', { defaultValue: 'Manage' })}>
+                  <View style={styles.manageBtns}>
                 <InteractivePressable style={styles.manageBtn} hoverStyle={styles.manageBtnHover} onPress={onRefreshImagery} disabled={refresh.isPending}>
                   {refresh.isPending ? (
                     <ActivityIndicator size="small" color={colors.primary} />
@@ -529,12 +528,12 @@ export default function ParcelDetailWeb() {
                   <Ionicons name="archive-outline" size={16} color={colors.danger} />
                   <Text style={[styles.manageBtnTxt, styles.dangerTxt]}>{t('parcel.archive')}</Text>
                 </InteractivePressable>
-              </View>
-            </SectionCard>
+                  </View>
+                </SectionCard>
+              ) : null}
+            </ScrollView>
           </View>
         </View>
-
-        <Text style={styles.disclaimer}>{t('common.decision_support')}</Text>
       </View>
     );
   }
@@ -601,24 +600,10 @@ function ObsRow({ o }: { o: Observation }) {
 }
 
 const styles = StyleSheet.create({
-  page: { gap: spacing.lg },
+  page: { flex: 1, minHeight: 0, gap: spacing.md },
   center: { alignItems: 'center', justifyContent: 'center', gap: spacing.md, paddingVertical: spacing.xl * 3 },
   flex1: { flex: 1, minWidth: 0 },
 
-  // breadcrumb
-  crumbRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  crumbLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 1, minWidth: 0 },
-  crumbLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  crumbLinkTxt: { fontSize: 13, fontFamily: fonts.bodyMedium, color: colors.textMuted },
-  crumbSep: { fontSize: 13, fontFamily: fonts.body, color: colors.textFaint },
-  crumbCurrent: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text, flexShrink: 1 },
-  crumbActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   dateChip: {
     paddingHorizontal: spacing.sm,
     paddingVertical: 6,
@@ -650,18 +635,6 @@ const styles = StyleSheet.create({
   },
   exportBtnTxt: { fontSize: 13, fontFamily: fonts.bodyBold, color: colors.onPrimary },
 
-  // title block
-  titleBlock: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: spacing.md,
-  },
-  titleLeft: { gap: spacing.xs, flexShrink: 1, minWidth: 0 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  h1: { fontSize: 28, fontFamily: fonts.displayBold, color: colors.text, letterSpacing: -0.5 },
-  metaLine: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
   scoreSummary: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   scoreRing: {
     width: 64,
@@ -688,9 +661,10 @@ const styles = StyleSheet.create({
   indexTabTxtActive: { color: colors.onPrimary },
 
   // grid
-  grid: { flexDirection: 'row', gap: spacing.lg, alignItems: 'flex-start', flexWrap: 'wrap' },
-  colLeft: { flex: 1.7, minWidth: 420, gap: spacing.md },
-  colRight: { flex: 1, minWidth: 300, gap: spacing.md },
+  grid: { flex: 1, minHeight: 0, flexDirection: 'row', gap: spacing.lg, alignItems: 'stretch' },
+  colLeft: { flex: 1.7, minWidth: 420, minHeight: 0 },
+  columnContent: { gap: spacing.md, paddingBottom: spacing.sm },
+  colRight: { flex: 1, minWidth: 300, minHeight: 0, gap: spacing.sm },
 
   // cards
   card: {
@@ -706,8 +680,29 @@ const styles = StyleSheet.create({
   linkTxt: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.primary },
 
   // chart
-  chartHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: spacing.sm },
-  scoreExplanation: { maxWidth: 620, fontSize: 13, lineHeight: 19, fontFamily: fonts.body, color: colors.textMuted, marginVertical: 3 },
+  conditionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+  },
+  conditionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' },
+  conditionTools: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: spacing.md,
+    flexWrap: 'wrap',
+  },
+  scoreExplanation: {
+    width: '100%',
+    fontSize: 13,
+    lineHeight: 19,
+    fontFamily: fonts.body,
+    color: colors.textMuted,
+    marginTop: 3,
+  },
   advancedButton: { flexDirection: 'row', alignItems: 'center', gap: 5, padding: spacing.sm },
   inlineLink: { padding: 4, borderRadius: radius.sm },
   indexDescription: { fontSize: 12.5, lineHeight: 18, fontFamily: fonts.body, color: colors.textMuted },
@@ -776,6 +771,33 @@ const styles = StyleSheet.create({
   overlayChipTxt: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.primary },
   overlayChipTxtOn: { color: colors.onPrimary },
 
+  // contextual right rail
+  railTabs: {
+    flexDirection: 'row',
+    gap: 4,
+    padding: 4,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  railTab: {
+    flex: 1,
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+  },
+  railTabActive: { backgroundColor: colors.primary },
+  railTabHover: { backgroundColor: colors.cardAlt },
+  railTabText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+  railTabTextActive: { color: colors.onPrimary },
+  railScroll: { flex: 1, minHeight: 0 },
+  railContent: { paddingBottom: spacing.sm },
+
   // manage
   manageBtns: { gap: spacing.sm },
   manageBtn: {
@@ -793,8 +815,6 @@ const styles = StyleSheet.create({
   manageBtnHover: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
   dangerHover: { backgroundColor: statusColors.attention.bg, borderColor: colors.danger },
   dangerTxt: { color: colors.danger },
-  plantHint: { fontSize: 12.5, lineHeight: 18, fontFamily: fonts.body, color: colors.textMuted },
-
   // edit form
   editForm: { gap: spacing.sm, paddingVertical: spacing.xs },
   fieldLabel: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
