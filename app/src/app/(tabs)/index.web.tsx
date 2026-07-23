@@ -9,15 +9,15 @@ import { format, formatDistanceToNow, parseISO } from 'date-fns';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { api } from '@/api/client';
 import { INDEX_NAMES } from '@/api/types';
-import type { Alert, IndexName, IndexPoint, LatestIndices, Org, Role, User } from '@/api/types';
+import type { Alert, IndexName, IndexPoint, LatestIndices, Org } from '@/api/types';
 import { kindGlyph } from '@/components/glyphs';
 import MapView from '@/components/MapView';
 import type { ParcelFeature } from '@/components/types';
-import { Card, GlyphBadge, GlyphCard, MonoLabel, MonoValue, Pill, StatusChip, initials } from '@/components/ui';
+import { Card, GlyphBadge, GlyphCard, InteractivePressable, MonoLabel, MonoValue, Pill, StatusChip } from '@/components/ui';
 import { sortBySeverityThenRecency, worstSeverityByParcel } from '@/features/insights/alerts';
 import {
   INDEX_DOMAIN,
@@ -45,15 +45,13 @@ import {
   type Status,
 } from '@/theme';
 
-type Me = { user: User; org: Org; role: Role };
+type Me = { org: Org };
 type LatestBatch = Record<string, LatestIndices>;
 type Spark = { index: IndexName; series: IndexPoint[] };
 
 const DAY_MS = 86_400_000;
 const MAP_HEIGHT = 380;
 const STATUS_ORDER: Status[] = ['healthy', 'watch', 'attention'];
-// react-native-web adds `hovered` to the Pressable interaction state (not in the RN types).
-type HoverState = { hovered?: boolean };
 
 export default function FieldsWeb() {
   const { t } = useTranslation();
@@ -63,6 +61,7 @@ export default function FieldsWeb() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [search, setSearch] = useState('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [renderedAt] = useState(Date.now);
 
   const me = useQuery({ queryKey: ['auth', 'me'], queryFn: () => api.get<Me>('/auth/me') });
   const parcelsQ = useParcels();
@@ -143,7 +142,7 @@ export default function FieldsWeb() {
 
   // needs-attention: top open alerts (severity then recency); "N NEW" = created <24h
   const newCount = openAlerts.filter(
-    (a) => Date.now() - new Date(a.created_at).getTime() < DAY_MS,
+    (a) => renderedAt - new Date(a.created_at).getTime() < DAY_MS,
   ).length;
   const topAlerts = sortBySeverityThenRecency(openAlerts).slice(0, 4);
 
@@ -213,9 +212,9 @@ export default function FieldsWeb() {
     return (
       <View style={styles.center}>
         <Text style={styles.errorText}>{t('dashboard.load_error')}</Text>
-        <Pressable style={styles.cta} onPress={() => parcelsQ.refetch()}>
+        <InteractivePressable style={styles.cta} onPress={() => parcelsQ.refetch()}>
           <Text style={styles.ctaText}>{t('common.retry')}</Text>
-        </Pressable>
+        </InteractivePressable>
       </View>
     );
   }
@@ -249,9 +248,6 @@ export default function FieldsWeb() {
               </MonoLabel>
             </View>
           ) : null}
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initials(me.data?.user.full_name)}</Text>
-          </View>
         </View>
       </View>
 
@@ -260,31 +256,33 @@ export default function FieldsWeb() {
         <View style={styles.mapCard}>
           <View style={styles.mapHeader}>
             <View style={styles.mapViewControls}>
-              <Pressable
+              <InteractivePressable
                 onPress={() => setSelectedIndex(null)}
                 style={[styles.indexTab, selectedIndex == null ? styles.indexTabActive : styles.indexTabIdle]}
+                hoverStyle={selectedIndex != null ? styles.controlHover : undefined}
               >
                 <Text style={[styles.indexTabText, selectedIndex == null ? styles.indexTabTextActive : styles.indexTabTextIdle]}>
                   {t('score.name')}
                 </Text>
-              </Pressable>
-              <Pressable
+              </InteractivePressable>
+              <InteractivePressable
                 onPress={() => setShowAdvanced((v) => !v)}
                 style={styles.advancedToggle}
+                hoverStyle={styles.softHover}
               >
                 <Ionicons name={showAdvanced ? 'chevron-up' : 'options-outline'} size={13} color={colors.textMuted} />
                 <Text style={styles.advancedToggleText}>
                   {t(showAdvanced ? 'indices.hide_advanced' : 'indices.advanced')}
                 </Text>
-              </Pressable>
+              </InteractivePressable>
               {showAdvanced ? INDEX_NAMES.map((idx) => {
                 const active = idx === selectedIndex;
                 return (
-                  <Pressable key={idx} onPress={() => setSelectedIndex(idx)} style={[styles.indexTab, active ? styles.indexTabActive : styles.indexTabIdle]}>
+                  <InteractivePressable key={idx} onPress={() => setSelectedIndex(idx)} style={[styles.indexTab, active ? styles.indexTabActive : styles.indexTabIdle]} hoverStyle={!active ? styles.controlHover : undefined}>
                     <Text style={[styles.indexTabText, active ? styles.indexTabTextActive : styles.indexTabTextIdle]}>
                       {t(`index.${idx}.name`)} · {idx.toUpperCase()}
                     </Text>
-                  </Pressable>
+                  </InteractivePressable>
                 );
               }) : null}
             </View>
@@ -351,10 +349,11 @@ export default function FieldsWeb() {
                     : t('fields.all_parcels', { defaultValue: 'All parcels' });
                   const ago = formatDistanceToNow(parseISO(a.created_at), { locale: dfLocale() });
                   return (
-                    <Pressable
+                    <InteractivePressable
                       key={a.id}
                       onPress={() => router.push('/alerts')}
                       style={styles.attnRow}
+                      hoverStyle={styles.attnRowHover}
                     >
                       <GlyphBadge glyph={kindGlyph(a.kind)} fg={tint.fg} bg={tint.bg} size={26} />
                       <View style={styles.flex1}>
@@ -365,16 +364,16 @@ export default function FieldsWeb() {
                           {`${where} · ${ago}`}
                         </Text>
                       </View>
-                    </Pressable>
+                    </InteractivePressable>
                   );
                 })}
               </View>
             )}
-            <Pressable onPress={() => router.push('/alerts')}>
+            <InteractivePressable onPress={() => router.push('/alerts')} style={styles.inlineLink} hoverStyle={styles.linkHover}>
               <Text style={styles.link}>
                 {`${t('fields.open_insights', { defaultValue: 'Open insights' })} →`}
               </Text>
-            </Pressable>
+            </InteractivePressable>
           </Card>
 
           {/* field health */}
@@ -438,13 +437,13 @@ export default function FieldsWeb() {
       <View style={styles.tableCard}>
         <View style={styles.tableHeader}>
           <Text style={styles.cardTitle}>{t('fields.parcels', { defaultValue: 'Parcels' })}</Text>
-          <Pressable onPress={() => setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))}>
+          <InteractivePressable onPress={() => setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))} style={styles.sortButton} hoverStyle={styles.softHover}>
             <MonoLabel size={11}>
               {`${selectedIndex ? t('fields.sorted_by', { index: indexLabel }) : t('fields.sorted_by_score')} ${
                 sortDir === 'desc' ? '▾' : '▴'
               }`}
             </MonoLabel>
-          </Pressable>
+          </InteractivePressable>
         </View>
 
         <View style={styles.colHead}>
@@ -479,10 +478,11 @@ export default function FieldsWeb() {
             const ratio =
               iv == null ? 0 : Math.max(0, Math.min(1, (iv - domainMin) / (domainMax - domainMin)));
             return (
-              <Pressable
+              <InteractivePressable
                 key={p.id}
                 onPress={() => router.push(`/parcel/${p.id}`)}
-                style={(state) => [styles.row, (state as HoverState).hovered && styles.rowHover]}
+                style={styles.row}
+                hoverStyle={styles.rowHover}
               >
                 <View style={[styles.cParcel, styles.parcelCell]}>
                   <Text style={styles.parcelName} numberOfLines={1}>
@@ -523,7 +523,7 @@ export default function FieldsWeb() {
                 <View style={styles.cStatus}>
                   <StatusChip status={status} label={t(`status.${status}`)} />
                 </View>
-              </Pressable>
+              </InteractivePressable>
             );
           })
         )}
@@ -533,7 +533,7 @@ export default function FieldsWeb() {
 }
 
 const styles = StyleSheet.create({
-  page: { padding: spacing.lg, gap: spacing.md, backgroundColor: colors.bg },
+  page: { gap: spacing.md },
   flex1: { flex: 1, minWidth: 0 },
   center: {
     flex: 1,
@@ -581,16 +581,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.md,
   },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { fontFamily: fonts.bodyBold, fontSize: 12.5, color: colors.primaryDark },
-
   // top row
   topRow: { flexDirection: 'row', gap: spacing.lg, alignItems: 'stretch' },
 
@@ -658,10 +648,13 @@ const styles = StyleSheet.create({
   cardTitle: { fontFamily: fonts.display, fontSize: 17, color: colors.text },
   attnList: { gap: spacing.md, marginBottom: spacing.md },
   attnRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  attnRowHover: { backgroundColor: colors.cardAlt, borderRadius: radius.sm },
   attnTitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.text },
   attnMeta: { fontFamily: fonts.mono, fontSize: 10.5, color: colors.textFaint, marginTop: 3 },
   muted: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginBottom: spacing.md },
   link: { fontFamily: fonts.bodyBold, fontSize: 12.5, color: colors.primary },
+  inlineLink: { alignSelf: 'flex-start', borderRadius: radius.sm, padding: 3, marginLeft: -3 },
+  linkHover: { backgroundColor: colors.primarySoft },
 
   // field health
   healthCard: { flex: 1, borderRadius: radius.lg },
@@ -705,6 +698,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSoft,
   },
+  sortButton: { padding: 5, borderRadius: radius.sm },
   colHead: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -728,6 +722,8 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.borderSoft,
   },
   rowHover: { backgroundColor: colors.cardAlt },
+  softHover: { backgroundColor: colors.cardAlt, borderRadius: radius.sm },
+  controlHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
   parcelCell: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   parcelName: { flex: 1, fontFamily: fonts.display, fontSize: 15, color: colors.text },
   cropText: { fontFamily: fonts.body, fontSize: 12.5, color: colors.textMuted },

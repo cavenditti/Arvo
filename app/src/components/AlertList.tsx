@@ -4,10 +4,10 @@
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { kindGlyph } from '@/components/glyphs';
-import { GlyphBadge, MonoLabel, Pill, TintCard } from '@/components/ui';
+import { GlyphBadge, InteractivePressable, MonoLabel, Pill, TintCard } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
 import { setSnoozeDays } from '@/features/insights/snooze';
 import {
@@ -55,9 +55,9 @@ export default function AlertList({ alerts, onAction, parcelNames, onOpenParcel 
             <View style={styles.footer}>
               <Pill label={t(`alerts.state.${a.state}`)} fg={state.fg} bg={state.bg} />
               {a.parcel_id && onOpenParcel ? (
-                <Pressable onPress={() => onOpenParcel(a.parcel_id!)} hitSlop={8}>
+                <InteractivePressable style={styles.openLinkWrap} hoverStyle={styles.linkHover} onPress={() => onOpenParcel(a.parcel_id!)} hitSlop={8}>
                   <Text style={styles.openLink}>{t('alerts.open_parcel')} →</Text>
-                </Pressable>
+                </InteractivePressable>
               ) : null}
             </View>
 
@@ -96,9 +96,9 @@ export default function AlertList({ alerts, onAction, parcelNames, onOpenParcel 
 
 function ActionButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.action, pressed && styles.actionPressed]}>
+    <InteractivePressable onPress={onPress} style={styles.action} hoverStyle={styles.actionHover}>
       <Text style={styles.actionText}>{label}</Text>
-    </Pressable>
+    </InteractivePressable>
   );
 }
 
@@ -121,6 +121,8 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   openLink: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.primary },
+  openLinkWrap: { padding: 3, borderRadius: radius.sm },
+  linkHover: { backgroundColor: colors.primarySoft },
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -138,6 +140,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.cardAlt,
   },
-  actionPressed: { opacity: 0.6 },
+  actionHover: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
   actionText: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.primaryDark },
 });

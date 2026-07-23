@@ -1,6 +1,6 @@
 // OWNER: web-insights — Campo web "Insights" inbox (portal screen 03). Renders inside the web
 // (tabs)/_layout.web.tsx PortalShell (sidebar + scrollable, padded, max-width-1280 main), so this
-// file is content only: header (counts/search/avatar), severity + state + parcel filters, a
+// file is content only: header (counts/search), severity + state + parcel filters, a
 // decision-support banner, and richer alert cards with optimistic ack/snooze/dismiss.
 // Native alerts.tsx / AlertList are frozen to this agent; the tint maps and mutation shape are
 // replicated here because the web cards are laid out differently.
@@ -8,21 +8,21 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { TextStyle } from 'react-native';
 
 import { api } from '@/api/client';
-import type { Alert, AlertState, Parcel, Severity, User } from '@/api/types';
+import type { Alert, AlertState, Parcel, Severity } from '@/api/types';
 import { kindGlyph } from '@/components/glyphs';
 import type { AlertAction } from '@/components/types';
-import { GlyphBadge, MonoValue, Pill, TintCard, initials } from '@/components/ui';
+import { GlyphBadge, InteractivePressable, MonoValue, Pill, TintCard } from '@/components/ui';
+import { useOutsideDismiss } from '@/components/useOutsideDismiss';
 import { dfLocale } from '@/features/insights/format';
 import { readSnoozeDays, setSnoozeDays } from '@/features/insights/snooze';
 import { alertStateTint, colors, fonts, radius, severityGradient, severityTint, spacing } from '@/theme';
 
-type Me = { user: User };
 type Segment = 'open' | 'snoozed' | 'resolved';
 type SevFilter = 'all' | Severity;
 
@@ -64,12 +64,15 @@ export default function AlertsWebScreen() {
   const [parcelFilter, setParcelFilter] = useState<string>('all');
   const [parcelMenu, setParcelMenu] = useState(false);
   const [query, setQuery] = useState('');
+  const [renderedAt] = useState(Date.now);
+  const parcelMenuRef = useRef<View | null>(null);
+  const closeParcelMenu = useCallback(() => setParcelMenu(false), []);
+  useOutsideDismiss(parcelMenuRef, parcelMenu, closeParcelMenu);
 
-  const me = useQuery({ queryKey: ['auth', 'me'], queryFn: () => api.get<Me>('/auth/me') });
   const parcels = useQuery({ queryKey: ['parcels'], queryFn: () => api.get<Parcel[]>('/parcels') });
   const alertsQ = useQuery({ queryKey: ALERTS_ALL_KEY, queryFn: () => api.get<Alert[]>('/alerts') });
 
-  const parcelList = parcels.data ?? [];
+  const parcelList = useMemo(() => parcels.data ?? [], [parcels.data]);
   const parcelNames = useMemo(() => {
     const m: Record<string, string> = {};
     for (const p of parcelList) m[p.id] = p.name;
@@ -81,7 +84,7 @@ export default function AlertsWebScreen() {
   // Header metrics: open count, "new" = open created <24h, most-recent update for "updated … ago".
   const openCount = allAlerts.filter((a) => a.state === 'open').length;
   const newCount = allAlerts.filter(
-    (a) => a.state === 'open' && Date.now() - new Date(a.created_at).getTime() < DAY_MS,
+    (a) => a.state === 'open' && renderedAt - new Date(a.created_at).getTime() < DAY_MS,
   ).length;
   const lastUpdated = allAlerts.reduce<string | null>(
     (acc, a) => (acc == null || a.updated_at > acc ? a.updated_at : acc),
@@ -131,8 +134,6 @@ export default function AlertsWebScreen() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['alerts'] }),
   });
 
-  const avatarInitials = initials(me.data?.user.full_name);
-
   const subtitle =
     t('alerts.header_meta', { open: openCount, fresh: newCount }) +
     (lastUpdated
@@ -172,9 +173,6 @@ export default function AlertsWebScreen() {
               {t('alerts.alert_rules', { defaultValue: 'Alert rules' })}
             </Text>
           </View>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{avatarInitials}</Text>
-          </View>
         </View>
       </View>
 
@@ -202,30 +200,37 @@ export default function AlertsWebScreen() {
             {SEGMENTS.map((s) => {
               const active = segment === s.key;
               return (
-                <Pressable
+                <InteractivePressable
                   key={s.key}
                   onPress={() => setSegment(s.key)}
                   style={[styles.segBtn, active && styles.segBtnActive]}
+                  hoverStyle={!active ? styles.softHover : undefined}
                 >
                   <Text style={[styles.segText, active && styles.segTextActive]}>
                     {t(s.labelKey, { defaultValue: s.fallback })}
                   </Text>
-                </Pressable>
+                </InteractivePressable>
               );
             })}
           </View>
 
-          <View style={styles.parcelWrap}>
-            <Pressable style={styles.parcelTrigger} onPress={() => setParcelMenu((o) => !o)}>
+          <View ref={parcelMenuRef} style={styles.parcelWrap}>
+            <InteractivePressable
+              style={styles.parcelTrigger}
+              hoverStyle={styles.controlHover}
+              accessibilityState={{ expanded: parcelMenu }}
+              onPress={() => setParcelMenu((o) => !o)}
+            >
               <Text style={styles.parcelTriggerText} numberOfLines={1}>
                 {parcelLabel}
               </Text>
-              <Text style={styles.caret}>▾</Text>
-            </Pressable>
+              <Ionicons name={parcelMenu ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textFaint} />
+            </InteractivePressable>
             {parcelMenu ? (
               <View style={styles.parcelMenu}>
-                <Pressable
+                <InteractivePressable
                   style={styles.parcelItem}
+                  hoverStyle={styles.softHover}
                   onPress={() => {
                     setParcelFilter('all');
                     setParcelMenu(false);
@@ -234,11 +239,12 @@ export default function AlertsWebScreen() {
                   <Text style={styles.parcelItemText}>
                     {t('alerts.all_parcels', { defaultValue: 'All parcels' })}
                   </Text>
-                </Pressable>
+                </InteractivePressable>
                 {parcelList.map((p) => (
-                  <Pressable
+                  <InteractivePressable
                     key={p.id}
                     style={styles.parcelItem}
+                    hoverStyle={styles.softHover}
                     onPress={() => {
                       setParcelFilter(p.id);
                       setParcelMenu(false);
@@ -247,7 +253,7 @@ export default function AlertsWebScreen() {
                     <Text style={styles.parcelItemText} numberOfLines={1}>
                       {p.name}
                     </Text>
-                  </Pressable>
+                  </InteractivePressable>
                 ))}
               </View>
             ) : null}
@@ -304,13 +310,17 @@ function SeverityChip({
   fg?: string;
 }) {
   return (
-    <Pressable onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
+    <InteractivePressable
+      onPress={onPress}
+      style={[styles.chip, active && styles.chipActive]}
+      hoverStyle={!active ? styles.controlHover : undefined}
+    >
       <Text
         style={[styles.chipText, !active && fg ? { color: fg } : null, active && styles.chipTextActive]}
       >
         {label}
       </Text>
-    </Pressable>
+    </InteractivePressable>
   );
 }
 
@@ -385,9 +395,9 @@ function AlertCard({
             </>
           )}
           {alert.parcel_id ? (
-            <Pressable onPress={onOpenParcel} hitSlop={6} style={styles.openLinkWrap}>
+            <InteractivePressable onPress={onOpenParcel} hitSlop={6} style={styles.openLinkWrap} hoverStyle={styles.linkHover}>
               <Text style={styles.openLink}>{t('alerts.open_parcel')} →</Text>
-            </Pressable>
+            </InteractivePressable>
           ) : null}
         </View>
       ) : null}
@@ -405,13 +415,13 @@ function ActionButton({
   variant?: 'default' | 'primary';
 }) {
   return (
-    <Pressable
+    <InteractivePressable
       onPress={onPress}
-      style={({ pressed }) => [
+      style={[
         styles.actionBtn,
         variant === 'primary' ? styles.actionBtnPrimary : styles.actionBtnDefault,
-        pressed && styles.pressed,
       ]}
+      hoverStyle={variant === 'primary' ? styles.actionPrimaryHover : styles.controlHover}
     >
       <Text
         style={[
@@ -421,7 +431,7 @@ function ActionButton({
       >
         {label}
       </Text>
-    </Pressable>
+    </InteractivePressable>
   );
 }
 
@@ -431,7 +441,7 @@ const styles = StyleSheet.create({
 
   // Header
   header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  h1: { fontFamily: fonts.displayBold, fontSize: 22, color: colors.text, letterSpacing: -0.3 },
+  h1: { fontFamily: fonts.displayBold, fontSize: 28, color: colors.text, letterSpacing: -0.5 },
   subtitle: { fontFamily: fonts.body, fontSize: 12.5, color: colors.textFaint, marginTop: 2 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   search: {
@@ -457,16 +467,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   rulesBtnText: { fontFamily: fonts.bodySemiBold, fontSize: 12.5, color: colors.textMuted },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { fontFamily: fonts.bodyBold, fontSize: 12.5, color: colors.primary },
-
   // Filters
   filterRow: {
     flexDirection: 'row',
@@ -523,7 +523,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   parcelTriggerText: { flexShrink: 1, fontFamily: fonts.body, fontSize: 12.5, color: colors.textMuted },
-  caret: { fontFamily: fonts.body, fontSize: 12, color: colors.textFaint },
   parcelMenu: {
     position: 'absolute',
     top: 40,
@@ -599,7 +598,10 @@ const styles = StyleSheet.create({
   },
   actionBtnPrimary: { backgroundColor: colors.primarySoft, borderColor: colors.primarySoft },
   actionBtnDefault: { backgroundColor: colors.card, borderColor: colors.border },
-  pressed: { opacity: 0.6 },
+  softHover: { backgroundColor: colors.cardAlt },
+  controlHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
+  actionPrimaryHover: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+  linkHover: { backgroundColor: colors.primarySoft, borderRadius: radius.sm },
   actionText: { fontFamily: fonts.bodySemiBold, fontSize: 12 },
   actionTextPrimary: { color: colors.primaryDark },
   actionTextDefault: { color: colors.textMuted },

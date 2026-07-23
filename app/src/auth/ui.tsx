@@ -2,7 +2,6 @@
 // Field-usable: large touch targets, plain StyleSheet, theme tokens only.
 import {
   ActivityIndicator,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -10,7 +9,7 @@ import {
   View,
 } from 'react-native';
 
-import { TintCard } from '../components/ui';
+import { InteractivePressable, TintCard } from '../components/ui';
 import { colors, fonts, gradients, radius, severityTint, spacing } from '../theme';
 
 export function Field({ label, ...props }: { label: string } & TextInputProps) {
@@ -35,11 +34,11 @@ export function PrimaryButton({
 }) {
   const off = disabled || loading;
   return (
-    <Pressable
+    <InteractivePressable
       accessibilityRole="button"
       onPress={onPress}
       disabled={off}
-      style={({ pressed }) => [styles.button, (pressed || off) && styles.buttonMuted]}
+      style={[styles.button, off && styles.buttonMuted]}
     >
       <TintCard gradient={gradients.forest} style={styles.buttonInner}>
         {loading ? (
@@ -48,15 +47,15 @@ export function PrimaryButton({
           <Text style={styles.buttonText}>{title}</Text>
         )}
       </TintCard>
-    </Pressable>
+    </InteractivePressable>
   );
 }
 
 export function LinkButton({ title, onPress }: { title: string; onPress: () => void }) {
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={styles.link} hitSlop={8}>
+    <InteractivePressable accessibilityRole="button" onPress={onPress} style={styles.link} hoverStyle={styles.linkHover} hitSlop={8}>
       <Text style={styles.linkText}>{title}</Text>
-    </Pressable>
+    </InteractivePressable>
   );
 }
 
@@ -98,6 +97,7 @@ const styles = StyleSheet.create({
   buttonMuted: { opacity: 0.6 },
   buttonText: { color: colors.onPrimary, fontSize: 17, fontFamily: fonts.bodyBold },
   link: { alignItems: 'center', paddingVertical: spacing.md },
+  linkHover: { backgroundColor: colors.primarySoft, borderRadius: radius.md },
   linkText: { color: colors.primary, fontSize: 15, fontFamily: fonts.bodySemiBold },
   errorBox: {
     backgroundColor: severityTint.critical.bg,

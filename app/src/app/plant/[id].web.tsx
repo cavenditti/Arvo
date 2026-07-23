@@ -4,7 +4,7 @@
 // readings, insights and the status lifecycle on the right.
 // Terra rules: no state dots, no left-border stripes, fonts are family tokens (never fontWeight).
 import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -32,7 +32,7 @@ import {
 } from '@/api/types';
 import AlertList from '@/components/AlertList';
 import type { GlyphName } from '@/components/glyphs';
-import { GlyphCard, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
+import { GlyphCard, InteractivePressable, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
 import PortalShell from '@/components/web/PortalShell';
 import { INDEX_DOMAIN, dfLocale, indexColor } from '@/features/insights/format';
 import { useAlertActions } from '@/features/insights/useAlertActions';
@@ -148,9 +148,9 @@ export default function PlantDetailWebScreen() {
             ? t('plant.not_found')
             : t('plant.load_error')}
         </Text>
-        <Pressable style={styles.retry} onPress={() => plantQ.refetch()}>
+        <InteractivePressable style={styles.retry} onPress={() => plantQ.refetch()}>
           <Text style={styles.primaryTxt}>{t('common.retry')}</Text>
-        </Pressable>
+        </InteractivePressable>
       </View>
     );
   } else {
@@ -190,30 +190,31 @@ export default function PlantDetailWebScreen() {
         {/* breadcrumb + primary actions */}
         <View style={styles.crumbRow}>
           <View style={styles.crumbLeft}>
-            <Pressable style={styles.crumbLink} onPress={() => router.push('/')}>
+            <InteractivePressable style={styles.crumbLink} hoverStyle={styles.softHover} onPress={() => router.push('/')}>
               <Ionicons name="arrow-back" size={15} color={colors.textMuted} />
               <Text style={styles.crumbLinkTxt}>{t('tabs.dashboard')}</Text>
-            </Pressable>
+            </InteractivePressable>
             <Text style={styles.crumbSep}>/</Text>
-            <Pressable onPress={() => router.push(`/parcel/${p.parcel_id}`)}>
+            <InteractivePressable style={styles.crumbTextLink} hoverStyle={styles.softHover} onPress={() => router.push(`/parcel/${p.parcel_id}`)}>
               <Text style={styles.crumbLinkTxt} numberOfLines={1}>
                 {parcelName}
               </Text>
-            </Pressable>
+            </InteractivePressable>
             <Text style={styles.crumbSep}>/</Text>
             <Text style={styles.crumbCurrent} numberOfLines={1}>
               {name}
             </Text>
           </View>
           <View style={styles.crumbActions}>
-            <Pressable
+            <InteractivePressable
               style={styles.outlineBtn}
+              hoverStyle={styles.outlineBtnHover}
               onPress={() => router.push(`/parcel/${p.parcel_id}`)}
             >
               <Ionicons name="map-outline" size={16} color={colors.primary} />
               <Text style={styles.outlineBtnTxt}>{t('plant.open_parcel')}</Text>
-            </Pressable>
-            <Pressable
+            </InteractivePressable>
+            <InteractivePressable
               onPress={() =>
                 router.push({
                   pathname: '/observation/new',
@@ -225,7 +226,7 @@ export default function PlantDetailWebScreen() {
                 <Ionicons name="add" size={16} color={colors.onPrimary} />
                 <Text style={styles.ctaBtnTxt}>{t('plant.add_note')}</Text>
               </TintCard>
-            </Pressable>
+            </InteractivePressable>
           </View>
         </View>
 
@@ -382,7 +383,9 @@ export default function PlantDetailWebScreen() {
             <View style={styles.card}>
               <View style={styles.cardHead}>
                 <Text style={styles.cardTitle}>{t('plant.scouting')}</Text>
-                <Pressable
+                <InteractivePressable
+                  style={styles.inlineLink}
+                  hoverStyle={styles.softHover}
                   onPress={() =>
                     router.push({
                       pathname: '/observation/new',
@@ -391,7 +394,7 @@ export default function PlantDetailWebScreen() {
                   }
                 >
                   <Text style={styles.linkTxt}>{t('plant.add_note')} +</Text>
-                </Pressable>
+                </InteractivePressable>
               </View>
               {observations.length === 0 ? (
                 <Text style={styles.muted}>{t('plant.no_observations')}</Text>
@@ -513,9 +516,10 @@ export default function PlantDetailWebScreen() {
                 />
                 <View style={styles.actions}>
                   {TRANSITIONS[p.status].map((next) => (
-                    <Pressable
+                    <InteractivePressable
                       key={next}
                       style={[styles.actionBtn, statusMut.isPending && styles.disabled]}
+                      hoverStyle={next === 'removed' ? styles.dangerHover : styles.actionHover}
                       disabled={statusMut.isPending}
                       onPress={() => askStatus(next)}
                     >
@@ -527,7 +531,7 @@ export default function PlantDetailWebScreen() {
                       <Text style={[styles.actionTxt, next === 'removed' && styles.dangerTxt]}>
                         {t(MARK_KEY[next])}
                       </Text>
-                    </Pressable>
+                    </InteractivePressable>
                   ))}
                 </View>
               </View>
@@ -560,9 +564,9 @@ function MetricChip({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={[styles.chip, active && styles.chipActive]} onPress={onPress}>
+    <InteractivePressable style={[styles.chip, active && styles.chipActive]} hoverStyle={!active ? styles.controlHover : undefined} onPress={onPress}>
       <Text style={[styles.chipTxt, active && styles.chipTxtActive]}>{label}</Text>
-    </Pressable>
+    </InteractivePressable>
   );
 }
 
@@ -938,6 +942,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   crumbLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  crumbTextLink: { borderRadius: radius.sm, padding: 3, margin: -3 },
   crumbLinkTxt: { fontSize: 13, fontFamily: fonts.bodyMedium, color: colors.textMuted },
   crumbSep: { fontSize: 13, fontFamily: fonts.body, color: colors.textFaint },
   crumbCurrent: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text, flexShrink: 1 },
@@ -953,6 +958,7 @@ const styles = StyleSheet.create({
     borderColor: colors.primary,
   },
   outlineBtnTxt: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.primary },
+  outlineBtnHover: { backgroundColor: colors.primarySoft, borderColor: colors.primaryDark },
   ctaBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1038,6 +1044,7 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipTxt: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
   chipTxtActive: { color: colors.onPrimary },
+  controlHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
 
   // chart
   chartEmpty: { alignItems: 'center', justifyContent: 'center' },
@@ -1091,6 +1098,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardAlt,
   },
   actionTxt: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.primary },
+  actionHover: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+  dangerHover: { backgroundColor: statusColors.attention.bg, borderColor: colors.danger },
   dangerTxt: { color: colors.danger },
   input: {
     borderWidth: 1,
@@ -1116,5 +1125,7 @@ const styles = StyleSheet.create({
   },
   primaryTxt: { color: colors.onPrimary, fontFamily: fonts.bodyBold, fontSize: 15 },
   disabled: { opacity: 0.5 },
+  inlineLink: { padding: 4, borderRadius: radius.sm },
+  softHover: { backgroundColor: colors.cardAlt, borderRadius: radius.sm },
   disclaimer: { color: colors.textFaint, fontFamily: fonts.body, fontSize: 11, marginTop: spacing.sm },
 });

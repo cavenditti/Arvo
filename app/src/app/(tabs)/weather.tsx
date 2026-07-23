@@ -6,15 +6,16 @@
 // bleed glyphs — never bare dots (docs/DESIGN.md §5).
 import { format, parseISO } from 'date-fns';
 import type { Locale } from 'date-fns';
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { G, Line, Rect, Text as SvgText } from 'react-native-svg';
 
 import type { Advisory, AdvisoryKind, AgroSummary, Parcel, WeatherDaily } from '@/api/types';
 import { kindGlyph, weatherGlyph, weatherTone } from '@/components/glyphs';
-import { Card, GlyphCard, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
+import { Card, GlyphCard, InteractivePressable, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
+import { useOutsideDismiss } from '@/components/useOutsideDismiss';
 import { useAdvisories, useAgro, useParcels, useWeather } from '@/features/parcels/hooks';
 import { dfLocale } from '@/features/insights/format';
 import {
@@ -109,9 +110,9 @@ export default function WeatherScreen() {
     return (
       <View style={styles.center}>
         <Text style={styles.errorText}>{t('dashboard.load_error')}</Text>
-        <Pressable style={styles.cta} onPress={() => parcelsQ.refetch()}>
+        <InteractivePressable style={styles.cta} onPress={() => parcelsQ.refetch()}>
           <Text style={styles.ctaText}>{t('common.retry')}</Text>
-        </Pressable>
+        </InteractivePressable>
       </View>
     );
   }
@@ -227,25 +228,31 @@ function ParcelSelector({
   onSelect: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const selectorRef = useRef<View | null>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useOutsideDismiss(selectorRef, open, close);
   const selected = parcels.find((p) => p.id === selectedId);
   return (
-    <View style={styles.selectorWrap}>
-      <Pressable
+    <View ref={selectorRef} style={styles.selectorWrap}>
+      <InteractivePressable
         style={styles.selectorChip}
+        hoverStyle={styles.selectorHover}
         onPress={() => setOpen((o) => !o)}
         accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
       >
         <Text style={styles.selectorText} numberOfLines={1}>
           {selected?.name ?? '—'}
         </Text>
-        <Text style={styles.selectorCaret}>▾</Text>
-      </Pressable>
+        <Text style={styles.selectorCaret}>{open ? '▴' : '▾'}</Text>
+      </InteractivePressable>
       {open ? (
         <View style={styles.dropdown}>
           {parcels.map((p) => (
-            <Pressable
+            <InteractivePressable
               key={p.id}
-              style={({ pressed }) => [styles.dropItem, pressed && styles.dropItemPressed]}
+              style={styles.dropItem}
+              hoverStyle={styles.dropItemPressed}
               onPress={() => {
                 onSelect(p.id);
                 setOpen(false);
@@ -257,7 +264,7 @@ function ParcelSelector({
               >
                 {p.name}
               </Text>
-            </Pressable>
+            </InteractivePressable>
           ))}
         </View>
       ) : null}
@@ -639,6 +646,7 @@ const styles = StyleSheet.create({
   },
   selectorText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted, flexShrink: 1 },
   selectorCaret: { fontSize: 12, color: colors.textFaint, fontFamily: fonts.body },
+  selectorHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
   dropdown: {
     position: 'absolute',
     top: 44,

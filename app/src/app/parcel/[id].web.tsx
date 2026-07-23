@@ -3,7 +3,7 @@
 // left, minimap + weather + alerts + manage on the right. Reuses the same hooks/patterns as the
 // native parcel/[id].tsx screen. Theme tokens only.
 import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Linking, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
@@ -17,7 +17,8 @@ import { INDEX_NAMES, type IndexName, type Meta, type Observation } from '@/api/
 import AlertList from '@/components/AlertList';
 import IndexChart from '@/components/IndexChart';
 import MapView from '@/components/MapView';
-import { MonoLabel, MonoValue, Pill, StatusChip, TintCard } from '@/components/ui';
+import { InteractivePressable, MonoLabel, MonoValue, Pill, StatusChip, TintCard } from '@/components/ui';
+import FieldViewSwitcher from '@/components/web/FieldViewSwitcher';
 import PortalShell from '@/components/web/PortalShell';
 import WeatherPanel from '@/components/WeatherPanel';
 import { confirmDestructive, notify } from '@/features/parcels/dialog';
@@ -177,9 +178,9 @@ export default function ParcelDetailWeb() {
     body = (
       <View style={styles.center}>
         <Text style={styles.muted}>{t('parcel.load_error')}</Text>
-        <Pressable style={styles.retry} onPress={() => parcelQ.refetch()}>
+        <InteractivePressable style={styles.retry} onPress={() => parcelQ.refetch()}>
           <Text style={styles.primaryTxt}>{t('common.retry')}</Text>
-        </Pressable>
+        </InteractivePressable>
       </View>
     );
   } else {
@@ -224,10 +225,10 @@ export default function ParcelDetailWeb() {
         {/* breadcrumb + primary actions */}
         <View style={styles.crumbRow}>
           <View style={styles.crumbLeft}>
-            <Pressable style={styles.crumbLink} onPress={() => router.push('/')}>
+            <InteractivePressable style={styles.crumbLink} hoverStyle={styles.softHover} onPress={() => router.push('/')}>
               <Ionicons name="arrow-back" size={15} color={colors.textMuted} />
               <Text style={styles.crumbLinkTxt}>{t('tabs.dashboard')}</Text>
-            </Pressable>
+            </InteractivePressable>
             <Text style={styles.crumbSep}>/</Text>
             <Text style={styles.crumbCurrent} numberOfLines={1}>
               {p.name}
@@ -239,21 +240,22 @@ export default function ParcelDetailWeb() {
                 <MonoLabel color={colors.textMuted}>{latestDate}</MonoLabel>
               </View>
             ) : null}
-            <Pressable
+            <InteractivePressable
               style={styles.outlineBtn}
+              hoverStyle={styles.outlineBtnHover}
               onPress={() =>
                 router.push({ pathname: '/observation/new', params: { parcelId: p.id } })
               }
             >
               <Ionicons name="add" size={16} color={colors.primary} />
               <Text style={styles.outlineBtnTxt}>{t('parcel.record_note', { defaultValue: 'Record note' })}</Text>
-            </Pressable>
-            <Pressable onPress={() => openReport(p.id)}>
+            </InteractivePressable>
+            <InteractivePressable onPress={() => openReport(p.id)}>
               <TintCard gradient={gradients.forest} style={styles.exportBtn}>
                 <Ionicons name="document-text-outline" size={16} color={colors.onPrimary} />
                 <Text style={styles.exportBtnTxt}>{t('parcel.export_report', { defaultValue: 'Export report' })}</Text>
               </TintCard>
-            </Pressable>
+            </InteractivePressable>
           </View>
         </View>
 
@@ -282,6 +284,8 @@ export default function ParcelDetailWeb() {
           ) : null}
         </View>
 
+        <FieldViewSwitcher parcelId={p.id} active="overview" />
+
         {/* two-column grid */}
         <View style={styles.grid}>
           {/* LEFT */}
@@ -294,22 +298,22 @@ export default function ParcelDetailWeb() {
                   <Text style={styles.scoreExplanation}>{t('score.explanation')}</Text>
                   {score ? <MonoLabel>{t('score.based_on', { count: score.signalCount })}</MonoLabel> : null}
                 </View>
-                <Pressable style={styles.advancedButton} onPress={() => setShowAdvanced((v) => !v)}>
+                <InteractivePressable style={styles.advancedButton} hoverStyle={styles.softHover} onPress={() => setShowAdvanced((v) => !v)}>
                   <Ionicons name="options-outline" size={15} color={colors.primary} />
                   <Text style={styles.linkTxt}>{t(showAdvanced ? 'indices.hide_advanced' : 'indices.advanced')}</Text>
                   <Ionicons name={showAdvanced ? 'chevron-up' : 'chevron-down'} size={15} color={colors.primary} />
-                </Pressable>
+                </InteractivePressable>
               </View>
               {showAdvanced ? <>
                 <View style={styles.indexTabs}>
                   {INDEX_NAMES.map((ix) => {
                     const active = ix === index;
                     return (
-                      <Pressable key={ix} onPress={() => setIndex(ix)} style={[styles.indexTab, active && styles.indexTabActive]}>
+                      <InteractivePressable key={ix} onPress={() => setIndex(ix)} style={[styles.indexTab, active && styles.indexTabActive]} hoverStyle={!active ? styles.controlHover : undefined}>
                         <Text style={[styles.indexTabTxt, active && styles.indexTabTxtActive]}>
                           {t(`index.${ix}.name`)} · {ix.toUpperCase()}
                         </Text>
-                      </Pressable>
+                      </InteractivePressable>
                     );
                   })}
                 </View>
@@ -350,9 +354,9 @@ export default function ParcelDetailWeb() {
                 <Text style={styles.cardTitle}>
                   {t('parcel.scouting_title', { defaultValue: 'Scouting observations' })}
                 </Text>
-                <Pressable onPress={() => router.push('/observation/new')}>
+                <InteractivePressable style={styles.inlineLink} hoverStyle={styles.softHover} onPress={() => router.push('/observation/new')}>
                   <Text style={styles.linkTxt}>{t('parcel.add_note', { defaultValue: 'Add note' })} +</Text>
-                </Pressable>
+                </InteractivePressable>
               </View>
               {observations.length === 0 ? (
                 <Text style={styles.muted}>
@@ -386,15 +390,16 @@ export default function ParcelDetailWeb() {
                 </MonoLabel>
               </View>
               {overlayAvailable ? (
-                <Pressable
+                <InteractivePressable
                   style={[styles.overlayChip, overlayOn && styles.overlayChipOn]}
+                  hoverStyle={!overlayOn ? styles.controlHover : undefined}
                   onPress={() => setShowOverlay((v) => !v)}
                 >
                   <Ionicons name="layers" size={13} color={overlayOn ? colors.onPrimary : colors.primary} />
                   <Text style={[styles.overlayChipTxt, overlayOn && styles.overlayChipTxtOn]}>
                     {t('parcel.overlay')}
                   </Text>
-                </Pressable>
+                </InteractivePressable>
               ) : null}
             </View>
 
@@ -430,41 +435,43 @@ export default function ParcelDetailWeb() {
             <SectionCard title={t('plants.section_title')}>
               <Text style={styles.plantHint}>{t('plants.subtitle')}</Text>
               <View style={styles.manageBtns}>
-                <Pressable
+                <InteractivePressable
                   style={styles.manageBtn}
+                  hoverStyle={styles.manageBtnHover}
                   onPress={() => router.push({ pathname: '/plants', params: { parcelId: p.id } })}
                 >
                   <Ionicons name="leaf-outline" size={16} color={colors.primary} />
                   <Text style={styles.manageBtnTxt}>{t('plants.open_map')}</Text>
-                </Pressable>
-                <Pressable
+                </InteractivePressable>
+                <InteractivePressable
                   style={styles.manageBtn}
+                  hoverStyle={styles.manageBtnHover}
                   onPress={() =>
                     router.push({ pathname: '/capture/new', params: { parcelId: p.id } })
                   }
                 >
                   <Ionicons name="add" size={16} color={colors.primary} />
                   <Text style={styles.manageBtnTxt}>{t('plants.empty_cta')}</Text>
-                </Pressable>
+                </InteractivePressable>
               </View>
             </SectionCard>
 
             {/* manage */}
             <SectionCard title={t('parcel.manage', { defaultValue: 'Manage' })}>
               <View style={styles.manageBtns}>
-                <Pressable style={styles.manageBtn} onPress={onRefreshImagery} disabled={refresh.isPending}>
+                <InteractivePressable style={styles.manageBtn} hoverStyle={styles.manageBtnHover} onPress={onRefreshImagery} disabled={refresh.isPending}>
                   {refresh.isPending ? (
                     <ActivityIndicator size="small" color={colors.primary} />
                   ) : (
                     <Ionicons name="refresh" size={16} color={colors.primary} />
                   )}
                   <Text style={styles.manageBtnTxt}>{t('parcel.refresh_imagery')}</Text>
-                </Pressable>
+                </InteractivePressable>
 
-                <Pressable style={styles.manageBtn} onPress={toggleEditing}>
+                <InteractivePressable style={styles.manageBtn} hoverStyle={styles.manageBtnHover} onPress={toggleEditing}>
                   <Ionicons name={editing ? 'close' : 'pencil'} size={16} color={colors.primary} />
                   <Text style={styles.manageBtnTxt}>{t('parcel.edit_fields', { defaultValue: 'Edit fields' })}</Text>
-                </Pressable>
+                </InteractivePressable>
 
                 {editing ? (
                   <View style={styles.editForm}>
@@ -475,14 +482,15 @@ export default function ParcelDetailWeb() {
                       {CROP_OPTIONS.map((c) => {
                         const active = eCrop === c.value;
                         return (
-                          <Pressable
+                          <InteractivePressable
                             key={c.value}
                             style={[styles.chip, active && styles.chipActive]}
+                            hoverStyle={!active ? styles.controlHover : undefined}
                             onPress={() => setECrop(active ? null : c.value)}
                           >
                             <Ionicons name={c.icon} size={13} color={active ? colors.onPrimary : colors.textMuted} />
                             <Text style={[styles.chipTxt, active && styles.chipTxtActive]}>{t(c.labelKey)}</Text>
-                          </Pressable>
+                          </InteractivePressable>
                         );
                       })}
                     </View>
@@ -498,7 +506,7 @@ export default function ParcelDetailWeb() {
                       autoCapitalize="none"
                     />
                     {editErr ? <Text style={styles.error}>{editErr}</Text> : null}
-                    <Pressable
+                    <InteractivePressable
                       style={[styles.primaryBtn, update.isPending && styles.disabled]}
                       onPress={saveEdit}
                       disabled={update.isPending}
@@ -508,18 +516,19 @@ export default function ParcelDetailWeb() {
                       ) : (
                         <Text style={styles.primaryTxt}>{t('common.save')}</Text>
                       )}
-                    </Pressable>
+                    </InteractivePressable>
                   </View>
                 ) : null}
 
-                <Pressable
+                <InteractivePressable
                   style={styles.manageBtn}
+                  hoverStyle={styles.dangerHover}
                   onPress={() => onArchive(p.name, p.id)}
                   disabled={archive.isPending}
                 >
                   <Ionicons name="archive-outline" size={16} color={colors.danger} />
                   <Text style={[styles.manageBtnTxt, styles.dangerTxt]}>{t('parcel.archive')}</Text>
-                </Pressable>
+                </InteractivePressable>
               </View>
             </SectionCard>
           </View>
@@ -629,6 +638,7 @@ const styles = StyleSheet.create({
     borderColor: colors.primary,
   },
   outlineBtnTxt: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.primary },
+  outlineBtnHover: { backgroundColor: colors.primarySoft, borderColor: colors.primaryDark },
   exportBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -699,6 +709,7 @@ const styles = StyleSheet.create({
   chartHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: spacing.sm },
   scoreExplanation: { maxWidth: 620, fontSize: 13, lineHeight: 19, fontFamily: fonts.body, color: colors.textMuted, marginVertical: 3 },
   advancedButton: { flexDirection: 'row', alignItems: 'center', gap: 5, padding: spacing.sm },
+  inlineLink: { padding: 4, borderRadius: radius.sm },
   indexDescription: { fontSize: 12.5, lineHeight: 18, fontFamily: fonts.body, color: colors.textMuted },
   legend: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flexWrap: 'wrap' },
   chartLoading: { alignItems: 'center', justifyContent: 'center' },
@@ -779,6 +790,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardAlt,
   },
   manageBtnTxt: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.primary },
+  manageBtnHover: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+  dangerHover: { backgroundColor: statusColors.attention.bg, borderColor: colors.danger },
   dangerTxt: { color: colors.danger },
   plantHint: { fontSize: 12.5, lineHeight: 18, fontFamily: fonts.body, color: colors.textMuted },
 
@@ -831,6 +844,8 @@ const styles = StyleSheet.create({
   },
   error: { color: colors.danger, fontFamily: fonts.bodyMedium, fontSize: 14 },
   disabled: { opacity: 0.5 },
+  softHover: { backgroundColor: colors.cardAlt, borderRadius: radius.sm },
+  controlHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
   disclaimer: {
     color: colors.textFaint,
     fontFamily: fonts.body,

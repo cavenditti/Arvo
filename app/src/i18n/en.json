@@ -224,6 +224,7 @@
   "fields.col_7day": "Trend",
   "fields.col_status": "Status",
   "fields.no_matches": "No matching parcels",
+  "fields.overview": "Overview",
   "parcel.record_note": "Record note",
   "parcel.export_report": "Export report",
   "parcel.season_label": "Season {{year}}",

@@ -224,6 +224,7 @@
   "fields.col_7day": "Andamento",
   "fields.col_status": "Stato",
   "fields.no_matches": "Nessuna particella corrispondente",
+  "fields.overview": "Panoramica",
   "parcel.record_note": "Registra nota",
   "parcel.export_report": "Esporta report",
   "parcel.season_label": "Stagione {{year}}",

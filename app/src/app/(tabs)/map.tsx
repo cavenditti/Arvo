@@ -2,7 +2,7 @@
 // floating search (filter + focus) and index-cycle chip, tap → bottom selection card, floating +
 // → new parcel.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
@@ -14,7 +14,7 @@ import { api } from '@/api/client';
 import { INDEX_NAMES, type Alert, type IndexName } from '@/api/types';
 import MapView from '@/components/MapView';
 import type { ParcelFeature } from '@/components/types';
-import { MonoLabel, MonoValue, StatusChip, TintCard } from '@/components/ui';
+import { InteractivePressable, MonoLabel, MonoValue, StatusChip, TintCard } from '@/components/ui';
 import { severityRank } from '@/features/insights/alerts';
 import { INDEX_DOMAIN, arvoScore, cropLabel, indexColor, scoreColor } from '@/features/insights/format';
 import { NEUTRAL_FILL, formatArea, ndviColor } from '@/features/parcels/crops';
@@ -138,9 +138,9 @@ export default function MapScreen() {
       ) : parcelsQ.isError ? (
         <View style={styles.center}>
           <Text style={styles.msg}>{t('map.load_error')}</Text>
-          <Pressable style={styles.retry} onPress={() => parcelsQ.refetch()}>
+          <InteractivePressable style={styles.retry} onPress={() => parcelsQ.refetch()}>
             <Text style={styles.retryTxt}>{t('common.retry')}</Text>
-          </Pressable>
+          </InteractivePressable>
         </View>
       ) : (
         <MapView
@@ -233,17 +233,19 @@ export default function MapScreen() {
               </Text>
             </View>
             <StatusChip status={selectedStatus} label={t(`status.${selectedStatus}`)} />
-            <Pressable
+            <InteractivePressable
               onPress={() => setSelectedId(null)}
               hitSlop={8}
               accessibilityLabel={t('map.close_selection', { defaultValue: 'Close' })}
+              style={styles.iconButton}
+              hoverStyle={styles.iconButtonHover}
             >
               <Ionicons name="close" size={18} color={colors.textMuted} />
-            </Pressable>
+            </InteractivePressable>
           </View>
           <View style={styles.selButtons}>
-            <Pressable
-              style={({ pressed }) => [styles.detailBtn, pressed && styles.pressed]}
+            <InteractivePressable
+              style={styles.detailBtn}
               onPress={() => router.push(`/parcel/${selected.id}`)}
             >
               <TintCard gradient={gradients.forest} style={styles.detailBtnInner}>
@@ -251,15 +253,16 @@ export default function MapScreen() {
                   {t('map.open_detail', { defaultValue: 'Open detail' })}
                 </Text>
               </TintCard>
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [styles.scoutBtn, pressed && styles.pressed]}
+            </InteractivePressable>
+            <InteractivePressable
+              style={styles.scoutBtn}
+              hoverStyle={styles.scoutBtnHover}
               onPress={() => router.push('/observation/new')}
             >
               <Text style={styles.scoutBtnTxt}>
                 {t('map.scout_here', { defaultValue: 'Scout here' })}
               </Text>
-            </Pressable>
+            </InteractivePressable>
           </View>
         </View>
       ) : null}
@@ -279,30 +282,32 @@ export default function MapScreen() {
               returnKeyType="search"
             />
           </View>
-          <Pressable
-            style={({ pressed }) => [styles.indexChip, pressed && styles.pressed]}
+          <InteractivePressable
+            style={styles.indexChip}
+            hoverStyle={styles.indexChipHover}
             onPress={cycleIndex}
             accessibilityLabel={t('map.change_index', { defaultValue: 'Change index' })}
           >
             <MonoLabel color={colors.text} size={11}>
               {`${selectedIndex ? t(`index.${selectedIndex}.name`) : t('map.score_view')} ▾`}
             </MonoLabel>
-          </Pressable>
+          </InteractivePressable>
         </View>
       ) : null}
 
-      <Pressable
+      <InteractivePressable
         style={[
           styles.fab,
           selected
             ? { bottom: spacing.md + (cardHeight || CARD_HEIGHT_ESTIMATE) + spacing.sm }
             : null,
         ]}
+        hoverStyle={styles.fabHover}
         onPress={() => router.push('/parcel/new')}
         accessibilityLabel={t('map.add_parcel')}
       >
         <Ionicons name="add" size={30} color="#fff" />
-      </Pressable>
+      </InteractivePressable>
     </View>
   );
 }
@@ -367,7 +372,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
   },
-  pressed: { opacity: 0.7 },
+  indexChipHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
   emptyWrap: {
     position: 'absolute',
     top: 0,
@@ -455,7 +460,10 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.md,
   },
+  scoutBtnHover: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
   scoutBtnTxt: { color: colors.text, fontSize: 14, fontFamily: fonts.bodySemiBold },
+  iconButton: { padding: 5, borderRadius: radius.sm },
+  iconButtonHover: { backgroundColor: colors.cardAlt },
   fab: {
     position: 'absolute',
     right: spacing.md,
@@ -472,4 +480,5 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 5,
   },
+  fabHover: { backgroundColor: colors.primaryDark, transform: [{ translateY: -2 }, { scale: 1.03 }] },
 });

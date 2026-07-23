@@ -6,7 +6,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Pressable,
@@ -19,6 +19,7 @@ import {
 
 import type { Observation } from '@/api/types';
 import { TintCard } from '@/components/ui';
+import { useOutsideDismiss } from '@/components/useOutsideDismiss';
 import { nearestParcel, useParcels } from '@/features/scouting/parcels';
 import { OBSERVATION_TAGS } from '@/features/scouting/tags';
 import { queuePhoto, upsertLocal } from '@/offline/queue';
@@ -55,6 +56,9 @@ export default function Screen() {
   const [customTag, setCustomTag] = useState('');
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerRef = useRef<View | null>(null);
+  const closePicker = useCallback(() => setPickerOpen(false), []);
+  useOutsideDismiss(pickerRef, pickerOpen, closePicker);
 
   useEffect(() => {
     let active = true;
@@ -200,14 +204,18 @@ export default function Screen() {
         </View>
 
         {/* Parcel */}
-        <View style={styles.section}>
+        <View ref={pickerRef} style={styles.section}>
           <View style={styles.rowBetween}>
             <Text style={styles.label}>{t('observation.parcel')}</Text>
             {autoPicked && !parcelTouched && parcelId ? (
               <Text style={styles.autoTag}>{t('observation.parcel_auto')}</Text>
             ) : null}
           </View>
-          <Pressable style={styles.selector} onPress={() => setPickerOpen((o) => !o)}>
+          <Pressable
+            style={styles.selector}
+            accessibilityState={{ expanded: pickerOpen }}
+            onPress={() => setPickerOpen((o) => !o)}
+          >
             <Text style={styles.selectorText}>
               {selectedParcel ? selectedParcel.name : t('observation.parcel_none')}
             </Text>

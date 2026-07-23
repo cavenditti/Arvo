@@ -13,7 +13,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
 import * as DocumentPicker from 'expo-document-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ActivityIndicator,
@@ -42,6 +42,7 @@ import {
 import { useAuth } from '@/auth/AuthContext';
 import type { GlyphName } from '@/components/glyphs';
 import { GlyphBadge, GlyphCard, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
+import { useOutsideDismiss } from '@/components/useOutsideDismiss';
 import { dfLocale } from '@/features/insights/format';
 import { notify } from '@/features/parcels/dialog';
 import { useParcels } from '@/features/parcels/hooks';
@@ -308,6 +309,9 @@ function RegisterForm({
 
   const [parcelId, setParcelId] = useState<string | null>(initialParcelId);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerRef = useRef<View | null>(null);
+  const closePicker = useCallback(() => setPickerOpen(false), []);
+  useOutsideDismiss(pickerRef, pickerOpen, closePicker);
   const [source, setSource] = useState<CaptureSource>('drone');
   const [unitType, setUnitType] = useState<PlantUnit>('tree');
   const [capturedAt, setCapturedAt] = useState(() => format(new Date(), 'yyyy-MM-dd'));
@@ -424,9 +428,13 @@ function RegisterForm({
         </View>
 
         {/* Parcel */}
-        <View style={styles.section}>
+        <View ref={pickerRef} style={styles.section}>
           <Text style={styles.label}>{t('capture.parcel')}</Text>
-          <Pressable style={styles.selector} onPress={() => setPickerOpen((o) => !o)}>
+          <Pressable
+            style={styles.selector}
+            accessibilityState={{ expanded: pickerOpen }}
+            onPress={() => setPickerOpen((o) => !o)}
+          >
             <Text style={styles.selectorText}>
               {selected ? selected.name : t('capture.select_parcel')}
             </Text>

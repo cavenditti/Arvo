@@ -6,18 +6,15 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter, usePathname } from 'expo-router';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { api } from '@/api/client';
 import type { Alert, Org, Parcel, Role, User } from '@/api/types';
 import Logo from '@/components/Logo';
-import { GlyphBadge, MonoLabel, initials } from '@/components/ui';
+import { GlyphBadge, InteractivePressable, MonoLabel, initials } from '@/components/ui';
 import { colors, fonts, radius, spacing } from '@/theme';
 
 type Me = { user: User; org: Org; role: Role };
-
-// Web-only Pressable render-prop state (`hovered` is added by react-native-web, absent from RN types).
-type PressState = { hovered?: boolean; pressed: boolean };
 
 type NavItem = {
   key: string;
@@ -35,17 +32,14 @@ const NAV: NavItem[] = [
     fallback: 'Fields',
     icon: 'grid-outline',
     path: '/',
-    match: (p) => p === '/' || p.startsWith('/parcel'),
+    match: (p) =>
+      p === '/' ||
+      p.startsWith('/parcel') ||
+      p.startsWith('/plants') ||
+      p.startsWith('/plant/') ||
+      p.startsWith('/capture'),
   },
   { key: 'map', labelKey: 'tabs.map', fallback: 'Map', icon: 'navigate-outline', path: '/map' },
-  {
-    key: 'plants',
-    labelKey: 'tabs.plants',
-    fallback: 'Plants',
-    icon: 'leaf-outline',
-    path: '/plants',
-    match: (p) => p.startsWith('/plants') || p.startsWith('/plant/') || p.startsWith('/capture'),
-  },
   {
     key: 'insights',
     labelKey: 'alerts.title',
@@ -84,8 +78,13 @@ export default function PortalShell({ children }: { children: ReactNode }) {
           <Text style={styles.brand}>Arvo</Text>
         </View>
 
-        {/* Org selector — display only; org switching lives in /settings. */}
-        <View style={styles.orgCard}>
+        {/* Organization settings live in one place; the chevron now leads there instead of
+            looking like a selector that does nothing. */}
+        <InteractivePressable
+          style={styles.orgCard}
+          hoverStyle={styles.orgCardHover}
+          onPress={() => router.push('/settings')}
+        >
           <GlyphBadge glyph="sprout" fg={colors.success} bg={colors.primarySoft} size={22} />
           <View style={styles.flex1}>
             <Text style={styles.orgName} numberOfLines={1}>
@@ -95,8 +94,8 @@ export default function PortalShell({ children }: { children: ReactNode }) {
               {parcelCount} {t('portal.parcels', { defaultValue: 'parcels' })} · {totalHa.toFixed(1)} ha
             </Text>
           </View>
-          <Ionicons name="chevron-down" size={14} color={colors.textFaint} />
-        </View>
+          <Ionicons name="chevron-forward" size={14} color={colors.textFaint} />
+        </InteractivePressable>
 
         <View style={styles.nav}>
           {NAV.map((item) => {
@@ -107,15 +106,12 @@ export default function PortalShell({ children }: { children: ReactNode }) {
               : false;
             const disabled = !item.path;
             return (
-              <Pressable
+              <InteractivePressable
                 key={item.key}
                 disabled={disabled}
                 onPress={() => item.path && router.push(item.path)}
-                style={({ hovered, pressed }: PressState) => [
-                  styles.navItem,
-                  active && styles.navItemActive,
-                  (hovered || pressed) && !active && !disabled && styles.navItemHover,
-                ]}
+                style={[styles.navItem, active && styles.navItemActive]}
+                hoverStyle={!active && !disabled ? styles.navItemHover : undefined}
               >
                 <Ionicons
                   name={item.icon}
@@ -142,19 +138,17 @@ export default function PortalShell({ children }: { children: ReactNode }) {
                     <Text style={styles.soonText}>{t('portal.soon')}</Text>
                   </View>
                 ) : null}
-              </Pressable>
+              </InteractivePressable>
             );
           })}
         </View>
 
         <View style={styles.footer}>
           <View style={styles.divider} />
-          <Pressable
+          <InteractivePressable
             onPress={() => router.push('/settings')}
-            style={({ hovered, pressed }: PressState) => [
-              styles.userRow,
-              (hovered || pressed) && styles.userRowHover,
-            ]}
+            style={styles.userRow}
+            hoverStyle={styles.userRowHover}
           >
             <View style={styles.avatar}>
               <Text style={styles.avatarText}>{avatarInitials}</Text>
@@ -166,7 +160,7 @@ export default function PortalShell({ children }: { children: ReactNode }) {
               <MonoLabel size={10}>{me.data?.role ? t(`roles.${me.data.role}`) : ''}</MonoLabel>
             </View>
             <Ionicons name="settings-outline" size={14} color={colors.textFaint} />
-          </Pressable>
+          </InteractivePressable>
         </View>
       </View>
 
@@ -214,6 +208,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   orgName: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
+  orgCardHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
   orgMeta: { fontFamily: fonts.mono, fontSize: 10, color: colors.textFaint, marginTop: 2 },
   nav: { marginTop: spacing.lg, gap: 2 },
   navItem: {

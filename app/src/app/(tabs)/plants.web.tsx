@@ -5,8 +5,8 @@
 // PlantMap over the parcel-wide metric scale, the weakest-N ranking and the replant list; a row or
 // a tap on the map opens /plant/{id}, and "register a flight" opens /capture/new?parcelId=…
 // Terra: no state dots, no left-border stripes, fonts are family tokens (never fontWeight).
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { format, parseISO } from 'date-fns';
@@ -15,7 +15,9 @@ import { useTranslation } from 'react-i18next';
 
 import { PLANT_METRICS, type PlantMetric, type ReplantReason } from '@/api/types';
 import PlantMap from '@/components/PlantMap';
-import { MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
+import { InteractivePressable, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
+import FieldViewSwitcher from '@/components/web/FieldViewSwitcher';
+import { useOutsideDismiss } from '@/components/useOutsideDismiss';
 import { dfLocale } from '@/features/insights/format';
 import { useParcels } from '@/features/parcels/hooks';
 import { plantColor, rampForMetric } from '@/features/plants/colors';
@@ -62,6 +64,9 @@ export default function PlantsWebScreen() {
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [metric, setMetric] = useState<PlantMetric>('ndvi');
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<View | null>(null);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  useOutsideDismiss(menuRef, menuOpen, closeMenu);
 
   // An explicit pick wins over the deep link. With neither, prefer the parcel of the newest
   // extracted flight (one that actually HAS plants) over "the first parcel" — landing here from
@@ -125,9 +130,9 @@ export default function PlantsWebScreen() {
     return (
       <View style={styles.center}>
         <Text style={styles.muted}>{t('map.load_error')}</Text>
-        <Pressable style={styles.primaryBtn} onPress={() => parcelsQ.refetch()}>
+        <InteractivePressable style={styles.primaryBtn} onPress={() => parcelsQ.refetch()}>
           <Text style={styles.primaryTxt}>{t('common.retry')}</Text>
-        </Pressable>
+        </InteractivePressable>
       </View>
     );
   }
@@ -136,9 +141,9 @@ export default function PlantsWebScreen() {
       <View style={styles.center}>
         <Text style={styles.h2}>{t('dashboard.empty_title')}</Text>
         <Text style={styles.muted}>{t('dashboard.empty_body')}</Text>
-        <Pressable style={styles.primaryBtn} onPress={() => router.push('/parcel/new')}>
+        <InteractivePressable style={styles.primaryBtn} onPress={() => router.push('/parcel/new')}>
           <Text style={styles.primaryTxt}>{t('dashboard.empty_cta')}</Text>
-        </Pressable>
+        </InteractivePressable>
       </View>
     );
   }
@@ -149,27 +154,46 @@ export default function PlantsWebScreen() {
 
   return (
     <View style={styles.root}>
+      <View style={styles.crumbRow}>
+        <InteractivePressable
+          style={styles.crumbLink}
+          hoverStyle={styles.linkHover}
+          onPress={() => router.push('/')}
+        >
+          <Ionicons name="arrow-back" size={15} color={colors.textMuted} />
+          <Text style={styles.crumbLinkTxt}>{t('tabs.dashboard')}</Text>
+        </InteractivePressable>
+        <Text style={styles.crumbSep}>/</Text>
+        <Text style={styles.crumbCurrent} numberOfLines={1}>{parcel.name}</Text>
+      </View>
+
       {/* header */}
       <View style={styles.header}>
         <View style={styles.flex1}>
-          <Text style={styles.h1}>{t('plants.title')}</Text>
+          <Text style={styles.h1}>{parcel.name}</Text>
           <Text style={styles.subtitle}>{t('plants.subtitle')}</Text>
         </View>
         <View style={styles.headerRight}>
-          <View style={styles.menuWrap}>
-            <Pressable style={styles.menuTrigger} onPress={() => setMenuOpen((v) => !v)}>
+          <View ref={menuRef} style={styles.menuWrap}>
+            <InteractivePressable
+              style={styles.menuTrigger}
+              hoverStyle={styles.controlHover}
+              accessibilityState={{ expanded: menuOpen }}
+              onPress={() => setMenuOpen((v) => !v)}
+            >
               <Ionicons name="leaf-outline" size={15} color={colors.primary} />
               <Text style={styles.menuTriggerTxt} numberOfLines={1}>
                 {parcel.name}
               </Text>
-              <Text style={styles.caret}>▾</Text>
-            </Pressable>
+              <Ionicons name={menuOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textFaint} />
+            </InteractivePressable>
             {menuOpen ? (
               <View style={styles.menu}>
                 {parcels.map((p) => (
-                  <Pressable
+                  <InteractivePressable
                     key={p.id}
                     style={[styles.menuItem, p.id === parcel.id && styles.menuItemActive]}
+                    hoverStyle={p.id !== parcel.id ? styles.menuItemHover : undefined}
                     onPress={() => {
                       setPickedId(p.id);
                       setMenuOpen(false);
@@ -181,34 +205,37 @@ export default function PlantsWebScreen() {
                     >
                       {p.name}
                     </Text>
-                  </Pressable>
+                  </InteractivePressable>
                 ))}
               </View>
             ) : null}
           </View>
-          <Pressable onPress={openCapture}>
+          <InteractivePressable onPress={openCapture}>
             <TintCard gradient={gradients.forest} style={styles.ctaBtn}>
               <Ionicons name="add" size={16} color={colors.onPrimary} />
               <Text style={styles.ctaTxt}>{t('plants.empty_cta')}</Text>
             </TintCard>
-          </Pressable>
+          </InteractivePressable>
         </View>
       </View>
+
+      <FieldViewSwitcher parcelId={parcel.id} active="plants" />
 
       {/* metric tabs + capture meta */}
       <View style={styles.metricRow}>
         {PLANT_METRICS.map((m) => {
           const active = m === metric;
           return (
-            <Pressable
+            <InteractivePressable
               key={m}
               onPress={() => setMetric(m)}
               style={[styles.metricTab, active && styles.metricTabActive]}
+              hoverStyle={!active ? styles.controlHover : undefined}
             >
               <Text style={[styles.metricTabTxt, active && styles.metricTabTxtActive]}>
                 {t(metricLabelKey(m))}
               </Text>
-            </Pressable>
+            </InteractivePressable>
           );
         })}
         <View style={styles.flex1} />
@@ -276,9 +303,9 @@ export default function PlantsWebScreen() {
               <View style={styles.emptyBox}>
                 <Text style={styles.h2}>{t('plants.empty_title')}</Text>
                 <Text style={styles.muted}>{t('plants.empty_body')}</Text>
-                <Pressable style={styles.primaryBtn} onPress={openCapture}>
+                <InteractivePressable style={styles.primaryBtn} onPress={openCapture}>
                   <Text style={styles.primaryTxt}>{t('plants.empty_cta')}</Text>
-                </Pressable>
+                </InteractivePressable>
               </View>
             ) : rankingQ.isLoading ? (
               <ActivityIndicator color={colors.primary} style={styles.pad} />
@@ -289,9 +316,10 @@ export default function PlantsWebScreen() {
                 {weakest.map((r) => {
                   const vs = formatVsBlock(r.vs_block_pct);
                   return (
-                    <Pressable
+                    <InteractivePressable
                       key={r.plant_id}
-                      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+                      style={styles.row}
+                      hoverStyle={styles.rowHover}
                       onPress={() => openPlant(r.plant_id)}
                     >
                       <View
@@ -313,7 +341,7 @@ export default function PlantsWebScreen() {
                         </MonoLabel>
                       </View>
                       <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-                    </Pressable>
+                    </InteractivePressable>
                   );
                 })}
               </View>
@@ -337,9 +365,10 @@ export default function PlantsWebScreen() {
                 {replant.map((e) => {
                   const tint = REASON_TINT[e.reason];
                   return (
-                    <Pressable
+                    <InteractivePressable
                       key={e.plant_id}
-                      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+                      style={styles.row}
+                      hoverStyle={styles.rowHover}
                       onPress={() => openPlant(e.plant_id)}
                     >
                       <View style={styles.flex1}>
@@ -356,7 +385,7 @@ export default function PlantsWebScreen() {
                       </View>
                       <Pill label={t(`replant.reason.${e.reason}`)} fg={tint.fg} bg={tint.bg} />
                       <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-                    </Pressable>
+                    </InteractivePressable>
                   );
                 })}
               </View>
@@ -381,8 +410,13 @@ const styles = StyleSheet.create({
   },
 
   // header
+  crumbRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minWidth: 0 },
+  crumbLink: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: radius.sm },
+  crumbLinkTxt: { fontSize: 13, fontFamily: fonts.bodyMedium, color: colors.textMuted },
+  crumbSep: { fontSize: 13, fontFamily: fonts.body, color: colors.textFaint },
+  crumbCurrent: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text, flexShrink: 1 },
   header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, zIndex: 20 },
-  h1: { fontFamily: fonts.displayBold, fontSize: 22, color: colors.text, letterSpacing: -0.3 },
+  h1: { fontFamily: fonts.displayBold, fontSize: 28, color: colors.text, letterSpacing: -0.5 },
   h2: { fontFamily: fonts.display, fontSize: 17, color: colors.text },
   subtitle: { fontFamily: fonts.body, fontSize: 12.5, color: colors.textFaint, marginTop: 2 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
@@ -400,7 +434,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   menuTriggerTxt: { flexShrink: 1, fontFamily: fonts.bodySemiBold, fontSize: 12.5, color: colors.text },
-  caret: { fontFamily: fonts.body, fontSize: 12, color: colors.textFaint },
   menu: {
     position: 'absolute',
     top: 40,
@@ -420,6 +453,7 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   menuItem: { paddingHorizontal: spacing.sm + 4, paddingVertical: 7, borderRadius: radius.sm },
+  menuItemHover: { backgroundColor: colors.cardAlt },
   menuItemActive: { backgroundColor: colors.primarySoft },
   menuItemTxt: { fontFamily: fonts.body, fontSize: 12.5, color: colors.text },
   menuItemTxtActive: { fontFamily: fonts.bodySemiBold, color: colors.primary },
@@ -502,12 +536,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     borderRadius: radius.md,
     backgroundColor: colors.cardAlt,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
+  rowHover: { backgroundColor: colors.card, borderColor: colors.border },
   swatch: { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   swatchTxt: { fontFamily: fonts.monoSemiBold, fontSize: 12, color: '#FFFFFF' },
   rowName: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.text },
   emptyBox: { alignItems: 'flex-start', gap: spacing.sm, paddingVertical: spacing.sm },
-  pressed: { opacity: 0.7 },
+  controlHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
+  linkHover: { backgroundColor: colors.cardAlt },
 
   // shared
   muted: { color: colors.textMuted, fontFamily: fonts.body, fontSize: 14 },

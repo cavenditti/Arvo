@@ -2,12 +2,65 @@
 // screens. Theme tokens only; no fontWeight next to Terra families — weights are families.
 import { LinearGradient } from 'expo-linear-gradient';
 import type { ReactNode } from 'react';
-import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import {
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type PressableProps,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
+} from 'react-native';
 
 import type { IndexName } from '@/api/types';
 import Glyph, { type GlyphName } from '@/components/glyphs';
 import { indexColor } from '@/features/insights/format';
-import { colors, fonts, radius, spacing, statusColors, type Status } from '@/theme';
+import { colors, fonts, motion, radius, spacing, statusColors, type Status } from '@/theme';
+
+type InteractiveState = { hovered?: boolean; focused?: boolean; pressed: boolean };
+
+type InteractivePressableProps = Omit<PressableProps, 'style'> & {
+  style?: StyleProp<ViewStyle> | ((state: InteractiveState) => StyleProp<ViewStyle>);
+  hoverStyle?: StyleProp<ViewStyle>;
+  focusStyle?: StyleProp<ViewStyle>;
+  pressedStyle?: StyleProp<ViewStyle>;
+};
+
+/**
+ * One interaction contract for every button, row and text link. Web gets a pointer cursor,
+ * a short transition and keyboard focus ring; touch targets get the same pressed feedback.
+ */
+export function InteractivePressable({
+  style,
+  hoverStyle,
+  focusStyle,
+  pressedStyle,
+  disabled,
+  accessibilityRole = 'button',
+  ...props
+}: InteractivePressableProps) {
+  return (
+    <Pressable
+      {...props}
+      disabled={disabled}
+      accessibilityRole={accessibilityRole}
+      style={(rawState) => {
+        const state = rawState as InteractiveState;
+        const base = typeof style === 'function' ? style(state) : style;
+        return [
+          base,
+          Platform.OS === 'web' && styles.interactiveWeb,
+          state.hovered && !disabled && (hoverStyle ?? styles.interactiveHover),
+          state.focused && !disabled && (focusStyle ?? styles.interactiveFocus),
+          state.pressed && !disabled && (pressedStyle ?? styles.interactivePressed),
+          disabled && styles.interactiveDisabled,
+        ];
+      }}
+    />
+  );
+}
 
 /** Avatar initials: first + last word ("Maria Rossi Bianchi" → "MB"). One implementation so
  * the same person never renders different letters on different screens. */
@@ -236,6 +289,21 @@ export function GlyphBadge({
 // Use StatusChip, Pill, or GlyphBadge instead.
 
 const styles = StyleSheet.create({
+  interactiveWeb: {
+    cursor: 'pointer',
+    transitionProperty: 'background-color, border-color, color, opacity, transform, box-shadow',
+    transitionDuration: motion.fast,
+    transitionTimingFunction: 'ease-out',
+  } as ViewStyle,
+  interactiveHover: { opacity: 0.86, transform: [{ translateY: -1 }] },
+  interactiveFocus: {
+    outlineColor: colors.focus,
+    outlineOffset: 2,
+    outlineStyle: 'solid',
+    outlineWidth: 2,
+  } as ViewStyle,
+  interactivePressed: { opacity: 0.76, transform: [{ scale: 0.985 }] },
+  interactiveDisabled: { opacity: 0.48, cursor: 'not-allowed' } as unknown as ViewStyle,
   mono: {
     fontFamily: fonts.monoSemiBold,
     textTransform: 'uppercase',

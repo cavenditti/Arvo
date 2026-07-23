@@ -19,10 +19,15 @@ export const colors = {
   info: '#5B8F8A', // eucalyptus
   success: '#3F7D45', // leaf
   onPrimary: '#F6F5F2',
+  focus: '#6D8F78', // keyboard focus ring — visible without introducing a new accent hue
 };
 
 export const spacing = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32 };
 export const radius = { sm: 8, md: 12, lg: 16, xl: 20, pill: 999 };
+
+// Interaction timing shared by web controls. React Native ignores these web-only declarations;
+// the actual states are applied by InteractivePressable in components/ui.tsx.
+export const motion = { fast: '120ms', normal: '180ms' } as const;
 
 // Terra type voices (loaded in app/_layout): Fraunces = display, Manrope = body,
 // IBM Plex Mono = data. NEVER pair these with fontWeight — pick the weight via token.
