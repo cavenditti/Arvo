@@ -150,7 +150,10 @@ export default function AlertsScreen() {
           </Text>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerStyle={styles.content}
+        >
           <AlertList
             alerts={list}
             parcelName={parcelName}

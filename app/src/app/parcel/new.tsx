@@ -648,6 +648,7 @@ export default function NewParcelScreen() {
   const boundaryStep = (
     <ScrollView
       style={styles.root}
+      contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
       scrollEnabled={!mapBusy}
@@ -907,6 +908,7 @@ export default function NewParcelScreen() {
   const bulkPanel = (
     <ScrollView
       style={styles.root}
+      contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
@@ -989,6 +991,7 @@ export default function NewParcelScreen() {
       <ScrollView
         ref={scrollRef}
         style={styles.root}
+        contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >

@@ -223,7 +223,11 @@ export default function PlantDetailScreen() {
   return (
     <>
       <Stack.Screen options={{ title: name }} />
-      <ScrollView style={styles.root} contentContainerStyle={styles.content}>
+      <ScrollView
+        style={styles.root}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.content}
+      >
         {/* hero — the card IS the plant's condition (docs/DESIGN.md §5) */}
         <GlyphCard
           gradient={tone.grad}

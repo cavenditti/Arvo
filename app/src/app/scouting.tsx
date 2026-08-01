@@ -46,6 +46,7 @@ export default function Screen() {
     <View style={styles.container}>
       <Stack.Screen options={{ title: t('scouting.open_list') }} />
       <FlatList
+        contentInsetAdjustmentBehavior="automatic"
         data={snap.observations}
         keyExtractor={(o) => o.id}
         contentContainerStyle={styles.list}

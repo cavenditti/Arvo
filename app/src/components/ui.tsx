@@ -308,13 +308,9 @@ export function NdviSwatch({
   );
 }
 
-/** Paper card on older platforms, real native material on Liquid-Glass-capable iOS. */
+/** Content-layer paper card. Liquid Glass is reserved for floating navigation and controls. */
 export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  return (
-    <GlassSurface style={[styles.card, style]} fallbackStyle={styles.card}>
-      {children}
-    </GlassSurface>
-  );
+  return <View style={[styles.card, style]}>{children}</View>;
 }
 
 /**

@@ -82,8 +82,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(newToken);
     setSession(newSession);
     setStatus('authenticated');
-    await storage.setToken(newToken);
-    await storage.setSession(newSession);
+    try {
+      await storage.setToken(newToken);
+      await storage.setSession(newSession);
+    } catch (error) {
+      // A locally signed iOS preview can lack keychain capabilities even though the
+      // authenticated session is otherwise valid. Keep that session in memory rather
+      // than turning a persistence failure into a misleading network/login failure.
+      // We deliberately do not fall back to AsyncStorage for the token.
+      console.warn('Session persistence failed; continuing with an in-memory session.', error);
+    }
   }
 
   async function clearSession() {

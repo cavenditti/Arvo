@@ -366,6 +366,7 @@ export default function ParcelDetailScreen() {
       >
         <ScrollView
           style={styles.root}
+          contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={[styles.content, { paddingBottom: spacing.xl + insets.bottom }]}
         >
           {/* header */}
@@ -699,7 +700,7 @@ export default function ParcelDetailScreen() {
             )}
             <Pressable
               style={styles.fullWeatherBtn}
-              onPress={() => router.push('/weather')}
+              onPress={() => router.push('/weather-details')}
               accessibilityRole="button"
               accessibilityLabel={t('parcel.weather_full', { defaultValue: 'Meteo completo' })}
             >
@@ -801,7 +802,7 @@ export default function ParcelDetailScreen() {
           <View style={styles.plantRow}>
             <Pressable
               style={styles.plantBtn}
-              onPress={() => router.push({ pathname: '/plants', params: { parcelId: p.id } })}
+              onPress={() => router.push({ pathname: '/plant-map', params: { parcelId: p.id } })}
               accessibilityRole="button"
             >
               <Ionicons name="leaf-outline" size={18} color={colors.primary} />

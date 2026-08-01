@@ -6,9 +6,9 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { format } from 'date-fns';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StyleSheet, Text, View } from 'react-native';
 
+import NativeSheet from '@/components/NativeSheet';
 import { InteractivePressable } from '@/components/ui';
 import i18n from '@/i18n';
 import { formatDay } from '@/lib/format';
@@ -37,7 +37,6 @@ export default function DateField({
   maximumDate,
 }: DateFieldProps) {
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
 
   const selected = value ? new Date(`${value}T00:00:00`) : null;
@@ -79,43 +78,39 @@ export default function DateField({
         )}
       </View>
 
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        <View style={styles.backdropWrap}>
-          <Pressable
-            style={styles.backdrop}
-            accessibilityLabel={t('common.close', { defaultValue: 'Chiudi' })}
-            onPress={() => setOpen(false)}
-          />
-          <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-                {label}
-              </Text>
-              <InteractivePressable style={styles.done} onPress={() => setOpen(false)}>
-                <Text style={styles.doneText} maxFontSizeMultiplier={typeScale.maxMult}>
-                  {t('common.done', { defaultValue: 'Fine' })}
-                </Text>
-              </InteractivePressable>
-            </View>
-            <DateTimePicker
-              value={pickerValue}
-              mode="date"
-              display="inline"
-              locale={i18n.language?.startsWith('it') ? 'it-IT' : 'en-US'}
-              minimumDate={minimumDate}
-              maximumDate={maximumDate}
-              accentColor={colors.primary}
-              themeVariant="light"
-              onValueChange={(_event, date) => {
-                haptics.selection();
-                onChange(format(date, 'yyyy-MM-dd'));
-                setOpen(false);
-              }}
-              onDismiss={() => setOpen(false)}
-            />
-          </View>
+      <NativeSheet
+        visible={open}
+        onClose={() => setOpen(false)}
+        closeAccessibilityLabel={t('common.close', { defaultValue: 'Chiudi' })}
+        contentStyle={styles.sheet}
+      >
+        <View style={styles.sheetHeader}>
+          <Text style={styles.sheetTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+            {label}
+          </Text>
+          <InteractivePressable style={styles.done} onPress={() => setOpen(false)}>
+            <Text style={styles.doneText} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('common.done', { defaultValue: 'Fine' })}
+            </Text>
+          </InteractivePressable>
         </View>
-      </Modal>
+        <DateTimePicker
+          value={pickerValue}
+          mode="date"
+          display="inline"
+          locale={i18n.language?.startsWith('it') ? 'it-IT' : 'en-US'}
+          minimumDate={minimumDate}
+          maximumDate={maximumDate}
+          accentColor={colors.primary}
+          themeVariant="light"
+          onValueChange={(_event, date) => {
+            haptics.selection();
+            onChange(format(date, 'yyyy-MM-dd'));
+            setOpen(false);
+          }}
+          onDismiss={() => setOpen(false)}
+        />
+      </NativeSheet>
     </View>
   );
 }
@@ -149,20 +144,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  backdropWrap: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(27, 30, 26, 0.35)',
-  },
   sheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
   },
   sheetHeader: {

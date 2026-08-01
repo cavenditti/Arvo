@@ -132,7 +132,7 @@ export default function Dashboard() {
           </Text>
         </View>
         <GlassIconButton
-          onPress={() => router.push('/weather')}
+          onPress={() => router.push('/weather-details')}
           haptic
           accessibilityRole="button"
           accessibilityLabel={t('dashboard.weather_link', { defaultValue: 'Meteo' })}
@@ -212,8 +212,9 @@ export default function Dashboard() {
   }
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
+    <View style={styles.root}>
       <FlatList
+        contentInsetAdjustmentBehavior="automatic"
         data={list}
         keyExtractor={(p) => p.id}
         contentContainerStyle={styles.content}

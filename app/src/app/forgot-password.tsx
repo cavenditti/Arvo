@@ -107,8 +107,12 @@ export default function ForgotPasswordScreen() {
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <Stack.Screen options={{ headerShown: false, title: t('auth.reset_title') }} />
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <Stack.Screen options={{ title: t('auth.reset_title') }} />
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.brandRow}>
           <Logo variant="plain" size={64} />
           <Text style={styles.brand} maxFontSizeMultiplier={typeScale.maxMult}>

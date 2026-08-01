@@ -67,7 +67,11 @@ export default function SecurityScreen() {
   return (
     <>
       <Stack.Screen options={{ title: t('settings.security') }} />
-      <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
+      <ScrollView
+        style={styles.flex}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.content}
+      >
         <Card style={styles.card}>
           <Text
             style={styles.heading}

@@ -40,7 +40,11 @@ export default function PrivacyScreen() {
       <Stack.Screen
         options={{ title: t('legal.privacy_title', { defaultValue: 'Informativa sulla privacy' }) }}
       />
-      <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
+      <ScrollView
+        style={styles.flex}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.content}
+      >
         <View style={styles.draft}>
           <Text style={styles.draftText} maxFontSizeMultiplier={typeScale.maxMult}>
             {t('legal.draft_notice', { defaultValue: 'BOZZA — da far revisionare legalmente' })}

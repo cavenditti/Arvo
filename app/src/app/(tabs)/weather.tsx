@@ -6,10 +6,10 @@
 // bleed glyphs — never bare dots (docs/DESIGN.md §5).
 import { format, parseISO } from 'date-fns';
 import type { Locale } from 'date-fns';
+import { Stack } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { G, Line, Rect, Text as SvgText } from 'react-native-svg';
 
 import type { AdvisoryKind, AgroSummary, Parcel, WeatherDaily } from '@/api/types';
@@ -78,7 +78,6 @@ function advisoryPill(kind: string, severity: string): { key: string; def: strin
 
 export default function WeatherScreen() {
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const locale = dfLocale();
 
   const parcelsQ = useParcels();
@@ -131,25 +130,18 @@ export default function WeatherScreen() {
 
   return (
     <View style={styles.root}>
-      {/* fixed header bar (matches the mock's 70px bar) */}
-      <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
+      <Stack.Screen options={{ title: t('weather.title', { defaultValue: 'Weather' }) }} />
+      <ScrollView
+        style={styles.body}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.content}
+      >
         <View style={styles.headerRow}>
-          <View style={styles.flex1}>
-            <Text style={styles.h1} maxFontSizeMultiplier={typeScale.maxMult}>
-              {t('weather.title', { defaultValue: 'Weather' })}
-            </Text>
-            {selected ? (
-              // field name only — raw coordinates are jargon, not a header
-              <Text style={styles.subtitle} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
-                {selected.name}
-              </Text>
-            ) : null}
-          </View>
+          <Text style={styles.subtitle} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
+            {selected?.name ?? '—'}
+          </Text>
           <ParcelSelector parcels={parcelList} selectedId={selectedId} onSelect={setPickedId} />
         </View>
-      </View>
-
-      <ScrollView style={styles.body} contentContainerStyle={styles.content}>
         {/* illustrated 7-day forecast strip */}
         {strip.length > 0 ? (
           <View style={styles.stripRow}>
@@ -626,20 +618,15 @@ const styles = StyleSheet.create({
   },
   ctaText: { color: colors.onPrimary, fontSize: 15, fontFamily: fonts.bodyBold },
 
-  // header
-  header: {
-    backgroundColor: colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.md,
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
     zIndex: 20,
-    position: 'relative',
   },
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   flex1: { flex: 1, minWidth: 0 },
-  h1: { fontSize: 28, fontFamily: fonts.displayBold, color: colors.text },
-  subtitle: { fontSize: 13, color: colors.textMuted, marginTop: 3, fontFamily: fonts.body },
+  subtitle: { flex: 1, fontSize: 13, color: colors.textMuted, fontFamily: fonts.body },
 
   // parcel selector
   selectorWrap: { position: 'relative', zIndex: 30 },

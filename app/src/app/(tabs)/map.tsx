@@ -4,8 +4,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -22,6 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@/api/client';
 import { INDEX_NAMES, type Alert, type IndexName } from '@/api/types';
 import MapView from '@/components/MapView';
+import NativeSheet from '@/components/NativeSheet';
 import { StaleBanner, useOnlineStatus } from '@/components/StaleBanner';
 import type { ParcelFeature } from '@/components/types';
 import { GlassSurface, InteractivePressable, MonoLabel, MonoValue, StatusChip, TintCard } from '@/components/ui';
@@ -56,6 +55,9 @@ const LEGEND: { color: string; label: string | null }[] = [
   { color: ndviColor(0.8), label: '≥ 0.65' },
   { color: NEUTRAL_FILL, label: null },
 ];
+
+// Absolute map controls do not receive NativeTabs' automatic scroll insets.
+const TAB_BAR_CLEARANCE = 72;
 
 // What paints the fields: the Arvo score (default), nothing (boundaries only — the natural
 // companion of the satellite basemap), or one of the five indices.
@@ -255,8 +257,12 @@ export default function MapScreen() {
         </View>
       ) : null}
 
-      {parcels.length > 0 && choropleth !== 'none' ? (
-        <GlassSurface style={styles.legend} fallbackStyle={styles.legend} pointerEvents="none">
+      {parcels.length > 0 && choropleth !== 'none' && !selected ? (
+        <GlassSurface
+          style={[styles.legend, { bottom: insets.bottom + TAB_BAR_CLEARANCE }]}
+          fallbackStyle={[styles.legend, { bottom: insets.bottom + TAB_BAR_CLEARANCE }]}
+          pointerEvents="none"
+        >
           <Text style={styles.legendTitle} maxFontSizeMultiplier={typeScale.maxMult}>
             {!legendIndex
               ? t('map.score_legend')
@@ -318,8 +324,8 @@ export default function MapScreen() {
 
       {selected ? (
         <GlassSurface
-          style={styles.selCard}
-          fallbackStyle={styles.selCard}
+          style={[styles.selCard, { bottom: insets.bottom + TAB_BAR_CLEARANCE }]}
+          fallbackStyle={[styles.selCard, { bottom: insets.bottom + TAB_BAR_CLEARANCE }]}
         >
           <View style={styles.selRow}>
             <View
@@ -469,20 +475,13 @@ export default function MapScreen() {
         </View>
       ) : null}
 
-      <Modal
+      <NativeSheet
         visible={pickerOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setPickerOpen(false)}
+        onClose={() => setPickerOpen(false)}
+        closeAccessibilityLabel={t('common.close')}
+        contentStyle={styles.sheet}
       >
-        <View style={styles.sheetRoot}>
-          <Pressable
-            style={styles.sheetBackdrop}
-            onPress={() => setPickerOpen(false)}
-            accessibilityRole="button"
-            accessibilityLabel={t('common.close')}
-          />
-          <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
+        <View>
             <Text style={styles.sheetTitle} maxFontSizeMultiplier={typeScale.maxMult}>
               {t('map.base_title')}
             </Text>
@@ -540,9 +539,8 @@ export default function MapScreen() {
                 </InteractivePressable>
               );
             })}
-          </View>
         </View>
-      </Modal>
+      </NativeSheet>
 
       {/* No on-map create button: the tab bar's "+" menu owns creation everywhere.
           The empty-state card above keeps its contextual CTA. */}
@@ -695,7 +693,6 @@ const styles = StyleSheet.create({
   legend: {
     position: 'absolute',
     left: spacing.md,
-    bottom: spacing.md,
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
@@ -720,7 +717,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: spacing.md,
     right: spacing.md,
-    bottom: spacing.md,
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     borderWidth: 1,
@@ -770,21 +766,8 @@ const styles = StyleSheet.create({
   scoutBtnTxt: { color: colors.text, fontSize: typeScale.body, fontFamily: fonts.bodySemiBold },
   iconButton: { padding: 6, borderRadius: radius.sm },
   iconButtonHover: { backgroundColor: colors.cardAlt },
-  sheetRoot: { flex: 1, justifyContent: 'flex-end' },
-  sheetBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(27,30,26,0.35)',
-  },
   sheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
     paddingTop: spacing.md,
-    paddingHorizontal: spacing.md,
     gap: 2,
   },
   baseRow: {

@@ -404,7 +404,11 @@ function RegisterForm({
 
   return (
     <>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.title}>{t('capture.new_title')}</Text>
         <Text style={styles.subtitle}>{t('capture.subtitle')}</Text>
 
@@ -799,7 +803,10 @@ function FlightPanel({
 
   return (
     <>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.content}
+      >
         {/* Hero — the pipeline condition, told in plain language */}
         <GlyphCard
           gradient={tone.gradient}

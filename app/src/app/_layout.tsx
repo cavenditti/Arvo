@@ -105,16 +105,32 @@ function RootNavigator() {
             }),
         headerShadowVisible: false,
         contentStyle: { backgroundColor: colors.bg },
+        gestureEnabled: true,
+        fullScreenGestureEnabled: Platform.OS === 'ios',
       }}
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="login" options={{ headerShown: false }} />
-      <Stack.Screen name="register" options={{ headerShown: false }} />
+      <Stack.Screen name="register" options={{ title: t('auth.register_title') }} />
       <Stack.Screen name="forgot-password" options={{ title: t('auth.reset_title') }} />
       <Stack.Screen name="legal/privacy" options={{ title: t('auth.legal_privacy') }} />
       <Stack.Screen name="legal/terms" options={{ title: t('auth.legal_terms') }} />
       <Stack.Screen name="security" options={{ title: t('settings.security') }} />
       <Stack.Screen name="scouting" options={{ title: t('scouting.open_list') }} />
+      <Stack.Screen name="weather-details" options={{ title: t('weather.title') }} />
+      <Stack.Screen
+        name="plant-map"
+        options={{ title: t('plantmap.title'), headerTransparent: Platform.OS === 'ios' }}
+      />
+      <Stack.Screen
+        name="add-actions"
+        options={{
+          title: t('menu.add'),
+          presentation: 'formSheet',
+          sheetAllowedDetents: [0.42],
+          sheetGrabberVisible: true,
+        }}
+      />
       {/* Detail screens set their real title from data; empty beats a route-name flash. */}
       <Stack.Screen name="parcel/[id]" options={{ title: '' }} />
       <Stack.Screen name="plant/[id]" options={{ title: '' }} />

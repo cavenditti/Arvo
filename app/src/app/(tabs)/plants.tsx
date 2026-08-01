@@ -5,7 +5,7 @@
 // Full-bleed like (tabs)/map.tsx: the map fills the screen and every control floats over it.
 // Terra: no state dots, no left-border stripes, fonts are family tokens (never fontWeight).
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { format, parseISO } from 'date-fns';
@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PLANT_METRICS, type PlantMetric, type ReplantReason } from '@/api/types';
+import NativeSheet from '@/components/NativeSheet';
 import PlantMap from '@/components/PlantMap';
 import { InteractivePressable, MonoLabel, MonoValue, Pill } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
@@ -156,7 +157,8 @@ export default function PlantsScreen() {
   // Only claim "no plants" once the summary actually came back — a failed request must not read
   // as an empty planting.
   const noPlants = summaryQ.isSuccess && summary?.total === 0;
-  const fabBottom = spacing.md + (panelHeight || PANEL_HEIGHT_ESTIMATE) + spacing.sm;
+  const panelBottom = insets.bottom + spacing.md;
+  const fabBottom = panelBottom + (panelHeight || PANEL_HEIGHT_ESTIMATE) + spacing.sm;
 
   if (parcelsQ.isLoading) {
     return (
@@ -218,7 +220,7 @@ export default function PlantsScreen() {
       )}
 
       {/* parcel + metric selectors */}
-      <View style={[styles.topRow, { top: insets.top + spacing.sm }]}>
+      <View style={[styles.topRow, { top: insets.top + 56 }]}>
         <InteractivePressable
           haptic
           style={styles.parcelChip}
@@ -245,7 +247,7 @@ export default function PlantsScreen() {
       </View>
 
       {pickerOpen ? (
-        <View style={[styles.picker, { top: insets.top + spacing.sm + 48 }]}>
+        <View style={[styles.picker, { top: insets.top + 104 }]}>
           <ScrollView style={styles.pickerScroll}>
             {parcels.map((p) => {
               const active = p.id === parcel.id;
@@ -276,19 +278,13 @@ export default function PlantsScreen() {
       ) : null}
 
       {/* metric picker — a real choice, not a blind cycle: plain names first, sigla in parens */}
-      <Modal
+      <NativeSheet
         visible={metricOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setMetricOpen(false)}
+        onClose={() => setMetricOpen(false)}
+        closeAccessibilityLabel={t('common.close', { defaultValue: 'Chiudi' })}
+        contentStyle={styles.sheet}
       >
-        <View style={styles.sheetWrap}>
-          <InteractivePressable
-            style={styles.sheetBackdrop}
-            accessibilityLabel={t('common.close', { defaultValue: 'Chiudi' })}
-            onPress={() => setMetricOpen(false)}
-          />
-          <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
+        <View>
             <Text style={styles.sheetTitle} maxFontSizeMultiplier={typeScale.maxMult}>
               {t('plant.select_metric')}
             </Text>
@@ -313,12 +309,14 @@ export default function PlantsScreen() {
                 </InteractivePressable>
               );
             })}
-          </View>
         </View>
-      </Modal>
+      </NativeSheet>
 
       {/* legend + weakest-N / replant panels */}
-      <View style={styles.panel} onLayout={(e) => setPanelHeight(e.nativeEvent.layout.height)}>
+      <View
+        style={[styles.panel, { bottom: panelBottom }]}
+        onLayout={(e) => setPanelHeight(e.nativeEvent.layout.height)}
+      >
         <View style={styles.legendRow}>
           <MonoLabel color={colors.textMuted}>
             {t('plantmap.legend', { metric: t(metricLabelKey(metric)), date: legendDate })}
@@ -597,21 +595,7 @@ const styles = StyleSheet.create({
   pickerTxt: { fontSize: typeScale.body, fontFamily: fonts.body, color: colors.text },
   pickerTxtActive: { fontFamily: fonts.bodySemiBold, color: colors.primary },
 
-  // metric bottom sheet (same scrim + sheet pattern as DateField)
-  sheetWrap: { flex: 1, justifyContent: 'flex-end' },
-  sheetBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(27, 30, 26, 0.35)',
-  },
   sheet: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    paddingHorizontal: spacing.md,
     paddingTop: spacing.md,
     gap: spacing.xs,
   },
@@ -638,7 +622,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: spacing.md,
     right: spacing.md,
-    bottom: spacing.md,
     maxHeight: 340,
     backgroundColor: colors.card,
     borderRadius: radius.lg,

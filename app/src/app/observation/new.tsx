@@ -340,7 +340,11 @@ export default function Screen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 44 : 0}
     >
       <Stack.Screen options={{ title: t('observation.new_title') }} />
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Photos — camera first: the thing the thumb reaches for in the field */}
         <View style={styles.section}>
           {showCameraPrime ? (
