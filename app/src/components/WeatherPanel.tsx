@@ -128,16 +128,10 @@ function AdvisoryCard({ run }: { run: AdvisoryRun }) {
 
 function AgroTiles({ agro }: { agro: AgroSummary }) {
   const { t } = useTranslation();
+  // TWO tiles on the field screen — the water story is what drives a decision today.
+  // GDD and the 30-day balance stay one tap away in "Meteo completo" (weather screen).
   return (
     <View style={styles.tiles}>
-      <StatTile
-        label={t('weather_human.et0')}
-        value={`${formatNumber(agro.et0_7d_mm, { maximumFractionDigits: 0 })} mm`}
-        info={t('weather_human.et0_info', {
-          defaultValue:
-            'Quanta acqua le piante e il terreno hanno perso con caldo, sole e vento negli ultimi 7 giorni: più è alta, più il campo ha sete.',
-        })}
-      />
       <StatTile
         label={t('weather_human.balance_7d', { defaultValue: 'Bilancio idrico 7 giorni' })}
         value={fmtBalance(agro.water_balance_7d_mm)}
@@ -148,20 +142,11 @@ function AgroTiles({ agro }: { agro: AgroSummary }) {
         })}
       />
       <StatTile
-        label={t('weather_human.gdd')}
-        value={formatNumber(agro.gdd.sum, { maximumFractionDigits: 0 })}
-        info={t('weather_human.gdd_info', {
+        label={t('weather_human.et0')}
+        value={`${formatNumber(agro.et0_7d_mm, { maximumFractionDigits: 0 })} mm`}
+        info={t('weather_human.et0_info', {
           defaultValue:
-            'La somma del caldo utile accumulato dalla coltura: aiuta a capire a che punto è la stagione.',
-        })}
-      />
-      <StatTile
-        label={t('weather_human.balance_30d', { defaultValue: 'Bilancio idrico 30 giorni' })}
-        value={fmtBalance(agro.water_balance_30d_mm)}
-        valueColor={agro.water_balance_30d_mm < 0 ? colors.danger : colors.info}
-        info={t('weather_human.balance_30d_info', {
-          defaultValue:
-            "Pioggia caduta meno acqua richiesta negli ultimi 30 giorni: l'andamento del mese in un numero.",
+            'Quanta acqua le piante e il terreno hanno perso con caldo, sole e vento negli ultimi 7 giorni: più è alta, più il campo ha sete.',
         })}
       />
     </View>

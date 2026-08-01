@@ -64,9 +64,10 @@ export default function Screen() {
   // "Scout here"/"Rileva qui" from a parcel or map context preselects that parcel — the strongest
   // signal, never overridden by GPS. `plantId` arrives from the plant detail screen and pins the
   // note to that plant (FR-P-060) — carried through, never edited here.
-  const { parcelId: initialParcelId, plantId } = useLocalSearchParams<{
+  const { parcelId: initialParcelId, plantId, mode } = useLocalSearchParams<{
     parcelId?: string;
     plantId?: string;
+    mode?: 'camera' | 'note';
   }>();
   const parcelsQ = useParcels();
   const parcels = parcelsQ.data ?? [];
@@ -83,6 +84,7 @@ export default function Screen() {
   const [showCameraPrime, setShowCameraPrime] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<View | null>(null);
+  const noteRef = useRef<TextInput | null>(null);
   const closePicker = useCallback(() => setPickerOpen(false), []);
   useOutsideDismiss(pickerRef, pickerOpen, closePicker);
 
@@ -234,6 +236,21 @@ export default function Screen() {
     }
     setShowCameraPrime(true);
   };
+
+  // Speed-dial intents ("Scatta una foto" / "Nuova nota" from the + menu): run once after
+  // the modal settles — camera goes through the normal priming path, note just gets focus.
+  const modeHandled = useRef(false);
+  useEffect(() => {
+    if (modeHandled.current || !mode) return;
+    modeHandled.current = true;
+    const timer = setTimeout(() => {
+      if (!mounted.current) return;
+      if (mode === 'camera') void pickFromCamera();
+      else if (mode === 'note') noteRef.current?.focus();
+    }, 450);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot launch intent
+  }, [mode]);
 
   const acceptCameraPrime = () => {
     setShowCameraPrime(false);
@@ -390,6 +407,7 @@ export default function Screen() {
             {t('observation.note')}
           </Text>
           <TextInput
+            ref={noteRef}
             style={styles.noteInput}
             value={note}
             onChangeText={setNote}

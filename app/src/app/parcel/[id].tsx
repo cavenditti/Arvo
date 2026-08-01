@@ -563,9 +563,8 @@ export default function ParcelDetailScreen() {
                   </View>
                 </View>
               </View>
-              <Text style={styles.scoreMethod} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('score.explanation')}
-              </Text>
+              {/* The full how-it-works paragraph lives behind "Come funziona il punteggio"
+                  in the advanced section — the hero keeps one line, not three. */}
               <MonoLabel>
                 {t('score.based_on', { count: score.signalCount })}
                 {score.observedAt
@@ -899,7 +898,6 @@ const styles = StyleSheet.create({
   conditionBody: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.textMuted, marginTop: 2 },
   trendSummary: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: spacing.xs },
   heroDeltaHint: { fontSize: typeScale.caption, fontFamily: fonts.bodyMedium, color: colors.textMuted },
-  scoreMethod: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: colors.textMuted },
   statRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
   statTile: {
     flex: 1,

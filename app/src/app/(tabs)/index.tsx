@@ -74,7 +74,6 @@ export default function Dashboard() {
     for (const [id, list] of Object.entries(byParcel)) counts[id] = countAlertEvents(list);
     return counts;
   }, [openAlerts.data]);
-  const eventCount = countAlertEvents(openAlerts.data ?? []);
   const bannerEvent = events[0];
 
   // Latest satellite acquisition across parcels (drone rollups don't count as a "pass").
@@ -152,22 +151,6 @@ export default function Dashboard() {
         >
           <Ionicons name="journal-outline" size={20} color={colors.text} />
         </Pressable>
-        <Pressable
-          onPress={() => router.push('/alerts')}
-          style={styles.headerButton}
-          hitSlop={HIT_SLOP}
-          accessibilityRole="button"
-          accessibilityLabel={t('tabs.alerts')}
-        >
-          <Ionicons name="notifications-outline" size={20} color={colors.text} />
-          {eventCount > 0 ? (
-            <View style={styles.bellBadge}>
-              <Text style={styles.bellBadgeText} maxFontSizeMultiplier={typeScale.maxMult}>
-                {eventCount > 99 ? '99+' : eventCount}
-              </Text>
-            </View>
-          ) : null}
-        </Pressable>
       </View>
 
       <StaleBanner updatedAt={parcels.dataUpdatedAt > 0 ? parcels.dataUpdatedAt : null} />
@@ -187,23 +170,12 @@ export default function Dashboard() {
         </TintCard>
       ) : null}
 
+      {/* The score explains itself on the parcel screen ("Come funziona il punteggio");
+          no permanent explainer strip here — the list is the screen. */}
       {list.length > 0 ? (
-        <>
-          <Text style={styles.listMeta} maxFontSizeMultiplier={typeScale.maxMult}>
-            {metaLine}
-          </Text>
-          <View style={styles.scoreExplainer}>
-            <Ionicons name="sparkles-outline" size={16} color={colors.primary} />
-            <View style={styles.flex1}>
-              <Text style={styles.scoreExplainerTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('score.name')}
-              </Text>
-              <Text style={styles.scoreExplainerBody} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('score.short_explanation')}
-              </Text>
-            </View>
-          </View>
-        </>
+        <Text style={styles.listMeta} maxFontSizeMultiplier={typeScale.maxMult}>
+          {metaLine}
+        </Text>
       ) : null}
     </View>
   );
@@ -343,6 +315,7 @@ function ParcelRow({
   const fs = deriveFieldStatus({ score, trend, openAlertEvents, coverage });
   const chipStatus: Status = fs.level === 'ok' ? 'healthy' : fs.level;
   const chipLabel = t(fs.chipKey);
+  const trendLabel = t(trend.labelKey);
 
   const trendIcon =
     trend.direction === 'up' ? 'trending-up' : trend.direction === 'down' ? 'trending-down' : 'remove';
@@ -359,12 +332,14 @@ function ParcelRow({
           name: parcel.name,
           score,
           status: chipLabel,
-          defaultValue: '{{name}}, punteggio {{score}}, {{status}}',
+          trend: trendLabel,
+          defaultValue: '{{name}}, punteggio {{score}}, {{status}}, {{trend}}',
         })
       : t('dashboard.row_a11y_pending', {
           name: parcel.name,
           status: chipLabel,
-          defaultValue: '{{name}}, in attesa dei primi dati, {{status}}',
+          trend: trendLabel,
+          defaultValue: '{{name}}, in attesa dei primi dati, {{status}}, {{trend}}',
         });
 
   return (
@@ -395,10 +370,7 @@ function ParcelRow({
       <View style={styles.rowRight}>
         <StatusChip status={chipStatus} label={chipLabel} />
         <View style={styles.trendRow}>
-          <Ionicons name={trendIcon} size={14} color={trendColor} />
-          <Text style={styles.trendText} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t(trend.labelKey)}
-          </Text>
+          <Ionicons name={trendIcon} size={16} color={trendColor} />
         </View>
       </View>
     </Pressable>
@@ -444,21 +416,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bellBadge: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    minWidth: 15,
-    height: 15,
-    borderRadius: 7.5,
-    paddingHorizontal: 3,
-    backgroundColor: colors.accent,
-    borderWidth: 1.5,
-    borderColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bellBadgeText: { fontFamily: fonts.bodyBold, fontSize: 9, color: '#FFFFFF' },
   banner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -481,16 +438,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: spacing.xs,
   },
-  scoreExplainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    padding: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.primarySoft,
-  },
-  scoreExplainerTitle: { fontFamily: fonts.bodyBold, fontSize: typeScale.caption, color: colors.primaryDark },
-  scoreExplainerBody: { fontFamily: fonts.body, fontSize: typeScale.caption, color: colors.textMuted, marginTop: 1 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -522,8 +469,7 @@ const styles = StyleSheet.create({
     borderColor: colors.card,
   },
   scoreValue: { fontFamily: fonts.monoSemiBold, fontSize: 14, color: '#FFFFFF' },
-  trendRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  trendText: { fontFamily: fonts.bodyMedium, fontSize: typeScale.caption, color: colors.textMuted },
+  trendRow: { alignItems: 'center' },
   skeletonGroup: { gap: spacing.sm },
   skeletonCircle: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.border },
   skeletonBar: { height: 12, borderRadius: radius.sm, backgroundColor: colors.border },

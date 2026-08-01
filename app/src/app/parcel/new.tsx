@@ -652,14 +652,14 @@ export default function NewParcelScreen() {
       keyboardShouldPersistTaps="handled"
       scrollEnabled={!mapBusy}
     >
-      {/* boundary source: cadastre detection / hand drawing / file import (momentary) */}
+      {/* boundary source: two everyday choices. File import is real but rare —
+          it lives as a quiet link under the map, not a third segment. */}
       {!geometry ? (
         <View style={styles.segmentRow}>
           {(
             [
               { key: 'cadastre', icon: 'scan', label: t('parcel.source_cadastre', { defaultValue: 'Catasto' }) },
               { key: 'draw', icon: 'pencil', label: t('parcel.source_draw', { defaultValue: 'Disegna' }) },
-              { key: 'import', icon: 'document-text', label: t('parcel.source_import', { defaultValue: 'Importa file' }) },
             ] as const
           ).map((s) => {
             const active = s.key === source;
@@ -670,10 +670,7 @@ export default function NewParcelScreen() {
                 style={[styles.segment, active && styles.segmentActive]}
                 accessibilityLabel={s.label}
                 accessibilityState={{ selected: active }}
-                onPress={() => {
-                  if (s.key === 'import') void onImport();
-                  else setSource(s.key);
-                }}
+                onPress={() => setSource(s.key)}
               >
                 <Ionicons name={s.icon} size={15} color={active ? colors.onPrimary : colors.textMuted} />
                 <Text
@@ -851,6 +848,21 @@ export default function NewParcelScreen() {
         <Text style={styles.hint} maxFontSizeMultiplier={typeScale.maxMult}>
           {t('parcel.draw_hint')}
         </Text>
+      ) : null}
+
+      {/* rare path, quiet affordance — a link, not a segment */}
+      {!geometry && !pendingFc ? (
+        <InteractivePressable
+          onPress={() => void onImport()}
+          style={styles.importLink}
+          accessibilityRole="link"
+          accessibilityLabel={t('parcel.import_link')}
+        >
+          <Ionicons name="document-text-outline" size={14} color={colors.textMuted} />
+          <Text style={styles.importLinkTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('parcel.import_link')}
+          </Text>
+        </InteractivePressable>
       ) : null}
 
       {errors.geometry ? (
@@ -1383,6 +1395,19 @@ const styles = StyleSheet.create({
   },
   resultTxt: { flex: 1, fontSize: typeScale.body, fontFamily: fonts.body, color: colors.text },
   mapBox: { borderRadius: radius.md, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
+  importLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: touch.min,
+  },
+  importLinkTxt: {
+    fontFamily: fonts.body,
+    fontSize: typeScale.caption,
+    color: colors.textMuted,
+    textDecorationLine: 'underline',
+  },
   cadPanel: { gap: spacing.sm },
   cadStatusRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   cadCount: { fontSize: typeScale.body, fontFamily: fonts.bodySemiBold, color: colors.text },

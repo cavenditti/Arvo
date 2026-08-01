@@ -169,6 +169,8 @@ function EventCard({
       {actionableIds.length > 0 ? (
         <View style={styles.actions}>
           {snoozing ? (
+            // "Altro" expanded: postpone choices + dismiss + back. Two taps for the
+            // destructive-ish paths keeps the collapsed row down to TWO buttons.
             <>
               {SNOOZE_CHOICES.map((d) => (
                 <ActionButton
@@ -180,6 +182,13 @@ function EventCard({
                   }}
                 />
               ))}
+              <ActionButton
+                label={many ? t('alerts_group.dismiss_all') : t('alerts.dismiss')}
+                onPress={() => {
+                  setSnoozing(false);
+                  onDismiss(actionableIds);
+                }}
+              />
               <ActionButton label={t('common.cancel')} onPress={() => setSnoozing(false)} />
             </>
           ) : (
@@ -192,14 +201,7 @@ function EventCard({
                   onConfirm(actionableIds);
                 }}
               />
-              <ActionButton
-                label={many ? t('alerts_group.snooze_all') : t('alerts.snooze')}
-                onPress={() => setSnoozing(true)}
-              />
-              <ActionButton
-                label={many ? t('alerts_group.dismiss_all') : t('alerts.dismiss')}
-                onPress={() => onDismiss(actionableIds)}
-              />
+              <ActionButton label={t('alerts_group.more')} onPress={() => setSnoozing(true)} />
             </>
           )}
         </View>

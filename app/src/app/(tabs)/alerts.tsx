@@ -55,7 +55,6 @@ export default function AlertsScreen() {
       (a) => openQ.dataUpdatedAt - new Date(a.created_at).getTime() < DAY_MS,
     ),
   );
-  const listEvents = countAlertEvents(list);
 
   const parcelNames: Record<string, string> = {};
   for (const p of parcels.data ?? []) parcelNames[p.id] = p.name;
@@ -98,18 +97,11 @@ export default function AlertsScreen() {
         <Text style={styles.title} maxFontSizeMultiplier={typeScale.maxMult}>
           {t('alerts.title')}
         </Text>
+        {/* One meta line; the signals-vs-events accounting lives inside each card's
+            "Dettagli tecnici" — the header stays quiet. */}
         <Text style={styles.subtitle} maxFontSizeMultiplier={typeScale.maxMult}>
           {t('alerts.header_meta', { open: openEvents, fresh: freshEvents })}
         </Text>
-        {list.length > listEvents ? (
-          <Text style={styles.grouped} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('alerts_group.grouped_meta', {
-              signals: list.length,
-              events: listEvents,
-              defaultValue: '{{signals}} segnali raggruppati in {{events}} eventi',
-            })}
-          </Text>
-        ) : null}
       </View>
 
       <View style={styles.segment}>
@@ -159,12 +151,6 @@ export default function AlertsScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.note}>
-            <Ionicons name="information-circle-outline" size={16} color={colors.primary} />
-            <Text style={styles.noteText} maxFontSizeMultiplier={typeScale.maxMult}>
-              {t('alerts.note')}
-            </Text>
-          </View>
           <AlertList
             alerts={list}
             parcelName={parcelName}
@@ -172,6 +158,11 @@ export default function AlertsScreen() {
             onSnooze={(ids, days) => mutation.mutate({ ids, action: 'snooze', days })}
             onDismiss={(ids) => mutation.mutate({ ids, action: 'dismiss' })}
           />
+          {/* Decision-support disclaimer: still present, but as a quiet footer instead of
+              a banner standing between the farmer and the first card. */}
+          <Text style={styles.footerNote} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('alerts.note')}
+          </Text>
         </ScrollView>
       )}
     </View>
@@ -211,12 +202,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
   },
-  grouped: {
-    fontFamily: fonts.body,
-    fontSize: typeScale.caption,
-    color: colors.textFaint,
-    marginTop: 2,
-  },
   segment: {
     flexDirection: 'row',
     margin: spacing.md,
@@ -240,22 +225,13 @@ const styles = StyleSheet.create({
   segText: { fontFamily: fonts.bodySemiBold, fontSize: typeScale.body, color: colors.textMuted },
   segTextActive: { color: colors.text },
   content: { padding: spacing.md, paddingTop: 0, gap: spacing.sm },
-  note: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.primarySoft,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: '#D3E0D5',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  noteText: {
-    flex: 1,
+  footerNote: {
     fontFamily: fonts.body,
     fontSize: typeScale.caption,
-    color: colors.primaryDark,
+    color: colors.textFaint,
+    textAlign: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
   center: {
     flex: 1,

@@ -57,9 +57,6 @@ const LEGEND: { color: string; label: string | null }[] = [
   { color: NEUTRAL_FILL, label: null },
 ];
 
-// Selection-card height guess used for the FAB offset until onLayout reports the real value.
-const CARD_HEIGHT_ESTIMATE = 148;
-
 // What paints the fields: the Arvo score (default), nothing (boundaries only — the natural
 // companion of the satellite basemap), or one of the five indices.
 type MapChoropleth = 'score' | 'none' | IndexName;
@@ -80,7 +77,6 @@ export default function MapScreen() {
   const [basemap, setBasemap] = useState<'map' | 'sat'>('map');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focus, setFocus] = useState<[number, number, number?] | undefined>(undefined);
-  const [cardHeight, setCardHeight] = useState(0);
   // Quiet "map unavailable offline" pill: set on the doc's debounced tileerror while offline,
   // hidden by the render condition (`&& !online`) as soon as the connection returns.
   const [tilesOffline, setTilesOffline] = useState(false);
@@ -191,8 +187,6 @@ export default function MapScreen() {
     ],
     [t],
   );
-  const currentViewLabel =
-    viewOptions.find((v) => v.key === choropleth)?.label ?? t('map.score_view');
 
   const legendIndex: IndexName | null = selectedIsIndex ? (choropleth as IndexName) : null;
   const [domainMin, domainMax] = legendIndex ? INDEX_DOMAIN[legendIndex] : [0, 100];
@@ -325,7 +319,6 @@ export default function MapScreen() {
       {selected ? (
         <View
           style={styles.selCard}
-          onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
         >
           <View style={styles.selRow}>
             <View
@@ -415,25 +408,16 @@ export default function MapScreen() {
                 maxFontSizeMultiplier={typeScale.maxMult}
               />
             </View>
+            {/* ONE control for everything visual: base map + overlay live in the same sheet. */}
             <InteractivePressable
               style={styles.topChip}
               hoverStyle={styles.topChipHover}
-              onPress={toggleBasemap}
-              accessibilityLabel={t(basemap === 'map' ? 'map.basemap_sat' : 'map.basemap_map')}
+              onPress={() => setPickerOpen(true)}
+              accessibilityLabel={t('map.layers')}
             >
               <Ionicons name="layers-outline" size={14} color={colors.text} />
-              <MonoLabel color={colors.text} size={11}>
-                {t(basemap === 'map' ? 'map.basemap_sat' : 'map.basemap_map')}
-              </MonoLabel>
-            </InteractivePressable>
-            <InteractivePressable
-              style={[styles.topChip, styles.viewChip]}
-              hoverStyle={styles.topChipHover}
-              onPress={() => setPickerOpen(true)}
-              accessibilityLabel={t('map.change_index')}
-            >
-              <MonoLabel color={colors.text} size={11}>
-                {`${currentViewLabel} ▾`}
+              <MonoLabel color={colors.text}>
+                {t('map.layers')}
               </MonoLabel>
             </InteractivePressable>
           </View>
@@ -499,7 +483,38 @@ export default function MapScreen() {
           />
           <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
             <Text style={styles.sheetTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-              {t('map.change_index')}
+              {t('map.base_title')}
+            </Text>
+            <View style={styles.baseRow}>
+              {(['map', 'sat'] as const).map((b) => {
+                const active = basemap === b;
+                return (
+                  <InteractivePressable
+                    key={b}
+                    style={[styles.baseBtn, active && styles.baseBtnActive]}
+                    onPress={() => {
+                      if (!active) toggleBasemap();
+                    }}
+                    accessibilityLabel={t(b === 'map' ? 'map.basemap_map' : 'map.basemap_sat')}
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Ionicons
+                      name={b === 'map' ? 'map-outline' : 'earth-outline'}
+                      size={16}
+                      color={active ? colors.onPrimary : colors.text}
+                    />
+                    <Text
+                      style={[styles.baseBtnTxt, active && styles.baseBtnTxtActive]}
+                      maxFontSizeMultiplier={typeScale.maxMult}
+                    >
+                      {t(b === 'map' ? 'map.basemap_map' : 'map.basemap_sat')}
+                    </Text>
+                  </InteractivePressable>
+                );
+              })}
+            </View>
+            <Text style={styles.sheetTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('map.overlay_title')}
             </Text>
             {viewOptions.map((v) => {
               const active = v.key === choropleth;
@@ -528,25 +543,8 @@ export default function MapScreen() {
         </View>
       </Modal>
 
-      <InteractivePressable
-        style={[
-          styles.fab,
-          selected
-            ? { bottom: spacing.md + (cardHeight || CARD_HEIGHT_ESTIMATE) + spacing.sm }
-            : null,
-        ]}
-        hoverStyle={styles.fabHover}
-        onPress={() => router.push('/parcel/new')}
-        accessibilityLabel={newFieldLabel}
-        haptic
-      >
-        <TintCard gradient={gradients.forest} style={styles.fabInner}>
-          <Ionicons name="add" size={20} color={colors.onPrimary} />
-          <Text style={styles.fabTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-            {newFieldLabel}
-          </Text>
-        </TintCard>
-      </InteractivePressable>
+      {/* No on-map create button: the tab bar's "+" menu owns creation everywhere.
+          The empty-state card above keeps its contextual CTA. */}
     </View>
   );
 }
@@ -618,7 +616,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
   },
-  viewChip: { maxWidth: 190 },
   topChipHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
   results: {
     backgroundColor: colors.card,
@@ -789,6 +786,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     gap: 2,
   },
+  baseRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.sm,
+  },
+  baseBtn: {
+    flex: 1,
+    minHeight: touch.min,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  baseBtnActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  baseBtnTxt: { fontFamily: fonts.bodySemiBold, fontSize: typeScale.body, color: colors.text },
+  baseBtnTxtActive: { color: colors.onPrimary },
   sheetTitle: {
     fontSize: typeScale.title,
     fontFamily: fonts.display,
@@ -807,28 +825,4 @@ const styles = StyleSheet.create({
   },
   sheetRowTxt: { fontSize: typeScale.bodyLg, fontFamily: fonts.body, color: colors.text },
   sheetRowTxtActive: { fontFamily: fonts.bodySemiBold, color: colors.primary },
-  fab: {
-    position: 'absolute',
-    right: spacing.md,
-    bottom: spacing.md,
-    borderRadius: radius.pill,
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 5,
-  },
-  fabHover: { transform: [{ translateY: -2 }, { scale: 1.03 }] },
-  fabInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    minHeight: 48,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 0,
-    borderRadius: radius.pill,
-    borderColor: 'transparent',
-  },
-  fabTxt: { color: colors.onPrimary, fontSize: typeScale.bodyLg, fontFamily: fonts.bodyBold },
 });

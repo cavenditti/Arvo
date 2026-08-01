@@ -755,8 +755,8 @@
   "dashboard.when_yesterday": "from yesterday",
   "dashboard.when_days_ago": "from {{days}} days ago",
   "dashboard.weather_link": "Weather",
-  "dashboard.row_a11y": "{{name}}, score {{score}}, {{status}}",
-  "dashboard.row_a11y_pending": "{{name}}, waiting for first data, {{status}}",
+  "dashboard.row_a11y": "{{name}}, score {{score}}, {{status}}, {{trend}}",
+  "dashboard.row_a11y_pending": "{{name}}, waiting for first data, {{status}}, {{trend}}",
   "common.pick_date": "Pick a date",
   "common.clear": "Clear",
   "common.done": "Done",
@@ -808,5 +808,13 @@
   "alerts_group.title_vigor_noparcel_one": "Vigor drop on one plant",
   "alerts_group.title_vigor_noparcel_other": "Vigor drop on {{count}} plants",
   "alerts_group.title_generic_noparcel_one": "One new insight",
-  "alerts_group.title_generic_noparcel_other": "{{count}} new insights"
+  "alerts_group.title_generic_noparcel_other": "{{count}} new insights",
+  "menu.add": "Add",
+  "menu.new_note": "New note",
+  "menu.close": "Close menu",
+  "alerts_group.more": "More",
+  "parcel.import_link": "Have a GeoJSON file? Import it",
+  "map.layers": "Layers",
+  "map.base_title": "Base map",
+  "map.overlay_title": "Color fields by"
 }

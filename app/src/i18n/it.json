@@ -755,8 +755,8 @@
   "dashboard.when_yesterday": "di ieri",
   "dashboard.when_days_ago": "di {{days}} giorni fa",
   "dashboard.weather_link": "Meteo",
-  "dashboard.row_a11y": "{{name}}, punteggio {{score}}, {{status}}",
-  "dashboard.row_a11y_pending": "{{name}}, in attesa dei primi dati, {{status}}",
+  "dashboard.row_a11y": "{{name}}, punteggio {{score}}, {{status}}, {{trend}}",
+  "dashboard.row_a11y_pending": "{{name}}, in attesa dei primi dati, {{status}}, {{trend}}",
   "common.pick_date": "Scegli una data",
   "common.clear": "Rimuovi",
   "common.done": "Fine",
@@ -808,5 +808,13 @@
   "alerts_group.title_vigor_noparcel_one": "Calo di vigore su una pianta",
   "alerts_group.title_vigor_noparcel_other": "Calo di vigore su {{count}} piante",
   "alerts_group.title_generic_noparcel_one": "Un nuovo segnale",
-  "alerts_group.title_generic_noparcel_other": "{{count}} nuovi segnali"
+  "alerts_group.title_generic_noparcel_other": "{{count}} nuovi segnali",
+  "menu.add": "Aggiungi",
+  "menu.new_note": "Nuova nota",
+  "menu.close": "Chiudi il menu",
+  "alerts_group.more": "Altro",
+  "parcel.import_link": "Hai un file GeoJSON? Importalo",
+  "map.layers": "Livelli",
+  "map.base_title": "Sfondo",
+  "map.overlay_title": "Colora i campi per"
 }
