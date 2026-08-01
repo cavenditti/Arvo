@@ -500,12 +500,21 @@ pass "cross-tenant isolation (org B media token → 404 on the demo plant tile)"
 # *every* caller — asserting only the 404 would pass identically if the ownership gate were
 # deleted outright. So: upload a real asset, prove the owner can read it back, and only then is
 # org B's 404 evidence of anything.
+#
+# The control needs its OWN capture: `upload_asset` only accepts `uploaded`/`failed`, and
+# PIPE_CAP is `extracted` by the time we get here (Part C2 drove it through the worker), so
+# posting to it is a 409. Backdated well into the past so this capture can never shadow
+# PIPE_CAP as the parcel's `capture=latest` (captures order by `captured_at DESC`).
+R=$(api POST /api/v1/captures "$TOK_D" "{\"parcel_id\":\"${ULIVETO}\",\"captured_at\":\"2020-01-01T00:00:00Z\",\"source\":\"demo\",\"unit_type\":\"tree\",\"flight_ref\":\"smoke-asset-${RND}\"}")
+[ "$(code_of "$R")" = "201" ] || fail "create capture for the asset control ($(code_of "$R"))"
+ASSET_CAP=$(jq_get "$(body_of "$R")" '.id')
+
 OTIF="$(mkt arvo-ortho .tif)"
 # Only the 4-byte magic matters: the upload sniffs content type and never parses the raster.
 printf 'II*\000arvo-smoke-ortho-placeholder' > "$OTIF"
 CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
   -H "Authorization: Bearer ${TOK_D}" -F "file=@${OTIF}" \
-  "${BASE}/api/v1/captures/${PIPE_CAP}/assets/ortho")
+  "${BASE}/api/v1/captures/${ASSET_CAP}/assets/ortho")
 [ "$CODE" = "201" ] || fail "upload ortho asset: expected 201, got ${CODE}"
 pass "capture ortho asset uploaded"
 
@@ -515,12 +524,12 @@ R=$(api POST /api/v1/auth/media-token "$TOK_D")
 MEDIA_A=$(jq_get "$(body_of "$R")" '.token')
 
 AOUT="$(mkt arvo-asset .tif)"
-CODE=$(curl -sS -o "$AOUT" -w '%{http_code}' "${BASE}/api/v1/captures/${PIPE_CAP}/assets/ortho?token=${MEDIA_A}")
+CODE=$(curl -sS -o "$AOUT" -w '%{http_code}' "${BASE}/api/v1/captures/${ASSET_CAP}/assets/ortho?token=${MEDIA_A}")
 [ "$CODE" = "200" ] || fail "owner cannot read its own capture asset: got ${CODE}"
 [ -s "$AOUT" ] || fail "capture asset download was empty"
 pass "capture asset readable by its owner ($(wc -c < "$AOUT" | tr -d '[:space:]') bytes)"
 
-CODE=$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/api/v1/captures/${PIPE_CAP}/assets/ortho?token=${MEDIA_B}")
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/api/v1/captures/${ASSET_CAP}/assets/ortho?token=${MEDIA_B}")
 [ "$CODE" = "404" ] || fail "cross-tenant leak: org B media token got ${CODE} on an asset org A can read"
 pass "cross-tenant isolation (org B media token → 404 on the demo capture asset)"
 
