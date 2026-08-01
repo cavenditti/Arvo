@@ -19,6 +19,17 @@ export interface ParcelFeature {
   color?: string;
 }
 
+/** One cadastral parcel candidate on the onboarding overlay (FR-0-010b). */
+export interface CadastreMapFeature {
+  /** national cadastral reference — the feature's identity on the wire */
+  ref: string;
+  geometry: ParcelGeometry;
+  /** already onboarded as a field in this org (rendered muted, not selectable) */
+  existing: boolean;
+  /** pre-localized tooltip text (i18n stays in React, not in the map document) */
+  tooltip: string;
+}
+
 export interface MapViewProps {
   parcels: ParcelFeature[];
   mode: 'view' | 'draw';
@@ -35,6 +46,12 @@ export interface MapViewProps {
     /** [w, s, e, n] — limits tile requests */
     bounds?: [number, number, number, number];
   };
+  /** cadastral candidates overlay; refs in `selected` render highlighted */
+  cadastre?: { features: CadastreMapFeature[]; selected: string[] };
+  /** tap on a non-existing cadastral candidate */
+  onCadastreTap?: (ref: string) => void;
+  /** fires after every pan/zoom settles — feeds viewport cadastre detection */
+  onViewportChange?: (view: { bbox: [number, number, number, number]; zoom: number }) => void;
   height?: number;
 }
 

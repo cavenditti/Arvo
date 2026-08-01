@@ -28,6 +28,7 @@ pub fn app(state: AppState) -> Router {
         .merge(modules::orgs::router())
         .merge(modules::farms::router())
         .merge(modules::parcels::router())
+        .merge(modules::cadastre::router())
         .merge(modules::weather::router())
         .merge(modules::scenes::router())
         .merge(modules::indices::router())
@@ -53,6 +54,11 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/uploads/observations/{obs_id}/{file_name}",
             get(serve_photo),
+        )
+        // Parcel cover photos (FR-0-010b): same auth + org gate as scouting photos.
+        .route(
+            "/uploads/parcels/{parcel_id}/{file_name}",
+            get(serve_parcel_photo),
         )
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
@@ -103,6 +109,43 @@ struct MediaTokenQuery {
     token: Option<String>,
 }
 
+/// Validate an upload file name (flat UUID-derived names only; anything with separators or
+/// dots-paths is not ours) and derive its image content type.
+fn photo_content_type(file_name: &str) -> ApiResult<&'static str> {
+    if !file_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+        || file_name.contains("..")
+    {
+        return Err(ApiError::NotFound);
+    }
+    match file_name.rsplit('.').next().unwrap_or_default() {
+        "jpg" | "jpeg" => Ok("image/jpeg"),
+        "png" => Ok("image/png"),
+        _ => Err(ApiError::NotFound),
+    }
+}
+
+/// Read + wrap an upload as an image response.
+async fn photo_response(
+    path: std::path::PathBuf,
+    content_type: &'static str,
+) -> ApiResult<Response> {
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|_| ApiError::NotFound)?;
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "private, max-age=3600"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
 /// GET /uploads/observations/{obs_id}/{file} — serve a scouting photo.
 /// Auth: `?token=` media token (what <img> clients use) or a Bearer session token.
 async fn serve_photo(
@@ -112,21 +155,7 @@ async fn serve_photo(
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Response> {
     let user = authenticate_bearer_or_media(&state.cfg.jwt_secret, &headers, q.token.as_deref())?;
-
-    // Flat UUID-derived names only; anything with separators or dots-paths is not ours.
-    if !file_name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
-        || file_name.contains("..")
-    {
-        return Err(ApiError::NotFound);
-    }
-    let ext = file_name.rsplit('.').next().unwrap_or_default();
-    let content_type = match ext {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        _ => return Err(ApiError::NotFound),
-    };
+    let content_type = photo_content_type(&file_name)?;
 
     // Org check: the photo is only served to members of the observation's org.
     let owned: Option<(Uuid,)> =
@@ -145,17 +174,34 @@ async fn serve_photo(
         .join("observations")
         .join(obs_id.to_string())
         .join(&file_name);
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|_| ApiError::NotFound)?;
-    Ok((
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "private, max-age=3600"),
-            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        ],
-        bytes,
-    )
-        .into_response())
+    photo_response(path, content_type).await
+}
+
+/// GET /uploads/parcels/{parcel_id}/{file} — serve a parcel cover photo.
+async fn serve_parcel_photo(
+    State(state): State<AppState>,
+    Path((parcel_id, file_name)): Path<(Uuid, String)>,
+    Query(q): Query<MediaTokenQuery>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Response> {
+    let user = authenticate_bearer_or_media(&state.cfg.jwt_secret, &headers, q.token.as_deref())?;
+    let content_type = photo_content_type(&file_name)?;
+
+    let owned: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM parcels WHERE id = $1 AND org_id = $2")
+            .bind(parcel_id)
+            .bind(user.org_id)
+            .fetch_optional(&state.pool)
+            .await?;
+    if owned.is_none() {
+        return Err(ApiError::NotFound);
+    }
+
+    let path = state
+        .cfg
+        .upload_dir
+        .join("parcels")
+        .join(parcel_id.to_string())
+        .join(&file_name);
+    photo_response(path, content_type).await
 }

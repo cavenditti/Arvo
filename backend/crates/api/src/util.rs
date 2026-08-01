@@ -15,6 +15,64 @@ pub fn require_len(field: &str, value: &str, max: usize) -> ApiResult<()> {
     Ok(())
 }
 
+/// Max accepted photo upload (matches scouting photos).
+pub const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+
+/// Pull the `file` field out of a multipart body as a validated jpeg/png.
+/// Content sniffing decides what we store — extension/content-type alone never do.
+/// Returns (bytes, "jpg"|"png").
+pub async fn read_image_field(
+    multipart: &mut axum::extract::Multipart,
+) -> ApiResult<(bytes::Bytes, &'static str)> {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("invalid multipart: {e}")))?
+    {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let content_type = field.content_type().map(|s| s.to_ascii_lowercase());
+        let file_ext = field
+            .file_name()
+            .and_then(|n| n.rsplit('.').next())
+            .map(|e| e.to_ascii_lowercase());
+        let ext = match content_type.as_deref() {
+            Some("image/jpeg") | Some("image/jpg") => "jpg",
+            Some("image/png") => "png",
+            // Fall back to the filename extension when the client omits a content type.
+            _ => match file_ext.as_deref() {
+                Some("jpg") | Some("jpeg") => "jpg",
+                Some("png") => "png",
+                _ => {
+                    return Err(ApiError::BadRequest(
+                        "only jpeg or png images are allowed".into(),
+                    ))
+                }
+            },
+        };
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| ApiError::BadRequest(format!("could not read upload: {e}")))?;
+        if data.len() > MAX_IMAGE_BYTES {
+            return Err(ApiError::BadRequest("file exceeds the 10 MB limit".into()));
+        }
+        let magic_ok = match ext {
+            "jpg" => data.starts_with(&[0xFF, 0xD8, 0xFF]),
+            "png" => data.starts_with(&[0x89, 0x50, 0x4E, 0x47]),
+            _ => false,
+        };
+        if !magic_ok {
+            return Err(ApiError::BadRequest(
+                "file content is not a jpeg or png image".into(),
+            ));
+        }
+        return Ok((data, ext));
+    }
+    Err(ApiError::BadRequest("missing `file` field".into()))
+}
+
 /// The two UI languages. Italian-first per FR-0-072.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lang {

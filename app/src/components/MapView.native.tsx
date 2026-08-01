@@ -9,7 +9,7 @@ import { buildInit, mapHtml } from './map/mapHtml';
 import type { MapViewProps } from './types';
 
 export default function MapView(props: MapViewProps) {
-  const { onSelectParcel, onDrawComplete, height } = props;
+  const { onSelectParcel, onDrawComplete, onCadastreTap, onViewportChange, height } = props;
   const { t } = useTranslation();
   const ref = useRef<WebView>(null);
   const readyRef = useRef(false);
@@ -48,12 +48,16 @@ export default function MapView(props: MapViewProps) {
           onSelectParcel?.(msg.id);
         } else if (msg.type === 'drawn' && msg.geometry) {
           onDrawComplete?.(msg.geometry);
+        } else if (msg.type === 'cadastre' && msg.ref) {
+          onCadastreTap?.(msg.ref);
+        } else if (msg.type === 'moved' && Array.isArray(msg.bbox)) {
+          onViewportChange?.({ bbox: msg.bbox, zoom: msg.zoom });
         }
       } catch {
         // ignore malformed bridge messages
       }
     },
-    [send, onSelectParcel, onDrawComplete],
+    [send, onSelectParcel, onDrawComplete, onCadastreTap, onViewportChange],
   );
 
   return (

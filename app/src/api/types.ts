@@ -60,8 +60,33 @@ export interface Parcel {
   variety: string | null;
   planting_date: string | null;
   season_year: number | null;
+  /** provenance when the boundary came from the cadastre (FR-0-010b) */
+  cadastral_ref: string | null;
+  /** server path of the cover photo (render via mediaUri), null = none */
+  photo_path: string | null;
   archived: boolean;
   created_at: string;
+}
+
+/** One cadastral candidate from GET /cadastre/parcels (FR-0-010b). */
+export interface CadastralParcel {
+  type: 'Feature';
+  geometry: ParcelGeometry;
+  properties: {
+    cadastral_ref: string | null;
+    label: string | null;
+    area_m2: number | null;
+    /** an org parcel already covering this candidate, else null */
+    existing_parcel_id: string | null;
+  };
+}
+
+export interface CadastralDetection {
+  type: 'FeatureCollection';
+  features: CadastralParcel[];
+  /** upstream feature cap hit — zoom in for full coverage */
+  truncated: boolean;
+  source: string;
 }
 
 export interface IndexPoint {

@@ -72,6 +72,8 @@ export function draftParcel(geometry: ParcelGeometry, name: string): Parcel {
     variety: null,
     planting_date: null,
     season_year: null,
+    cadastral_ref: null,
+    photo_path: null,
     archived: false,
     created_at: '',
   };

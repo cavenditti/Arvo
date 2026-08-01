@@ -16,6 +16,9 @@ pub struct Config {
     /// CORS allowlist. Empty = permissive (dev default; release logs a warning).
     pub allowed_origins: Vec<String>,
     pub db_max_connections: u32,
+    /// INSPIRE WFS endpoint for cadastral parcels (FR-0-010b). Defaults to the Agenzia
+    /// delle Entrate open-data service; overridable for tests and other countries.
+    pub cadastre_wfs_url: String,
 }
 
 impl Config {
@@ -60,6 +63,9 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(10);
+        let cadastre_wfs_url = std::env::var("CADASTRE_WFS_URL").unwrap_or_else(|_| {
+            "https://wfs.cartografia.agenziaentrate.gov.it/inspire/wfs/owfs01.php".into()
+        });
         Ok(Self {
             database_url,
             jwt_secret,
@@ -69,6 +75,7 @@ impl Config {
             store_dir,
             allowed_origins,
             db_max_connections,
+            cadastre_wfs_url,
         })
     }
 }

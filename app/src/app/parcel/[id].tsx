@@ -34,6 +34,8 @@ import {
   formatArea,
   isValidDate,
 } from '@/features/parcels/crops';
+import * as ImagePicker from 'expo-image-picker';
+
 import {
   useAdvisories,
   useAgro,
@@ -44,6 +46,8 @@ import {
   useParcel,
   useParcelAlerts,
   useRefreshImagery,
+  useRemoveParcelPhoto,
+  useSetParcelPhoto,
   useUpdateParcel,
   useWeather,
 } from '@/features/parcels/hooks';
@@ -81,6 +85,46 @@ export default function ParcelDetailScreen() {
   const refresh = useRefreshImagery(id);
   const alertAction = useAlertActions(['alerts', 'parcel', id]);
   const mediaToken = useMediaToken();
+  const setPhoto = useSetParcelPhoto();
+  const removePhoto = useRemoveParcelPhoto();
+
+  // Cover photo (FR-0-010b): pick → upload → invalidations refresh photo_path.
+  async function pickCoverPhoto(from: 'camera' | 'library') {
+    try {
+      if (from === 'camera') {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) return;
+        const res = await ImagePicker.launchCameraAsync({ quality: 0.6 });
+        if (res.canceled || !res.assets[0]) return;
+        await uploadCover(res.assets[0]);
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) return;
+        const res = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          allowsMultipleSelection: false,
+          quality: 0.6,
+        });
+        if (res.canceled || !res.assets[0]) return;
+        await uploadCover(res.assets[0]);
+      }
+    } catch {
+      // picker unavailable (e.g. camera on web) — silently ignore
+    }
+  }
+
+  async function uploadCover(a: ImagePicker.ImagePickerAsset) {
+    try {
+      await setPhoto.mutateAsync({
+        parcelId: id,
+        uri: a.uri,
+        name: a.fileName ?? `field_${Date.now()}.jpg`,
+        mime: a.mimeType ?? 'image/jpeg',
+      });
+    } catch {
+      notify(t('parcel.photo_error_title'), t('parcel.photo_error_msg'));
+    }
+  }
 
   const parcel = parcelQ.data;
 
@@ -214,9 +258,18 @@ export default function ParcelDetailScreen() {
       <ScrollView style={styles.root} contentContainerStyle={styles.content}>
         {/* header */}
         <View style={styles.header}>
-          <View style={styles.cropBadge}>
-            <Ionicons name={cropIcon(parcel.crop)} size={22} color={colors.primary} />
-          </View>
+          {parcel.photo_path && mediaToken ? (
+            <Image
+              source={{ uri: mediaUri(parcel.photo_path, mediaToken) }}
+              style={styles.cropBadge}
+              contentFit="cover"
+              accessibilityLabel={t('parcel.photo')}
+            />
+          ) : (
+            <View style={styles.cropBadge}>
+              <Ionicons name={cropIcon(parcel.crop)} size={22} color={colors.primary} />
+            </View>
+          )}
           <View style={styles.flex1}>
             <View style={styles.titleRow}>
               <Text style={styles.title} numberOfLines={1}>
@@ -271,6 +324,38 @@ export default function ParcelDetailScreen() {
               placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
             />
+            <Text style={styles.fieldLabel}>{t('parcel.photo')}</Text>
+            <View style={styles.chips}>
+              <Pressable
+                style={[styles.chip, setPhoto.isPending && styles.disabled]}
+                onPress={() => pickCoverPhoto('camera')}
+                disabled={setPhoto.isPending}
+              >
+                <Ionicons name="camera" size={14} color={colors.textMuted} />
+                <Text style={styles.chipTxt}>{t('parcel.photo_take')}</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.chip, setPhoto.isPending && styles.disabled]}
+                onPress={() => pickCoverPhoto('library')}
+                disabled={setPhoto.isPending}
+              >
+                <Ionicons name="images" size={14} color={colors.textMuted} />
+                <Text style={styles.chipTxt}>{t('parcel.photo_pick')}</Text>
+              </Pressable>
+              {parcel.photo_path ? (
+                <Pressable
+                  style={[styles.chip, removePhoto.isPending && styles.disabled]}
+                  onPress={() => removePhoto.mutate(id)}
+                  disabled={removePhoto.isPending}
+                >
+                  <Ionicons name="trash" size={14} color={colors.textMuted} />
+                  <Text style={styles.chipTxt}>{t('parcel.photo_remove')}</Text>
+                </Pressable>
+              ) : null}
+              {setPhoto.isPending || removePhoto.isPending ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : null}
+            </View>
             {editErr ? <Text style={styles.error}>{editErr}</Text> : null}
             <Pressable style={[styles.primaryBtn, update.isPending && styles.disabled]} onPress={saveEdit} disabled={update.isPending}>
               {update.isPending ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryTxt}>{t('common.save')}</Text>}

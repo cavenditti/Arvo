@@ -1,7 +1,8 @@
-// OWNER: fe-map — Create a parcel by drawing on the map or importing GeoJSON, then fill crop/season
-// metadata. A FeatureCollection is bulk-imported via POST /parcels/import; a single geometry feeds
-// the one-parcel form (POST /parcels).
-import { type ReactNode, useState } from 'react';
+// OWNER: fe-map — Create a parcel: detect boundaries from the cadastre (FR-0-010b, default),
+// draw on the map, or import GeoJSON, then fill crop/season metadata and an optional cover
+// photo. Cadastre multi-select and FeatureCollections bulk-import via POST /parcels/import;
+// a single geometry feeds the one-parcel form (POST /parcels + POST /parcels/{id}/photo).
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -16,23 +17,41 @@ import {
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { Stack, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
-import type { ParcelGeometry } from '@/api/types';
+import type { CadastralParcel, ParcelGeometry } from '@/api/types';
 import MapView from '@/components/MapView';
+import type { CadastreMapFeature } from '@/components/types';
 import { TintCard } from '@/components/ui';
 import { CROP_OPTIONS, type CropKey, draftParcel, isValidDate } from '@/features/parcels/crops';
 import { notify } from '@/features/parcels/dialog';
 import {
+  useCadastralParcels,
   useCreateFarm,
   useCreateParcel,
   useFarms,
   useImportParcels,
+  useParcels,
+  useSetParcelPhoto,
 } from '@/features/parcels/hooks';
 import { colors, fonts, gradients, radius, spacing } from '@/theme';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Below this zoom a viewport is too wide to fetch (and to tap) cadastral parcels. */
+const CADASTRE_MIN_ZOOM = 15;
+
+type SourceMode = 'cadastre' | 'draw';
+
+interface LocalPhoto {
+  uri: string;
+  name: string;
+  mime: string;
+}
 
 async function readAssetText(uri: string): Promise<string> {
   if (Platform.OS === 'web') {
@@ -42,17 +61,34 @@ async function readAssetText(uri: string): Promise<string> {
   return new File(uri).text();
 }
 
+/** Human name for a detected cadastral parcel ("Particella 42"). */
+function cadastreName(f: CadastralParcel, t: TFn): string {
+  const label = f.properties.label ?? f.properties.cadastral_ref ?? '';
+  return t('parcel.cadastre_name', { label });
+}
+
 export default function NewParcelScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const farmsQ = useFarms();
+  const parcelsQ = useParcels();
   const createParcel = useCreateParcel();
   const importParcels = useImportParcels();
   const createFarm = useCreateFarm();
+  const setParcelPhoto = useSetParcelPhoto();
 
+  const [source, setSource] = useState<SourceMode>('cadastre');
   const [geometry, setGeometry] = useState<ParcelGeometry | null>(null);
+  const [cadastralRef, setCadastralRef] = useState<string | null>(null);
   const [pendingFc, setPendingFc] = useState<unknown>(null);
   const [pendingFcCount, setPendingFcCount] = useState(0);
+
+  const [viewport, setViewport] = useState<{
+    bbox: [number, number, number, number];
+    zoom: number;
+  } | null>(null);
+  const [selectedCad, setSelectedCad] = useState<Record<string, CadastralParcel>>({});
+  const [gps, setGps] = useState<[number, number] | null>(null);
 
   const [name, setName] = useState('');
   const [selectedFarm, setSelectedFarm] = useState<string | null>(null);
@@ -60,10 +96,115 @@ export default function NewParcelScreen() {
   const [variety, setVariety] = useState('');
   const [plantingDate, setPlantingDate] = useState('');
   const [seasonYear, setSeasonYear] = useState('2026');
+  const [photo, setPhoto] = useState<LocalPhoto | null>(null);
 
   const [creatingFarm, setCreatingFarm] = useState(false);
   const [newFarmName, setNewFarmName] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  const orgParcels = useMemo(() => parcelsQ.data ?? [], [parcelsQ.data]);
+
+  // Cadastre detection is live while picking boundaries in cadastre mode.
+  const cadastreActive = source === 'cadastre' && !geometry && !pendingFc;
+  const zoomedEnough = (viewport?.zoom ?? 0) >= CADASTRE_MIN_ZOOM;
+  const cadQ = useCadastralParcels(
+    cadastreActive && zoomedEnough && viewport ? viewport.bbox : null,
+  );
+
+  // A brand-new org has no parcels to frame the map — fall back to the device position once.
+  useEffect(() => {
+    if (!cadastreActive || gps || !parcelsQ.isSuccess || orgParcels.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const perm = await Location.requestForegroundPermissionsAsync();
+        if (!perm.granted) return;
+        const pos = await Location.getCurrentPositionAsync({});
+        if (!cancelled) setGps([pos.coords.longitude, pos.coords.latitude]);
+      } catch {
+        // no position — the user pans by hand
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cadastreActive, gps, parcelsQ.isSuccess, orgParcels.length]);
+
+  // Overlay = current detection + everything already selected (selection must survive
+  // panning away from the viewport that produced it).
+  const cadFeatures: CadastreMapFeature[] = useMemo(() => {
+    const byRef = new Map<string, CadastreMapFeature>();
+    for (const f of cadQ.data?.features ?? []) {
+      const ref = f.properties.cadastral_ref;
+      if (!ref) continue; // unusable as identity — cannot select or dedupe
+      const existing = !!f.properties.existing_parcel_id;
+      const label = cadastreName(f, t);
+      byRef.set(ref, {
+        ref,
+        geometry: f.geometry,
+        existing,
+        tooltip: existing ? `${label} · ${t('parcel.cadastre_existing')}` : label,
+      });
+    }
+    for (const [ref, f] of Object.entries(selectedCad)) {
+      if (!byRef.has(ref)) {
+        byRef.set(ref, {
+          ref,
+          geometry: f.geometry,
+          existing: false,
+          tooltip: cadastreName(f, t),
+        });
+      }
+    }
+    return [...byRef.values()];
+  }, [cadQ.data, selectedCad, t]);
+
+  const toggleCadastre = useCallback(
+    (ref: string) => {
+      setSelectedCad((prev) => {
+        if (prev[ref]) {
+          const next = { ...prev };
+          delete next[ref];
+          return next;
+        }
+        const hit = (cadQ.data?.features ?? []).find((f) => f.properties.cadastral_ref === ref);
+        if (!hit || hit.properties.existing_parcel_id) return prev;
+        return { ...prev, [ref]: hit };
+      });
+    },
+    [cadQ.data],
+  );
+
+  const selectedList = Object.values(selectedCad);
+
+  /** Turn the current cadastre selection into the form (1) or a bulk import (n). */
+  function confirmCadastre() {
+    if (selectedList.length === 0) return;
+    if (selectedList.length === 1) {
+      const f = selectedList[0];
+      setGeometry(f.geometry);
+      setCadastralRef(f.properties.cadastral_ref);
+      if (!name) setName(cadastreName(f, t));
+      setSelectedCad({});
+      setError(null);
+      return;
+    }
+    const fc = {
+      type: 'FeatureCollection',
+      features: selectedList.map((f) => ({
+        type: 'Feature',
+        geometry: f.geometry,
+        properties: {
+          name: cadastreName(f, t),
+          cadastral_ref: f.properties.cadastral_ref,
+        },
+      })),
+    };
+    setPendingFc(fc);
+    setPendingFcCount(selectedList.length);
+    setSelectedCad({});
+    setError(null);
+  }
 
   function applyGeometry(geom: unknown, nm?: unknown) {
     const g = geom as { type?: string };
@@ -72,9 +213,15 @@ export default function NewParcelScreen() {
       return;
     }
     setPendingFc(null);
+    setCadastralRef(null);
     setGeometry(geom as ParcelGeometry);
     if (typeof nm === 'string' && nm && !name) setName(nm);
     setError(null);
+  }
+
+  function clearGeometry() {
+    setGeometry(null);
+    setCadastralRef(null);
   }
 
   async function onImport() {
@@ -96,6 +243,7 @@ export default function NewParcelScreen() {
       };
       if (json?.type === 'FeatureCollection' && Array.isArray(json.features)) {
         setGeometry(null);
+        setCadastralRef(null);
         setPendingFc(json);
         setPendingFcCount(json.features.length);
       } else if (json?.type === 'Feature') {
@@ -110,6 +258,41 @@ export default function NewParcelScreen() {
     }
   }
 
+  // --- cover photo (single, optional) ---
+
+  const addPhotoAsset = (a: ImagePicker.ImagePickerAsset) =>
+    setPhoto({
+      uri: a.uri,
+      name: a.fileName ?? `field_${Date.now()}.jpg`,
+      mime: a.mimeType ?? 'image/jpeg',
+    });
+
+  const pickPhotoFromCamera = async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) return;
+      const res = await ImagePicker.launchCameraAsync({ quality: 0.6 });
+      if (!res.canceled && res.assets[0]) addPhotoAsset(res.assets[0]);
+    } catch {
+      // camera unavailable (e.g. web) — silently ignore
+    }
+  };
+
+  const pickPhotoFromLibrary = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) return;
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: false,
+        quality: 0.6,
+      });
+      if (!res.canceled && res.assets[0]) addPhotoAsset(res.assets[0]);
+    } catch {
+      // ignore
+    }
+  };
+
   function onCreateFarm() {
     const nm = newFarmName.trim();
     if (!nm) return;
@@ -123,7 +306,7 @@ export default function NewParcelScreen() {
     });
   }
 
-  function onSubmit() {
+  async function onSubmit() {
     setError(null);
     if (!geometry) return setError(t('parcel.err_geometry'));
     if (!name.trim()) return setError(t('parcel.err_name'));
@@ -132,8 +315,8 @@ export default function NewParcelScreen() {
       return setError(t('parcel.err_date'));
     }
     const yr = parseInt(seasonYear, 10);
-    createParcel.mutate(
-      {
+    try {
+      const created = await createParcel.mutateAsync({
         farm_id: selectedFarm,
         name: name.trim(),
         geometry,
@@ -141,9 +324,20 @@ export default function NewParcelScreen() {
         variety: variety.trim() || undefined,
         planting_date: plantingDate.trim() || undefined,
         season_year: Number.isFinite(yr) ? yr : undefined,
-      },
-      { onSuccess: () => router.back(), onError: (e) => setError(errMsg(e)) },
-    );
+        cadastral_ref: cadastralRef ?? undefined,
+      });
+      // The field exists either way — a failed photo upload must not strand the flow.
+      if (photo) {
+        try {
+          await setParcelPhoto.mutateAsync({ parcelId: created.id, ...photo });
+        } catch {
+          notify(t('parcel.photo_error_title'), t('parcel.photo_error_msg'));
+        }
+      }
+      router.back();
+    } catch (e) {
+      setError(errMsg(e));
+    }
   }
 
   function onBulkImport() {
@@ -166,7 +360,22 @@ export default function NewParcelScreen() {
   }
 
   const farms = farmsQ.data ?? [];
-  const busy = createParcel.isPending || importParcels.isPending;
+  const busy = createParcel.isPending || importParcels.isPending || setParcelPhoto.isPending;
+
+  // One status line drives the whole cadastre panel.
+  const cadStatus: { key: string; tone: 'hint' | 'error' } | null = !cadastreActive
+    ? null
+    : !zoomedEnough
+      ? { key: 'parcel.cadastre_zoom', tone: 'hint' }
+      : cadQ.isError
+        ? { key: 'parcel.cadastre_error', tone: 'error' }
+        : cadQ.isLoading
+          ? { key: 'parcel.cadastre_loading', tone: 'hint' }
+          : cadQ.data && cadQ.data.features.length === 0
+            ? { key: 'parcel.cadastre_empty', tone: 'hint' }
+            : cadQ.data?.truncated
+              ? { key: 'parcel.cadastre_truncated', tone: 'hint' }
+              : { key: 'parcel.cadastre_hint', tone: 'hint' };
 
   return (
     <>
@@ -176,26 +385,95 @@ export default function NewParcelScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        {/* geometry: draw or preview */}
+        {/* geometry source: cadastre detection / hand drawing */}
+        {!pendingFc && !geometry ? (
+          <View style={styles.chips}>
+            {(['cadastre', 'draw'] as const).map((m) => {
+              const active = source === m;
+              return (
+                <Pressable
+                  key={m}
+                  style={[styles.chip, active && styles.chipActive]}
+                  onPress={() => setSource(m)}
+                >
+                  <Ionicons
+                    name={m === 'cadastre' ? 'scan' : 'pencil'}
+                    size={15}
+                    color={active ? '#fff' : colors.textMuted}
+                  />
+                  <Text style={[styles.chipTxt, active && styles.chipTxtActive]}>
+                    {t(m === 'cadastre' ? 'parcel.mode_cadastre' : 'parcel.mode_draw')}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
+
+        {/* geometry: detect, draw or preview */}
         {!pendingFc ? (
           <View style={styles.mapBox}>
             {geometry ? (
               <MapView parcels={[{ parcel: draftParcel(geometry, name) }]} mode="view" height={260} />
+            ) : source === 'cadastre' ? (
+              <MapView
+                parcels={orgParcels.map((p) => ({ parcel: p }))}
+                mode="view"
+                height={300}
+                focus={
+                  gps && orgParcels.length === 0 ? [gps[0], gps[1], CADASTRE_MIN_ZOOM + 1] : undefined
+                }
+                cadastre={{ features: cadFeatures, selected: Object.keys(selectedCad) }}
+                onCadastreTap={toggleCadastre}
+                onViewportChange={setViewport}
+              />
             ) : (
               <MapView parcels={[]} mode="draw" height={260} onDrawComplete={(g) => applyGeometry(g)} />
             )}
           </View>
         ) : null}
 
+        {/* cadastre status + selection actions */}
+        {!pendingFc && !geometry && source === 'cadastre' ? (
+          <View style={styles.cadPanel}>
+            {cadStatus ? (
+              <View style={styles.cadStatusRow}>
+                {cadQ.isLoading && zoomedEnough ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : null}
+                <Text style={[styles.hint, cadStatus.tone === 'error' && styles.hintError]}>
+                  {t(cadStatus.key)}
+                </Text>
+              </View>
+            ) : null}
+            {selectedList.length > 0 ? (
+              <>
+                <Text style={styles.cadCount}>
+                  {t('parcel.cadastre_selected', { count: selectedList.length })}
+                </Text>
+                <Pressable style={styles.primaryBtn} onPress={confirmCadastre}>
+                  <TintCard gradient={gradients.forest} style={styles.primaryInner}>
+                    <Text style={styles.primaryTxt}>
+                      {t('parcel.cadastre_use', { count: selectedList.length })}
+                    </Text>
+                  </TintCard>
+                </Pressable>
+              </>
+            ) : null}
+          </View>
+        ) : null}
+
         {!pendingFc ? (
           <View style={styles.geometryActions}>
             {geometry ? (
-              <Pressable style={styles.secondaryBtn} onPress={() => setGeometry(null)}>
+              <Pressable style={styles.secondaryBtn} onPress={clearGeometry}>
                 <Ionicons name="pencil" size={16} color={colors.primary} />
                 <Text style={styles.secondaryTxt}>{t('parcel.redraw')}</Text>
               </Pressable>
-            ) : (
+            ) : source === 'draw' ? (
               <Text style={styles.hint}>{t('parcel.draw_hint')}</Text>
+            ) : (
+              <View />
             )}
             <Pressable style={styles.secondaryBtn} onPress={onImport}>
               <Ionicons name="document-text" size={16} color={colors.primary} />
@@ -327,13 +605,44 @@ export default function NewParcelScreen() {
               />
             </Field>
 
+            <Field label={t('parcel.photo')}>
+              {photo ? (
+                <View style={styles.photoRow}>
+                  <Image source={{ uri: photo.uri }} style={styles.photoThumb} contentFit="cover" />
+                  <View style={styles.photoActions}>
+                    <Pressable style={styles.secondaryBtn} onPress={pickPhotoFromLibrary}>
+                      <Ionicons name="images" size={16} color={colors.primary} />
+                      <Text style={styles.secondaryTxt}>{t('parcel.photo_change')}</Text>
+                    </Pressable>
+                    <Pressable style={styles.secondaryBtn} onPress={() => setPhoto(null)}>
+                      <Ionicons name="trash" size={16} color={colors.primary} />
+                      <Text style={styles.secondaryTxt}>{t('parcel.photo_remove')}</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.chips}>
+                  {Platform.OS !== 'web' ? (
+                    <Pressable style={styles.secondaryBtn} onPress={pickPhotoFromCamera}>
+                      <Ionicons name="camera" size={16} color={colors.primary} />
+                      <Text style={styles.secondaryTxt}>{t('parcel.photo_take')}</Text>
+                    </Pressable>
+                  ) : null}
+                  <Pressable style={styles.secondaryBtn} onPress={pickPhotoFromLibrary}>
+                    <Ionicons name="images" size={16} color={colors.primary} />
+                    <Text style={styles.secondaryTxt}>{t('parcel.photo_pick')}</Text>
+                  </Pressable>
+                </View>
+              )}
+            </Field>
+
             <Pressable
               style={[styles.primaryBtn, busy && styles.disabled]}
               onPress={onSubmit}
               disabled={busy}
             >
               <TintCard gradient={gradients.forest} style={styles.primaryInner}>
-                {createParcel.isPending ? (
+                {createParcel.isPending || setParcelPhoto.isPending ? (
                   <ActivityIndicator color={colors.onPrimary} />
                 ) : (
                   <Text style={styles.primaryTxt}>{t('common.save')}</Text>
@@ -432,7 +741,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
+  cadPanel: { gap: spacing.sm },
+  cadStatusRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  cadCount: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.text },
   hint: { color: colors.textMuted, fontSize: 13, fontFamily: fonts.body, flex: 1 },
+  hintError: { color: colors.danger },
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.md,
@@ -474,6 +787,16 @@ const styles = StyleSheet.create({
   chipTxtActive: { color: colors.onPrimary, fontFamily: fonts.bodySemiBold },
   newFarmRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm, alignItems: 'center' },
   flex1: { flex: 1 },
+  photoRow: { flexDirection: 'row', gap: spacing.md, alignItems: 'center' },
+  photoThumb: {
+    width: 96,
+    height: 96,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  photoActions: { gap: spacing.sm },
   primaryBtn: {},
   primaryInner: {
     paddingVertical: spacing.md,

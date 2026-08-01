@@ -1,6 +1,7 @@
 // SPINE (read-only for feature agents). One module per feature; each exposes `router()`.
 pub mod alerts;
 pub mod auth;
+pub mod cadastre;
 pub mod captures;
 pub mod farms;
 pub mod indices;

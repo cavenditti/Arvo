@@ -1,6 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { format, parseISO } from 'date-fns';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -12,10 +14,10 @@ import { InteractivePressable, MonoLabel } from '@/components/ui';
 import { useOutsideDismiss } from '@/components/useOutsideDismiss';
 import FieldViewSwitcher from '@/components/web/FieldViewSwitcher';
 import { cropLabel, dfLocale } from '@/features/insights/format';
-import { useMediaToken } from '@/features/media';
+import { mediaUri, useMediaToken } from '@/features/media';
 import { formatArea } from '@/features/parcels/crops';
 import { notify } from '@/features/parcels/dialog';
-import { useIndexSeries, useParcels } from '@/features/parcels/hooks';
+import { useIndexSeries, useParcels, useSetParcelPhoto } from '@/features/parcels/hooks';
 import { useCaptures } from '@/features/plants/hooks';
 import { colors, fonts, radius, spacing, WEB_COMPACT_BREAKPOINT } from '@/theme';
 
@@ -35,6 +37,7 @@ export default function FieldWorkspaceHeader({
   const compact = width < WEB_COMPACT_BREAKPOINT;
   const narrow = width < 420;
   const mediaToken = useMediaToken();
+  const setParcelPhoto = useSetParcelPhoto();
   const locale = dfLocale();
   const parcelsQ = useParcels();
   const satelliteSeriesQ = useIndexSeries(parcel.id, 'ndvi');
@@ -76,7 +79,7 @@ export default function FieldWorkspaceHeader({
     }
   }
 
-  function runAction(action: 'note' | 'flight' | 'report') {
+  function runAction(action: 'note' | 'flight' | 'report' | 'photo') {
     setNewOpen(false);
     if (action === 'note') {
       router.push({ pathname: '/observation/new', params: { parcelId: parcel.id } });
@@ -86,12 +89,37 @@ export default function FieldWorkspaceHeader({
       router.push({ pathname: '/capture/new', params: { parcelId: parcel.id } });
       return;
     }
+    if (action === 'photo') {
+      void pickCoverPhoto();
+      return;
+    }
     if (!mediaToken) {
       notify(t('parcel.report'), t('parcel.report_error'));
       return;
     }
     const url = `${API_URL}/api/v1/reports/parcels/${parcel.id}/season?lang=${i18n.language}&token=${mediaToken}`;
     Linking.openURL(url).catch(() => notify(t('parcel.report'), t('parcel.report_error')));
+  }
+
+  // Cover photo (FR-0-010b): on web the library picker is the file dialog.
+  async function pickCoverPhoto() {
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: false,
+        quality: 0.6,
+      });
+      if (res.canceled || !res.assets[0]) return;
+      const a = res.assets[0];
+      await setParcelPhoto.mutateAsync({
+        parcelId: parcel.id,
+        uri: a.uri,
+        name: a.fileName ?? `field_${Date.now()}.jpg`,
+        mime: a.mimeType ?? 'image/jpeg',
+      });
+    } catch {
+      notify(t('parcel.photo_error_title'), t('parcel.photo_error_msg'));
+    }
   }
 
   return (
@@ -108,6 +136,14 @@ export default function FieldWorkspaceHeader({
               setFieldOpen((value) => !value);
             }}
           >
+            {parcel.photo_path && mediaToken ? (
+              <Image
+                source={{ uri: mediaUri(parcel.photo_path, mediaToken) }}
+                style={styles.coverThumb}
+                contentFit="cover"
+                accessibilityLabel={t('parcel.photo')}
+              />
+            ) : null}
             <View style={styles.fieldPickerText}>
               <Text style={[styles.title, compact && styles.titleCompact]} numberOfLines={1}>{parcel.name}</Text>
               <Text style={styles.meta} numberOfLines={1}>{meta}</Text>
@@ -217,6 +253,11 @@ export default function FieldWorkspaceHeader({
                     label={t('parcel.export_report')}
                     onPress={() => runAction('report')}
                   />
+                  <ActionMenuItem
+                    icon="image-outline"
+                    label={t(parcel.photo_path ? 'parcel.photo_change' : 'parcel.photo_add')}
+                    onPress={() => runAction('photo')}
+                  />
                 </View>
               ) : null}
             </View>
@@ -286,6 +327,15 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   fieldPickerHover: { backgroundColor: colors.cardAlt },
+  coverThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.cardAlt,
+    flexShrink: 0,
+  },
   fieldPickerText: { flex: 1, minWidth: 0 },
   title: {
     fontFamily: fonts.displayBold,

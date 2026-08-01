@@ -1,11 +1,12 @@
 // OWNER: fe-map — one self-contained Leaflet document shared by MapView.native (react-native-webview)
 // and MapView.web (iframe srcDoc). Bridge is JSON both ways:
-//   in  → { type:'init', parcels, markers, focus, mode, labels, overlay }  (native: injected window.__update(...)
-//          or a 'message' event; web: a window 'message' event)
-//   out → { type:'ready' } once Leaflet is up, { type:'select', id }, { type:'drawn', geometry }
+//   in  → { type:'init', parcels, markers, focus, mode, labels, overlay, cadastre }
+//          (native: injected window.__update(...) or a 'message' event; web: a window 'message' event)
+//   out → { type:'ready' } once Leaflet is up, { type:'select', id }, { type:'drawn', geometry },
+//         { type:'cadastre', ref } on candidate tap, { type:'moved', bbox, zoom } after pan/zoom
 // Draw mode: tap to add vertices with live preview + on-map Fine/Annulla buttons.
 import type { ParcelGeometry } from '@/api/types';
-import type { MapViewProps } from '../types';
+import type { CadastreMapFeature, MapViewProps } from '../types';
 
 export interface MapLabels {
   finish: string;
@@ -22,6 +23,8 @@ export interface MapInitMessage {
   labels: MapLabels;
   /** XYZ index raster tiles rendered above the base map, below parcel polygons; null = none */
   overlay: NonNullable<MapViewProps['overlay']> | null;
+  /** cadastral candidates overlay (FR-0-010b onboarding); null = none */
+  cadastre: { features: CadastreMapFeature[]; selected: string[] } | null;
 }
 
 /** Flatten the frozen MapView props into the wire payload the Leaflet document understands. */
@@ -39,6 +42,7 @@ export function buildInit(props: MapViewProps, labels: MapLabels): MapInitMessag
     mode: props.mode,
     labels,
     overlay: props.overlay ?? null,
+    cadastre: props.cadastre ?? null,
   };
 }
 
@@ -83,9 +87,9 @@ export const mapHtml = `<!DOCTYPE html>
       return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
     });
   }
-  var map, parcelLayer, markerLayer, mode = 'view';
+  var map, parcelLayer, markerLayer, cadastreLayer, mode = 'view';
   var drawPts = [], drawLine = null, drawPoly = null, drawDots = [];
-  var overlayLayer = null, overlayKey = null;
+  var overlayLayer = null, overlayKey = null, viewKey = null;
 
   function post(msg){
     var s = JSON.stringify(msg);
@@ -105,11 +109,19 @@ export const mapHtml = `<!DOCTYPE html>
       maxZoom: 19, attribution: '&copy; OpenStreetMap'
     }).addTo(map);
     parcelLayer = L.layerGroup().addTo(map);
+    cadastreLayer = L.layerGroup().addTo(map);
     markerLayer = L.layerGroup().addTo(map);
     map.setView([41.9, 12.5], 5);
     // container can be sized late (flex layout, portal shell) — keep Leaflet's size current
     window.addEventListener('resize', function(){ map.invalidateSize(); });
     map.on('click', onMapClick);
+    // Viewport reports feed cadastre detection; moveend fires once per settled gesture.
+    map.on('moveend', function(){
+      var b = map.getBounds();
+      post({ type: 'moved',
+        bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()],
+        zoom: map.getZoom() });
+    });
     document.getElementById('btnFinish').addEventListener('click', finishDraw);
     document.getElementById('btnCancel').addEventListener('click', cancelDraw);
     announce();
@@ -151,14 +163,59 @@ export const mapHtml = `<!DOCTYPE html>
       var ll = L.latLng(m.lat, m.lon);
       bounds = bounds ? bounds.extend(ll) : L.latLngBounds(ll, ll);
     });
+    updateCadastre(p.cadastre);
     updateOverlay(p.overlay);
-    if (p.focus && p.focus.length >= 2) {
-      map.setView([p.focus[1], p.focus[0]], p.focus.length > 2 && p.focus[2] ? p.focus[2] : 15);
-    } else if (bounds && bounds.isValid()) {
-      map.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 });
+    // Re-fit only when what the view is ABOUT changed (focus target / parcel set / markers).
+    // Cadastre refreshes and overlay toggles re-send init while the user is panning — snapping
+    // the camera back on those would fight the pan that triggered them.
+    var vk = JSON.stringify([
+      p.focus || null,
+      (p.parcels || []).map(function(x){ return x.id; }),
+      (p.markers || []).map(function(m){ return m.id; })
+    ]);
+    if (vk !== viewKey) {
+      viewKey = vk;
+      if (p.focus && p.focus.length >= 2) {
+        map.setView([p.focus[1], p.focus[0]], p.focus.length > 2 && p.focus[2] ? p.focus[2] : 15);
+      } else if (bounds && bounds.isValid()) {
+        map.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 });
+      }
     }
     setDraw(mode === 'draw');
   };
+
+  // Cadastral candidates (FR-0-010b): amber dashed = selectable, filled = selected,
+  // grey = already a field. Redrawn on every init; tap posts the ref, host owns selection.
+  function updateCadastre(c){
+    cadastreLayer.clearLayers();
+    if (!c || !c.features || !c.features.length) return;
+    var sel = {};
+    (c.selected || []).forEach(function(r){ sel[r] = true; });
+    c.features.forEach(function(f){
+      if (!f || !f.ref || !f.geometry) return;
+      var isSel = !!sel[f.ref];
+      var style = f.existing
+        ? { color: '#8A8F86', weight: 1.5, dashArray: '4,4', opacity: 0.8,
+            fillColor: '#8A8F86', fillOpacity: 0.12 }
+        : isSel
+          ? { color: '#8A5A16', weight: 3, opacity: 1, fillColor: '#D9A441', fillOpacity: 0.45 }
+          : { color: '#A26B1F', weight: 2, dashArray: '6,4', opacity: 0.95,
+              fillColor: '#D9A441', fillOpacity: 0.15 };
+      try {
+        var gj = L.geoJSON(f.geometry, { style: style });
+        gj.eachLayer(function(layer){
+          if (f.tooltip) layer.bindTooltip(esc(f.tooltip), { sticky: true });
+          if (!f.existing) {
+            layer.on('click', function(ev){
+              if (ev.originalEvent && ev.originalEvent.stopPropagation) ev.originalEvent.stopPropagation();
+              post({ type: 'cadastre', ref: f.ref });
+            });
+          }
+        });
+        gj.addTo(cadastreLayer);
+      } catch (err) {}
+    });
+  }
 
   // Single XYZ index raster overlay. Diffed by JSON so unchanged updates don't reload tiles.
   // Lives in the default tilePane (z-index 200): above the OSM base (added first in ready()),

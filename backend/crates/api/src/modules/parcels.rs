@@ -1,7 +1,7 @@
 //! OWNER: be-parcels — parcels CRUD + GeoJSON import/export per docs/API.md §Parcels.
 //! `router()` is the only public entry (mounted in routes.rs under /api/v1).
 //! Geometry math lives in PostGIS (AGENTS.md §Backend patterns); no Rust geo crates.
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -15,7 +15,7 @@ use crate::audit;
 use crate::error::{ApiError, ApiResult};
 use crate::security::{AuthUser, Role};
 use crate::state::AppState;
-use crate::util::require_len;
+use crate::util::{read_image_field, require_len};
 
 const MAX_IMPORT_FEATURES: usize = 1000;
 
@@ -25,6 +25,13 @@ pub fn router() -> Router<AppState> {
         .route("/parcels/import", post(import))
         .route("/parcels/export.geojson", get(export))
         .route("/parcels/{id}", get(get_one).patch(update).delete(archive))
+        // Cover photo (FR-0-010b onboarding): up to 10 MB + multipart overhead.
+        .route(
+            "/parcels/{id}/photo",
+            post(set_photo)
+                .delete(delete_photo)
+                .layer(DefaultBodyLimit::max(12 * 1024 * 1024)),
+        )
 }
 
 /// Assert the parcel exists in the caller's org (cross-tenant → 404). The single shared
@@ -78,7 +85,7 @@ const PARCEL_COLS: &str = "
     ST_YMin(ST_Envelope(geom)) AS bbox_s,
     ST_XMax(ST_Envelope(geom)) AS bbox_e,
     ST_YMax(ST_Envelope(geom)) AS bbox_n,
-    crop, variety, planting_date, season_year, archived, created_at";
+    crop, variety, planting_date, season_year, cadastral_ref, photo_path, archived, created_at";
 
 #[derive(sqlx::FromRow)]
 struct ParcelRow {
@@ -97,6 +104,8 @@ struct ParcelRow {
     variety: Option<String>,
     planting_date: Option<NaiveDate>,
     season_year: Option<i32>,
+    cadastral_ref: Option<String>,
+    photo_path: Option<String>,
     archived: bool,
     created_at: DateTime<Utc>,
 }
@@ -118,6 +127,8 @@ impl ParcelRow {
             "variety": self.variety,
             "planting_date": self.planting_date,
             "season_year": self.season_year,
+            "cadastral_ref": self.cadastral_ref,
+            "photo_path": self.photo_path,
             "archived": self.archived,
             "created_at": self.created_at,
         }))
@@ -185,10 +196,11 @@ async fn insert_parcel<'e, E: sqlx::PgExecutor<'e>>(
     variety: Option<&str>,
     planting_date: Option<NaiveDate>,
     season_year: Option<i32>,
+    cadastral_ref: Option<&str>,
 ) -> ApiResult<ParcelRow> {
     let sql = format!(
-        "INSERT INTO parcels (org_id, farm_id, name, geom, crop, variety, planting_date, season_year)
-         VALUES ($1, $2, $3, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($4), 4326)), $5, $6, $7, $8)
+        "INSERT INTO parcels (org_id, farm_id, name, geom, crop, variety, planting_date, season_year, cadastral_ref)
+         VALUES ($1, $2, $3, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($4), 4326)), $5, $6, $7, $8, $9)
          RETURNING {PARCEL_COLS}"
     );
     let row = sqlx::query_as::<_, ParcelRow>(&sql)
@@ -200,6 +212,7 @@ async fn insert_parcel<'e, E: sqlx::PgExecutor<'e>>(
         .bind(variety)
         .bind(planting_date)
         .bind(season_year)
+        .bind(cadastral_ref)
         .fetch_one(exec)
         .await?;
     Ok(row)
@@ -246,6 +259,8 @@ struct CreateParcel {
     variety: Option<String>,
     planting_date: Option<NaiveDate>,
     season_year: Option<i32>,
+    /// Provenance when the boundary came from the cadastre (FR-0-010b).
+    cadastral_ref: Option<String>,
 }
 
 async fn create(
@@ -264,6 +279,14 @@ async fn create(
         body.variety.as_deref(),
         body.season_year,
     )?;
+    let cadastral_ref = body
+        .cadastral_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(r) = cadastral_ref {
+        require_len("cadastral_ref", r, 100)?;
+    }
     ensure_farm(&st.pool, user.org_id, body.farm_id).await?;
     validate_geometry(&st.pool, &body.geometry).await?;
     let row = insert_parcel(
@@ -276,6 +299,7 @@ async fn create(
         body.variety.as_deref(),
         body.planting_date,
         body.season_year,
+        cadastral_ref,
     )
     .await?;
     audit::record(
@@ -494,6 +518,16 @@ async fn import(
         if let Some(c) = crop {
             require_len("crop", c, 100)?;
         }
+        // Cadastre-detected features arrive through this same bulk path with their
+        // reference in properties, so provenance survives multi-select onboarding.
+        let cadastral_ref = props
+            .and_then(|p| p.get("cadastral_ref"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(r) = cadastral_ref {
+            require_len("cadastral_ref", r, 100)?;
+        }
 
         let row = insert_parcel(
             &mut *tx,
@@ -505,6 +539,7 @@ async fn import(
             None,
             None,
             None,
+            cadastral_ref,
         )
         .await?;
         created_meta.push((row.id, row.name.clone()));
@@ -527,6 +562,127 @@ async fn import(
         StatusCode::CREATED,
         Json(json!({ "created": created, "skipped": skipped })),
     ))
+}
+
+/// POST /parcels/{id}/photo — multipart field `file` (jpeg/png ≤ 10 MB). One cover photo
+/// per parcel: a new upload replaces (and removes) the previous file.
+async fn set_photo(
+    State(st): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    user.require(Role::Operator)?;
+    let old_path: Option<String> = sqlx::query_scalar(
+        "SELECT photo_path FROM parcels WHERE id = $1 AND org_id = $2 AND archived = false",
+    )
+    .bind(id)
+    .bind(user.org_id)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    let (data, ext) = read_image_field(&mut multipart).await?;
+
+    let dir = st.cfg.upload_dir.join("parcels").join(id.to_string());
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+    let file_name = format!("{}.{ext}", Uuid::new_v4());
+    tokio::fs::write(dir.join(&file_name), &data)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+    let path = format!("/uploads/parcels/{id}/{file_name}");
+    let res = sqlx::query(
+        "UPDATE parcels SET photo_path = $1, updated_at = now() WHERE id = $2 AND org_id = $3",
+    )
+    .bind(&path)
+    .bind(id)
+    .bind(user.org_id)
+    .execute(&st.pool)
+    .await;
+    match res {
+        Ok(r) if r.rows_affected() > 0 => {}
+        other => {
+            // Don't leave an orphan file when the DB update failed.
+            let _ = tokio::fs::remove_file(dir.join(&file_name)).await;
+            other?;
+            return Err(ApiError::NotFound);
+        }
+    }
+    remove_photo_file(&st, id, old_path.as_deref()).await;
+
+    audit::record(
+        &st.pool,
+        user.org_id,
+        Some(user.user_id),
+        "parcel.photo",
+        "parcel",
+        id,
+        json!({ "path": path }),
+    )
+    .await;
+    Ok((StatusCode::CREATED, Json(json!({ "path": path }))))
+}
+
+/// DELETE /parcels/{id}/photo — clear the cover photo and remove its file.
+async fn delete_photo(
+    State(st): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
+    user.require(Role::Operator)?;
+    // Lock + read the old path in the same statement that clears it, so a concurrent
+    // upload can't slip a fresh file in between and have it deleted from under the row.
+    let old_path: Option<Option<String>> = sqlx::query_scalar(
+        "WITH old AS (
+            SELECT id, photo_path FROM parcels WHERE id = $1 AND org_id = $2 FOR UPDATE
+         )
+         UPDATE parcels p SET photo_path = NULL, updated_at = now()
+         FROM old WHERE p.id = old.id
+         RETURNING old.photo_path",
+    )
+    .bind(id)
+    .bind(user.org_id)
+    .fetch_optional(&st.pool)
+    .await?;
+    let Some(old_path) = old_path else {
+        return Err(ApiError::NotFound);
+    };
+    remove_photo_file(&st, id, old_path.as_deref()).await;
+    audit::record(
+        &st.pool,
+        user.org_id,
+        Some(user.user_id),
+        "parcel.photo_delete",
+        "parcel",
+        id,
+        json!({}),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Best-effort removal of a replaced/cleared cover photo file. Only touches files inside
+/// this parcel's own upload directory — the stored path is server-issued, but re-checking
+/// here keeps a corrupted row from ever deleting outside it.
+async fn remove_photo_file(st: &AppState, id: Uuid, path: Option<&str>) {
+    let Some(p) = path else { return };
+    let prefix = format!("/uploads/parcels/{id}/");
+    let Some(file_name) = p.strip_prefix(&prefix) else {
+        return;
+    };
+    if file_name.contains('/') || file_name.contains("..") {
+        return;
+    }
+    let full = st
+        .cfg
+        .upload_dir
+        .join("parcels")
+        .join(id.to_string())
+        .join(file_name);
+    let _ = tokio::fs::remove_file(full).await;
 }
 
 #[derive(Deserialize)]
