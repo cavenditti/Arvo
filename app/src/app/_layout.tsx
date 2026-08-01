@@ -16,7 +16,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { AuthProvider, useAuth } from '@/auth/AuthContext';
 import Logo from '@/components/Logo';
@@ -95,8 +95,14 @@ function RootNavigator() {
         // kills the "(tabs)" back label (SDK 57 native-stack option).
         headerBackButtonDisplayMode: 'minimal',
         headerTintColor: colors.text,
-        headerStyle: { backgroundColor: colors.bg },
-        headerTitleStyle: { fontFamily: fonts.display, color: colors.text },
+        // Leave iOS entirely to UIKit (including SF title typography and its system material).
+        // Non-iOS retains the Terra paper treatment.
+        ...(Platform.OS === 'ios'
+          ? {}
+          : {
+              headerStyle: { backgroundColor: colors.bg },
+              headerTitleStyle: { fontFamily: fonts.display, color: colors.text },
+            }),
         headerShadowVisible: false,
         contentStyle: { backgroundColor: colors.bg },
       }}

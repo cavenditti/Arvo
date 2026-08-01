@@ -24,7 +24,7 @@ import { INDEX_NAMES, type Alert, type IndexName } from '@/api/types';
 import MapView from '@/components/MapView';
 import { StaleBanner, useOnlineStatus } from '@/components/StaleBanner';
 import type { ParcelFeature } from '@/components/types';
-import { InteractivePressable, MonoLabel, MonoValue, StatusChip, TintCard } from '@/components/ui';
+import { GlassSurface, InteractivePressable, MonoLabel, MonoValue, StatusChip, TintCard } from '@/components/ui';
 import {
   INDEX_DOMAIN,
   arvoScoreDetail,
@@ -256,7 +256,7 @@ export default function MapScreen() {
       ) : null}
 
       {parcels.length > 0 && choropleth !== 'none' ? (
-        <View style={styles.legend} pointerEvents="none">
+        <GlassSurface style={styles.legend} fallbackStyle={styles.legend} pointerEvents="none">
           <Text style={styles.legendTitle} maxFontSizeMultiplier={typeScale.maxMult}>
             {!legendIndex
               ? t('map.score_legend')
@@ -313,12 +313,13 @@ export default function MapScreen() {
               </View>
             </View>
           )}
-        </View>
+        </GlassSurface>
       ) : null}
 
       {selected ? (
-        <View
+        <GlassSurface
           style={styles.selCard}
+          fallbackStyle={styles.selCard}
         >
           <View style={styles.selRow}>
             <View
@@ -387,13 +388,13 @@ export default function MapScreen() {
               </Text>
             </InteractivePressable>
           </View>
-        </View>
+        </GlassSurface>
       ) : null}
 
       {mapReady ? (
         <View style={[styles.topCol, { top: insets.top + spacing.sm }]} pointerEvents="box-none">
           <View style={styles.topRow} pointerEvents="box-none">
-            <View style={styles.search}>
+            <GlassSurface style={styles.search} fallbackStyle={styles.search}>
               <Ionicons name="search" size={16} color={colors.textFaint} />
               <TextInput
                 style={styles.searchInput}
@@ -407,7 +408,7 @@ export default function MapScreen() {
                 accessibilityLabel={t('map.search_fields')}
                 maxFontSizeMultiplier={typeScale.maxMult}
               />
-            </View>
+            </GlassSurface>
             {/* ONE control for everything visual: base map + overlay live in the same sheet. */}
             <InteractivePressable
               style={styles.topChip}
@@ -423,7 +424,7 @@ export default function MapScreen() {
           </View>
 
           {showResults ? (
-            <View style={styles.results}>
+            <GlassSurface style={styles.results} fallbackStyle={styles.results}>
               {matches.map((p) => (
                 <InteractivePressable
                   key={p.id}
@@ -451,7 +452,7 @@ export default function MapScreen() {
                   </Text>
                 </View>
               ) : null}
-            </View>
+            </GlassSurface>
           ) : null}
 
           <View style={styles.banners} pointerEvents="none">

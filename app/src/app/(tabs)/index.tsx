@@ -14,7 +14,7 @@ import { api } from '@/api/client';
 import type { Alert, LatestIndices, Org, Parcel, Role, User } from '@/api/types';
 import { kindGlyph } from '@/components/glyphs';
 import { StaleBanner } from '@/components/StaleBanner';
-import { GlyphBadge, StatusChip, TintCard } from '@/components/ui';
+import { Card, GlassIconButton, GlyphBadge, InteractivePressable, StatusChip, TintCard } from '@/components/ui';
 import { arvoScoreDetail, cropLabel, scoreColor } from '@/features/insights/format';
 import { countAlertEvents, groupAlerts, type AlertEvent } from '@/features/insights/grouping';
 import { deriveFieldStatus, trendFromSeries } from '@/features/insights/status';
@@ -35,8 +35,6 @@ import {
 } from '@/theme';
 
 type Me = { user: User; org: Org; role: Role };
-
-const HIT_SLOP = { top: 4, right: 4, bottom: 4, left: 4 }; // 40pt glyph buttons → 48pt targets
 
 export default function Dashboard() {
   const { t } = useTranslation();
@@ -133,24 +131,22 @@ export default function Dashboard() {
             {me.data?.org.name ?? '—'}
           </Text>
         </View>
-        <Pressable
+        <GlassIconButton
           onPress={() => router.push('/weather')}
-          style={styles.headerButton}
-          hitSlop={HIT_SLOP}
+          haptic
           accessibilityRole="button"
           accessibilityLabel={t('dashboard.weather_link', { defaultValue: 'Meteo' })}
         >
           <Ionicons name="partly-sunny-outline" size={20} color={colors.text} />
-        </Pressable>
-        <Pressable
+        </GlassIconButton>
+        <GlassIconButton
           onPress={() => router.push('/scouting')}
-          style={styles.headerButton}
-          hitSlop={HIT_SLOP}
+          haptic
           accessibilityRole="button"
           accessibilityLabel={t('scouting.open_list')}
         >
           <Ionicons name="journal-outline" size={20} color={colors.text} />
-        </Pressable>
+        </GlassIconButton>
       </View>
 
       <StaleBanner updatedAt={parcels.dataUpdatedAt > 0 ? parcels.dataUpdatedAt : null} />
@@ -343,37 +339,41 @@ function ParcelRow({
         });
 
   return (
-    <Pressable
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+    <InteractivePressable
+      style={styles.rowTouch}
+      pressedStyle={styles.rowPressed}
+      haptic
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={a11yLabel}
     >
-      <View style={[styles.scoreBadge, { backgroundColor: scoreColor(score) }]}>
-        <Text style={styles.scoreValue} maxFontSizeMultiplier={typeScale.maxMult}>
-          {score ?? '—'}
-        </Text>
-      </View>
-      <View style={styles.rowInfo}>
-        <Text style={styles.rowName} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
-          {parcel.name}
-        </Text>
-        <Text style={styles.rowMeta} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
-          {[crop, formatHectares(parcel.area_ha)].filter(Boolean).join(' · ')}
-        </Text>
-        {fs.partial && score != null ? (
-          <Text style={styles.partialText} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('status.partial')}
+      <Card style={styles.row}>
+        <View style={[styles.scoreBadge, { backgroundColor: scoreColor(score) }]}>
+          <Text style={styles.scoreValue} maxFontSizeMultiplier={typeScale.maxMult}>
+            {score ?? '—'}
           </Text>
-        ) : null}
-      </View>
-      <View style={styles.rowRight}>
-        <StatusChip status={chipStatus} label={chipLabel} />
-        <View style={styles.trendRow}>
-          <Ionicons name={trendIcon} size={16} color={trendColor} />
         </View>
-      </View>
-    </Pressable>
+        <View style={styles.rowInfo}>
+          <Text style={styles.rowName} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
+            {parcel.name}
+          </Text>
+          <Text style={styles.rowMeta} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
+            {[crop, formatHectares(parcel.area_ha)].filter(Boolean).join(' · ')}
+          </Text>
+          {fs.partial && score != null ? (
+            <Text style={styles.partialText} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('status.partial')}
+            </Text>
+          ) : null}
+        </View>
+        <View style={styles.rowRight}>
+          <StatusChip status={chipStatus} label={chipLabel} />
+          <View style={styles.trendRow}>
+            <Ionicons name={trendIcon} size={16} color={trendColor} />
+          </View>
+        </View>
+      </Card>
+    </InteractivePressable>
   );
 }
 
@@ -406,16 +406,6 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   title: { fontFamily: fonts.displayBold, fontSize: 28, color: colors.text },
   org: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2 },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   banner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -438,17 +428,18 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: spacing.xs,
   },
+  rowTouch: { borderRadius: radius.lg },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    backgroundColor: colors.card,
     borderRadius: radius.lg,
     padding: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
   },
   pressed: { opacity: 0.7 },
+  rowPressed: { transform: [{ scale: 0.985 }] },
   rowInfo: { flex: 1 },
   rowName: { fontFamily: fonts.display, fontSize: typeScale.bodyLg, color: colors.text },
   rowMeta: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2 },

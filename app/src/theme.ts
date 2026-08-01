@@ -22,6 +22,15 @@ export const colors = {
   focus: '#6D8F78', // keyboard focus ring — visible without introducing a new accent hue
 };
 
+// iOS 26 Liquid Glass preserves Terra's warm field-notebook palette beneath native material.
+// These tints are intentionally restrained: the system provides the refraction, highlight and
+// edge treatment; the app only supplies a faint contextual color. Every glass surface has the
+// existing paper/card treatment as its fallback on older iOS versions and other platforms.
+export const glass = {
+  tint: '#F8F8F4',
+  actionTint: '#234B34',
+};
+
 export const spacing = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32 };
 export const radius = { sm: 8, md: 12, lg: 16, xl: 20, pill: 999 };
 

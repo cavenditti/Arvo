@@ -108,6 +108,27 @@ Hard rules:
   elements (FAB, map cards, dropdowns) — soft, `opacity ≤ 0.18`.
 - Cards never nest more than twice (page → card → inset tile).
 
+### iOS Liquid Glass
+
+On iOS 26 and later, Arvo layers the field-notebook palette behind the system's native
+Liquid Glass material. The material is implemented only through `GlassSurface` in
+`components/ui.tsx`, which checks the runtime API first and retains the paper treatment on
+older iOS, Android, and web.
+
+- Use glass for floating app chrome (tab bar, circular toolbar controls) and neutral content
+  cards. Let the system draw the highlight, border, and refraction; only pass a very restrained
+  Terra tint from `glass` in `theme.ts`.
+- Keep semantic weather, health, and alert gradients opaque. Their color communicates meaning
+  and must stay clear in direct sun.
+- The iOS tab bar uses SF Symbols and the system material; do not substitute a custom glyph or a
+  solid bar behind it.
+- Native navigation titles use the system San Francisco treatment so back navigation, sheets, and
+  system controls read as iOS; content typography keeps the Terra voices.
+- Never animate a `GlassView`, or any of its ancestors, with `opacity`; it disables the native
+  material. Use a transform or the component's native glass-style animation.
+- The accessibility/system fallback is intentional. Never simulate blur with a low-contrast
+  translucent surface when native glass is unavailable.
+
 ## 5. Iconography & illustration
 
 ### Bleed glyphs (`components/glyphs.tsx`)

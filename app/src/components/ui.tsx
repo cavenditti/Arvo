@@ -1,6 +1,11 @@
 // OWNER: fe-shell — Terra UI kit (docs/DESIGN.md): presentational primitives shared across
 // screens. Theme tokens only; no fontWeight next to Terra families — weights are families.
 import { LinearGradient } from 'expo-linear-gradient';
+import {
+  GlassView,
+  isGlassEffectAPIAvailable,
+  isLiquidGlassAvailable,
+} from 'expo-glass-effect';
 import type { ReactNode } from 'react';
 import {
   Platform,
@@ -11,6 +16,7 @@ import {
   type PressableProps,
   type StyleProp,
   type TextStyle,
+  type ViewProps,
   type ViewStyle,
 } from 'react-native';
 
@@ -18,9 +24,81 @@ import type { IndexName } from '@/api/types';
 import Glyph, { type GlyphName } from '@/components/glyphs';
 import { indexColor } from '@/features/insights/format';
 import * as haptics from '@/lib/haptics';
-import { colors, fonts, motion, radius, spacing, statusColors, type as typeScale, type Status } from '@/theme';
+import {
+  colors,
+  fonts,
+  glass,
+  motion,
+  radius,
+  spacing,
+  statusColors,
+  touch,
+  type as typeScale,
+  type Status,
+} from '@/theme';
 
 type InteractiveState = { hovered?: boolean; focused?: boolean; pressed: boolean };
+
+/**
+ * Liquid Glass is a runtime capability: importing the component is safe, but rendering it on
+ * early iOS 26 betas without the underlying API is not. Keep the check in one place and fall
+ * back to Terra paper everywhere else.
+ */
+const nativeLiquidGlass = (() => {
+  if (Platform.OS !== 'ios') return false;
+  try {
+    return isGlassEffectAPIAvailable() && isLiquidGlassAvailable();
+  } catch {
+    return false;
+  }
+})();
+
+export function hasNativeLiquidGlass(): boolean {
+  return nativeLiquidGlass;
+}
+
+type GlassSurfaceProps = Omit<ViewProps, 'children' | 'style'> & {
+  children?: ReactNode;
+  style?: StyleProp<ViewStyle>;
+  /** Existing opaque treatment used on non-Liquid-Glass platforms. */
+  fallbackStyle?: StyleProp<ViewStyle>;
+  tintColor?: string;
+  isInteractive?: boolean;
+};
+
+/**
+ * A platform-adaptive visual surface. On supported iOS devices it is a real UIKit liquid-glass
+ * material; elsewhere it is the supplied paper treatment. Do not animate this component or one
+ * of its ancestors with `opacity` — use transforms or the native glass style animation instead.
+ */
+export function GlassSurface({
+  children,
+  style,
+  fallbackStyle,
+  tintColor = glass.tint,
+  isInteractive = false,
+  ...props
+}: GlassSurfaceProps) {
+  if (!nativeLiquidGlass) {
+    return (
+      <View {...props} style={[fallbackStyle, style]}>
+        {children}
+      </View>
+    );
+  }
+
+  return (
+    <GlassView
+      {...props}
+      style={[style, styles.liquidSurface]}
+      tintColor={tintColor}
+      isInteractive={isInteractive}
+      glassEffectStyle="regular"
+    >
+      {children}
+    </GlassView>
+  );
+}
 
 type InteractivePressableProps = Omit<PressableProps, 'style'> & {
   style?: StyleProp<ViewStyle> | ((state: InteractiveState) => StyleProp<ViewStyle>);
@@ -68,6 +146,34 @@ export function InteractivePressable({
         ];
       }}
     />
+  );
+}
+
+/** A circular, native-material control for toolbar actions. */
+export function GlassIconButton({
+  children,
+  style,
+  ...props
+}: Omit<InteractivePressableProps, 'style' | 'pressedStyle'> & {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <InteractivePressable
+      {...props}
+      style={[styles.glassIconButtonTouch, style]}
+      // Opacity on a GlassView ancestor disables the material, so press feedback is transform-only.
+      pressedStyle={styles.glassIconButtonPressed}
+    >
+      <GlassSurface
+        pointerEvents="none"
+        style={styles.glassIconButtonSurface}
+        fallbackStyle={styles.glassIconButtonFallback}
+        isInteractive
+      >
+        {children}
+      </GlassSurface>
+    </InteractivePressable>
   );
 }
 
@@ -202,9 +308,13 @@ export function NdviSwatch({
   );
 }
 
-/** Paper card: soft border, large radius. */
+/** Paper card on older platforms, real native material on Liquid-Glass-capable iOS. */
 export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  return <View style={[styles.card, style]}>{children}</View>;
+  return (
+    <GlassSurface style={[styles.card, style]} fallbackStyle={styles.card}>
+      {children}
+    </GlassSurface>
+  );
 }
 
 /**
@@ -328,6 +438,26 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   interactivePressed: { opacity: 0.76, transform: [{ scale: 0.985 }] },
   interactiveDisabled: { opacity: 0.48, cursor: 'not-allowed' } as unknown as ViewStyle,
+  // Applied after the caller's styles so paper fills and manual hairlines never paint over
+  // the system material or its native edge treatment.
+  liquidSurface: { backgroundColor: 'transparent', borderWidth: 0 },
+  glassIconButtonTouch: {
+    width: touch.min,
+    height: touch.min,
+    borderRadius: touch.min / 2,
+  },
+  glassIconButtonSurface: {
+    flex: 1,
+    borderRadius: touch.min / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  glassIconButtonFallback: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  glassIconButtonPressed: { transform: [{ scale: 0.94 }] },
   mono: {
     fontFamily: fonts.monoSemiBold,
     textTransform: 'uppercase',

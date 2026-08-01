@@ -24,7 +24,7 @@ import { useAuth } from '@/auth/AuthContext';
 import { setLang, type Lang } from '@/auth/storage';
 import PrimeCard from '@/components/PrimeCard';
 import { showToast } from '@/components/Toast';
-import { InteractivePressable } from '@/components/ui';
+import { GlassSurface, InteractivePressable } from '@/components/ui';
 import i18n from '@/i18n';
 import * as haptics from '@/lib/haptics';
 import {
@@ -38,12 +38,12 @@ import { colors, fonts, radius, spacing, touch, type as typeScale } from '@/them
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <View style={styles.card}>
+    <GlassSurface style={styles.card} fallbackStyle={styles.card}>
       <Text style={styles.cardTitle} maxFontSizeMultiplier={typeScale.maxMult}>
         {title}
       </Text>
       {children}
-    </View>
+    </GlassSurface>
   );
 }
 
