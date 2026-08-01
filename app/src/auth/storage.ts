@@ -10,6 +10,7 @@ import type { Org, Role, User } from '../api/types';
 const TOKEN_KEY = 'arvo.auth.token';
 const SESSION_KEY = 'arvo.auth.session';
 const LANG_KEY = 'arvo.lang';
+const BIOMETRIC_KEY = 'arvo.biometric';
 
 const useSecureStore = Platform.OS !== 'web';
 
@@ -50,6 +51,18 @@ export async function clearAuth(): Promise<void> {
   await AsyncStorage.removeItem(SESSION_KEY);
   if (useSecureStore) await SecureStore.deleteItemAsync(TOKEN_KEY);
   else await AsyncStorage.removeItem(TOKEN_KEY);
+}
+
+// Device-level preference (not a secret): require Face ID / Touch ID before a
+// restored session becomes usable. Survives logout on purpose — it protects the
+// device, not one account. Native only; web ignores it entirely.
+export async function getBiometricPref(): Promise<boolean> {
+  return (await AsyncStorage.getItem(BIOMETRIC_KEY)) === '1';
+}
+
+export async function setBiometricPref(enabled: boolean): Promise<void> {
+  if (enabled) await AsyncStorage.setItem(BIOMETRIC_KEY, '1');
+  else await AsyncStorage.removeItem(BIOMETRIC_KEY);
 }
 
 export type Lang = 'it' | 'en';

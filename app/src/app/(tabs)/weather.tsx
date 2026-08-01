@@ -12,12 +12,14 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { G, Line, Rect, Text as SvgText } from 'react-native-svg';
 
-import type { Advisory, AdvisoryKind, AgroSummary, Parcel, WeatherDaily } from '@/api/types';
+import type { AdvisoryKind, AgroSummary, Parcel, WeatherDaily } from '@/api/types';
 import { kindGlyph, weatherGlyph, weatherTone } from '@/components/glyphs';
 import { Card, GlyphCard, InteractivePressable, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
 import { useOutsideDismiss } from '@/components/useOutsideDismiss';
 import { useAdvisories, useAgro, useParcels, useWeather } from '@/features/parcels/hooks';
 import { dfLocale } from '@/features/insights/format';
+import { advisoryCopy, mergeAdvisoryRuns, type AdvisoryRun } from '@/features/weather/merge';
+import { formatNumber, formatShortDay } from '@/lib/format';
 import {
   colors,
   fonts,
@@ -26,6 +28,7 @@ import {
   severityGradient,
   spacing,
   statusColors,
+  type as typeScale,
   weatherGradient,
 } from '@/theme';
 
@@ -50,30 +53,22 @@ function severityGlyphTone(severity?: string | null): string {
   return colors.info;
 }
 
-/** Coordinate label like "43.4°N 11.2°E" (1 decimal, hemisphere-aware). */
-function coordLabel(lat: number, lon: number): string {
-  const ns = `${Math.abs(lat).toFixed(1)}°${lat >= 0 ? 'N' : 'S'}`;
-  const ew = `${Math.abs(lon).toFixed(1)}°${lon >= 0 ? 'E' : 'W'}`;
-  return `${ns} ${ew}`;
+/** Latest merged run of a given kind (newest end date wins). Consecutive same-kind days
+ * arrive already collapsed by mergeAdvisoryRuns — one card per event, never per day. */
+function latestRunByKind(runs: AdvisoryRun[], kind: AdvisoryKind): AdvisoryRun | undefined {
+  return runs.filter((r) => r.kind === kind).sort((a, b) => b.to.localeCompare(a.to))[0];
 }
 
-/** Latest advisory of a given kind (newest date wins). */
-function latestByKind(advisories: Advisory[], kind: AdvisoryKind): Advisory | undefined {
-  return advisories
-    .filter((a) => a.kind === kind)
-    .sort((a, b) => b.date.localeCompare(a.date))[0];
-}
-
-/** Pill label + tint for an advisory (severity first, then kind), all from status tokens. */
-function advisoryPill(a: Advisory): { key: string; def: string; fg: string; bg: string } {
+/** Pill label + tint for an advisory run (severity first, then kind), from status tokens. */
+function advisoryPill(kind: string, severity: string): { key: string; def: string; fg: string; bg: string } {
   const { attention, watch, healthy } = statusColors;
-  if (a.severity === 'critical') {
+  if (severity === 'critical') {
     return { key: 'weather.risk_high', def: 'High', fg: attention.fg, bg: attention.bg };
   }
-  if (a.kind === 'heat_stress' || a.severity === 'warning') {
+  if (kind === 'heat_stress' || severity === 'warning') {
     return { key: 'weather.risk_elevated', def: 'Elevated', fg: watch.fg, bg: watch.bg };
   }
-  if (a.kind === 'spray_window') {
+  if (kind === 'spray_window') {
     return { key: 'weather.risk_good', def: 'Good', fg: healthy.fg, bg: healthy.bg };
   }
   return { key: 'weather.risk_low', def: 'Low', fg: healthy.fg, bg: healthy.bg };
@@ -131,7 +126,8 @@ export default function WeatherScreen() {
   const forecast = daily.filter((d) => d.is_forecast).slice(0, 7);
   const strip = forecast.length > 0 ? forecast : daily.slice(-7);
   const agro = agroQ.data;
-  const advisories = advisoriesQ.data ?? [];
+  // consecutive same-kind days collapse into single events (features/weather/merge.ts)
+  const advisoryRuns = mergeAdvisoryRuns(advisoriesQ.data);
 
   return (
     <View style={styles.root}>
@@ -139,10 +135,13 @@ export default function WeatherScreen() {
       <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
         <View style={styles.headerRow}>
           <View style={styles.flex1}>
-            <Text style={styles.h1}>{t('weather.title', { defaultValue: 'Weather' })}</Text>
+            <Text style={styles.h1} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('weather.title', { defaultValue: 'Weather' })}
+            </Text>
             {selected ? (
-              <Text style={styles.subtitle} numberOfLines={1}>
-                {`${selected.name} · ${coordLabel(selected.centroid.lat, selected.centroid.lon)}`}
+              // field name only — raw coordinates are jargon, not a header
+              <Text style={styles.subtitle} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
+                {selected.name}
               </Text>
             ) : null}
           </View>
@@ -194,15 +193,10 @@ export default function WeatherScreen() {
           </Card>
         )}
 
-        {/* advisory cards */}
+        {/* advisory cards — one per kind, fed with the latest merged run */}
         <View style={styles.cardRow}>
           {ADVISORY_KINDS.map((kind) => (
-            <AdvisoryCard
-              key={kind}
-              kind={kind}
-              advisory={latestByKind(advisories, kind)}
-              locale={locale}
-            />
+            <AdvisoryCard key={kind} kind={kind} run={latestRunByKind(advisoryRuns, kind)} />
           ))}
         </View>
 
@@ -274,20 +268,12 @@ function ParcelSelector({
 
 // ── advisory card ────────────────────────────────────────────────────────────
 
-function AdvisoryCard({
-  kind,
-  advisory,
-  locale,
-}: {
-  kind: AdvisoryKind;
-  advisory: Advisory | undefined;
-  locale: Locale;
-}) {
+function AdvisoryCard({ kind, run }: { kind: AdvisoryKind; run: AdvisoryRun | undefined }) {
   const { t } = useTranslation();
   const label = t(KIND_LABEL[kind].key, { defaultValue: KIND_LABEL[kind].def });
   const glyph = kindGlyph(kind);
 
-  if (!advisory) {
+  if (!run) {
     return (
       <GlyphCard
         gradient={gradients.paper}
@@ -298,9 +284,9 @@ function AdvisoryCard({
         style={styles.advCard}
       >
         <View style={styles.advInner}>
-          <MonoLabel size={10}>{label}</MonoLabel>
-          <Text style={styles.advHeadline}>—</Text>
-          <Text style={styles.advMuted}>
+          <MonoLabel>{label}</MonoLabel>
+          <Text style={styles.advHeadline} maxFontSizeMultiplier={typeScale.maxMult}>—</Text>
+          <Text style={styles.advMuted} maxFontSizeMultiplier={typeScale.maxMult}>
             {t('weather.no_advisory', { defaultValue: 'No advisory' })}
           </Text>
         </View>
@@ -308,25 +294,36 @@ function AdvisoryCard({
     );
   }
 
-  const pill = advisoryPill(advisory);
+  const pill = advisoryPill(run.kind, run.severity);
+  const copy = advisoryCopy(run);
+  // a merged run shows its whole span in the headline; singles keep the single day
+  const headline =
+    run.days > 1 ? `${formatShortDay(run.from)} – ${formatShortDay(run.to)}` : formatShortDay(run.from);
+  const body = copy.bodyKey ? t(copy.bodyKey, copy.bodyParams) : copy.fallbackBody;
+
   return (
     <GlyphCard
-      gradient={severityGradient(advisory.severity)}
+      gradient={severityGradient(run.severity)}
       glyph={glyph}
-      glyphColor={severityGlyphTone(advisory.severity)}
+      glyphColor={severityGlyphTone(run.severity)}
       glyphOpacity={0.16}
       glyphSize={130}
       style={styles.advCard}
     >
       <View style={styles.advInner}>
         <View style={styles.advTop}>
-          <MonoLabel size={10}>{label}</MonoLabel>
+          <MonoLabel>{label}</MonoLabel>
           <Pill label={t(pill.key, { defaultValue: pill.def })} fg={pill.fg} bg={pill.bg} />
         </View>
-        <Text style={styles.advHeadline}>
-          {format(parseISO(advisory.date), 'EEE d MMM', { locale })}
-        </Text>
-        <Text style={styles.advBody}>{advisory.message}</Text>
+        <Text style={styles.advHeadline} maxFontSizeMultiplier={typeScale.maxMult}>{headline}</Text>
+        {copy.titleKey ? (
+          <Text style={styles.advBody} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t(copy.titleKey, copy.titleParams)}
+          </Text>
+        ) : null}
+        {body ? (
+          <Text style={styles.advBody} maxFontSizeMultiplier={typeScale.maxMult}>{body}</Text>
+        ) : null}
       </View>
     </GlyphCard>
   );
@@ -350,11 +347,15 @@ function EtCard({
   return (
     <Card style={styles.etCard}>
       <View style={styles.cardHead}>
-        <Text style={styles.cardTitle}>
-          {t('weather.et_title', { defaultValue: 'Evapotranspiration & water balance' })}
+        {/* plain phrase first, acronym in parentheses (docs/DESIGN.md §14) */}
+        <Text style={styles.cardTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+          {t('weather_human.et_card_title', { defaultValue: 'Acqua richiesta e pioggia (ET₀)' })}
         </Text>
         <View style={styles.legendInline}>
-          <LegendSquare color={colors.success} label={t('weather.et0', { defaultValue: 'ET₀' })} />
+          <LegendSquare
+            color={colors.success}
+            label={t('weather_human.et0_short', { defaultValue: 'Acqua richiesta (ET₀)' })}
+          />
           <LegendSquare color={colors.info} label={t('weather.rain', { defaultValue: 'Rain' })} />
         </View>
       </View>
@@ -362,25 +363,28 @@ function EtCard({
       {chartData.length > 0 ? (
         <EtChart data={chartData} locale={locale} />
       ) : (
-        <Text style={styles.muted}>{t('chart.no_data')}</Text>
+        <Text style={styles.muted} maxFontSizeMultiplier={typeScale.maxMult}>{t('chart.no_data')}</Text>
       )}
 
       {agro ? (
         <View style={styles.statRow}>
-          <Stat value={`${Math.round(agro.et0_7d_mm)}`} label={t('weather.et0_7d')} />
           <Stat
-            value={`${Math.round(agro.precip_7d_mm)}`}
+            value={`${formatNumber(agro.et0_7d_mm, { maximumFractionDigits: 0 })} mm`}
+            label={t('weather_human.et0_short', { defaultValue: 'Acqua richiesta (ET₀)' })}
+          />
+          <Stat
+            value={`${formatNumber(agro.precip_7d_mm, { maximumFractionDigits: 0 })} mm`}
             label={t('weather.precip_7d', { defaultValue: 'Rain 7d' })}
             color={colors.info}
           />
           <Stat
-            value={`${Math.round(agro.water_balance_7d_mm)}`}
-            label={t('weather.balance_7d')}
+            value={`${formatNumber(agro.water_balance_7d_mm, { maximumFractionDigits: 0 })} mm`}
+            label={t('weather_human.balance', { defaultValue: 'Bilancio idrico' })}
             color={balanceNeg ? colors.accent : colors.text}
           />
           {agro.notes.length > 0 ? (
             <TintCard gradient={gradients.eucalyptus} style={styles.noteCard}>
-              <Text style={styles.noteCardText} numberOfLines={2}>
+              <Text style={styles.noteCardText} numberOfLines={2} maxFontSizeMultiplier={typeScale.maxMult}>
                 {agro.notes[0]}
               </Text>
             </TintCard>
@@ -491,6 +495,9 @@ function EtBars({
 
 // ── GDD card ─────────────────────────────────────────────────────────────────
 
+/** Track scale ceiling for the season progress bar (typical full-season GDD budget). */
+const GDD_SCALE_MAX = 1000;
+
 function GddCard({ agro, locale }: { agro: AgroSummary | undefined; locale: Locale }) {
   const { t } = useTranslation();
 
@@ -505,16 +512,16 @@ function GddCard({ agro, locale }: { agro: AgroSummary | undefined; locale: Loca
         style={styles.gddCard}
       >
         <View style={styles.cardHead}>
-          <Text style={styles.cardTitle}>
-            {t('weather.gdd_title', { defaultValue: 'Growing degree days' })}
+          <Text style={styles.cardTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('weather_human.gdd')}
           </Text>
         </View>
-        <Text style={styles.muted}>{t('chart.no_data')}</Text>
+        <Text style={styles.muted} maxFontSizeMultiplier={typeScale.maxMult}>{t('chart.no_data')}</Text>
       </GlyphCard>
     );
   }
 
-  const pct = Math.max(0, Math.min(1, agro.gdd.sum / 1000));
+  const pct = Math.max(0, Math.min(1, agro.gdd.sum / GDD_SCALE_MAX));
   const extraNotes = agro.notes.slice(1); // notes[0] is shown on the ET card
 
   return (
@@ -527,26 +534,31 @@ function GddCard({ agro, locale }: { agro: AgroSummary | undefined; locale: Loca
       style={styles.gddCard}
     >
       <View style={styles.cardHead}>
-        <Text style={styles.cardTitle}>
-          {t('weather.gdd_title', { defaultValue: 'Growing degree days' })}
+        {/* "Caldo accumulato (GDD)" — plain phrase leads, the acronym trails */}
+        <Text style={styles.cardTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+          {t('weather_human.gdd')}
         </Text>
-        <MonoLabel size={10}>
-          {t('weather.gdd_base', { defaultValue: 'Base {{temp}} °C', temp: agro.gdd.base_temp })}
-        </MonoLabel>
       </View>
 
       <View style={styles.gddValueRow}>
         <MonoValue size={44} weight="600">
-          {Math.round(agro.gdd.sum)}
+          {formatNumber(agro.gdd.sum, { maximumFractionDigits: 0 })}
         </MonoValue>
         <MonoLabel size={11} color={colors.textMuted} style={styles.gddUnit}>
           GDD
         </MonoLabel>
       </View>
-      <Text style={styles.gddSince}>
+      <Text style={styles.gddSince} maxFontSizeMultiplier={typeScale.maxMult}>
         {t('weather.gdd_since', {
           defaultValue: 'Accumulated since {{date}}',
           date: format(parseISO(agro.gdd.from_date), 'd MMM yyyy', { locale }),
+        })}
+      </Text>
+      {/* base temperature explained in plain words, not just "Base 10 °C" */}
+      <Text style={[styles.noteText, styles.gddBasePlain]} maxFontSizeMultiplier={typeScale.maxMult}>
+        {t('weather_human.gdd_base_plain', {
+          defaultValue: 'Contiamo solo il caldo sopra {{temp}} °C: sotto quella soglia la coltura non cresce.',
+          temp: formatNumber(agro.gdd.base_temp, { maximumFractionDigits: 1 }),
         })}
       </Text>
 
@@ -554,14 +566,14 @@ function GddCard({ agro, locale }: { agro: AgroSummary | undefined; locale: Loca
         <View style={[styles.fill, { width: `${pct * 100}%` }]} />
       </View>
       <View style={styles.scaleRow}>
-        <MonoLabel size={9}>0</MonoLabel>
-        <MonoLabel size={9}>1000</MonoLabel>
+        <MonoLabel>{formatNumber(0)}</MonoLabel>
+        <MonoLabel>{formatNumber(GDD_SCALE_MAX)}</MonoLabel>
       </View>
 
       {extraNotes.length > 0 ? (
         <View style={styles.noteList}>
           {extraNotes.map((n, i) => (
-            <Text key={i} style={styles.noteText}>{`– ${n}`}</Text>
+            <Text key={i} style={styles.noteText} maxFontSizeMultiplier={typeScale.maxMult}>{`– ${n}`}</Text>
           ))}
         </View>
       ) : null}
@@ -586,9 +598,8 @@ function Stat({ value, label, color = colors.text }: { value: string; label: str
       <MonoValue size={16} weight="500" color={color}>
         {value}
       </MonoValue>
-      <MonoLabel size={9} style={styles.statLabel}>
-        {label}
-      </MonoLabel>
+      {/* type.caption (12) is the floor for data labels in the field */}
+      <MonoLabel style={styles.statLabel}>{label}</MonoLabel>
     </View>
   );
 }
@@ -735,7 +746,8 @@ const styles = StyleSheet.create({
   gddCard: { flexGrow: 1, flexBasis: 240, minWidth: 220, padding: spacing.md, borderRadius: radius.lg },
   gddValueRow: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, marginTop: spacing.xs },
   gddUnit: { paddingBottom: 7 },
-  gddSince: { fontSize: 12, color: colors.textMuted, marginTop: 2, marginBottom: spacing.md, fontFamily: fonts.body },
+  gddSince: { fontSize: 12, color: colors.textMuted, marginTop: 2, fontFamily: fonts.body },
+  gddBasePlain: { marginTop: spacing.xs, marginBottom: spacing.md },
   track: {
     height: 12,
     borderRadius: 6,

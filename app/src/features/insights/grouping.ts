@@ -167,7 +167,10 @@ export function groupAlerts(
     const vigor = VIGOR_KINDS.has(first.kind);
 
     // i18next resolves _one/_other from `count`; keys are the §Copy spec contract.
-    const titleKey = vigor ? 'alerts_group.title_vigor' : 'alerts_group.title_generic';
+    // No resolvable field name (org-level alert, or names still loading) → the _noparcel
+    // variants, so titles never render a dangling "— " (seen live on the dashboard banner).
+    const base = vigor ? 'alerts_group.title_vigor' : 'alerts_group.title_generic';
+    const titleKey = parcel ? base : `${base}_noparcel`;
     const titleParams: Record<string, unknown> = { count, parcel };
 
     let bodyKey: string;

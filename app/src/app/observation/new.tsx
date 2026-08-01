@@ -1,14 +1,19 @@
-// OWNER: fe-scouting — New observation: geolocation + nearest-parcel auto-pick, note, tags,
-// photos (camera/library). Save is fully offline: local write + photo queue, no network awaits.
+// OWNER: capture-observe — one-thumb field capture (docs/UX-REVAMP.md). Camera-first: the photo
+// tiles lead, note and tags follow, and the location line speaks the farmer's language
+// ("Dentro Uliveto Vecchio") instead of raw GPS decimals. Every permission dialog is primed with
+// a PrimeCard before iOS asks. Save stays fully offline: local write + photo queue, then back.
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Crypto from 'expo-crypto';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,88 +21,168 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { Observation } from '@/api/types';
+import type { Observation, Parcel } from '@/api/types';
+import PrimeCard from '@/components/PrimeCard';
+import { useOnlineStatus } from '@/components/StaleBanner';
+import { showToast } from '@/components/Toast';
 import { TintCard } from '@/components/ui';
 import { useOutsideDismiss } from '@/components/useOutsideDismiss';
-import { nearestParcel, useParcels } from '@/features/scouting/parcels';
+import { useParcels } from '@/features/parcels/hooks';
 import { OBSERVATION_TAGS } from '@/features/scouting/tags';
+import { nearestParcel, pointInPolygon } from '@/lib/geo';
+import * as haptics from '@/lib/haptics';
 import { queuePhoto, upsertLocal } from '@/offline/queue';
-import { colors, fonts, gradients, radius, spacing } from '@/theme';
+import { colors, fonts, gradients, radius, spacing, touch, type as typeScale } from '@/theme';
 
-type LocStatus = 'pending' | 'ok' | 'denied' | 'unavailable';
+// Priming flags — 'arvo.primed.location' is intentionally the same string parcel-flow uses,
+// so the farmer sees the location pitch once, wherever he meets it first.
+const CAMERA_PRIMED_KEY = 'arvo.primed.camera';
+const LOCATION_PRIMED_KEY = 'arvo.primed.location';
+
+const NEAR_MAX_M = 500;
+
+type LocStatus = 'pending' | 'unprimed' | 'skipped' | 'ok' | 'denied' | 'unavailable';
+
 interface LocalPhoto {
   uri: string;
   name: string;
   mime: string;
 }
 
+type LocationMatch =
+  | { kind: 'inside'; parcel: Parcel }
+  | { kind: 'near'; parcel: Parcel; distanceM: number }
+  | { kind: 'far' };
+
 export default function Screen() {
   const { t } = useTranslation();
   const router = useRouter();
-  // "Scout here"/"Record observation" from a parcel context preselects that parcel;
-  // otherwise GPS auto-picks the nearest one below. `plantId` arrives from the plant detail
-  // screen and pins the note to that plant (FR-P-060, docs/API-PLANT.md §Per-plant scouting) —
-  // it is carried through, never edited here.
+  const insets = useSafeAreaInsets();
+  const online = useOnlineStatus();
+  // "Scout here"/"Rileva qui" from a parcel or map context preselects that parcel — the strongest
+  // signal, never overridden by GPS. `plantId` arrives from the plant detail screen and pins the
+  // note to that plant (FR-P-060) — carried through, never edited here.
   const { parcelId: initialParcelId, plantId } = useLocalSearchParams<{
     parcelId?: string;
     plantId?: string;
   }>();
   const parcelsQ = useParcels();
-  const parcels = useMemo(() => parcelsQ.data ?? [], [parcelsQ.data]);
+  const parcels = parcelsQ.data ?? [];
 
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [locStatus, setLocStatus] = useState<LocStatus>('pending');
   const [parcelId, setParcelId] = useState<string | null>(initialParcelId ?? null);
   const [parcelTouched, setParcelTouched] = useState(!!initialParcelId);
-  const [autoPicked, setAutoPicked] = useState(false);
   const [note, setNote] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [customTag, setCustomTag] = useState('');
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
+  const [cameraPrimed, setCameraPrimed] = useState(false);
+  const [showCameraPrime, setShowCameraPrime] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<View | null>(null);
   const closePicker = useCallback(() => setPickerOpen(false), []);
   useOutsideDismiss(pickerRef, pickerOpen, closePicker);
 
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  /** The real system prompt + fix. Only ever called after priming (or with permission granted). */
+  const detectLocation = useCallback(async () => {
+    setLocStatus('pending');
+    try {
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (!mounted.current) return;
+      if (!perm.granted) {
+        setLocStatus('denied');
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      if (!mounted.current) return;
+      setCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      setLocStatus('ok');
+    } catch {
+      if (mounted.current) setLocStatus('unavailable');
+    }
+  }, []);
+
+  // Boot: never let iOS ask cold. Fetch straight away only when the prime was already shown
+  // (or the permission already exists); otherwise park on the PrimeCard.
   useEffect(() => {
     let active = true;
     (async () => {
+      let cameraFlag = false;
+      let locationFlag = false;
       try {
-        const perm = await Location.requestForegroundPermissionsAsync();
-        if (!perm.granted) {
-          if (active) setLocStatus('denied');
+        const pairs = await AsyncStorage.multiGet([CAMERA_PRIMED_KEY, LOCATION_PRIMED_KEY]);
+        for (const [key, value] of pairs) {
+          if (key === CAMERA_PRIMED_KEY) cameraFlag = value === '1';
+          if (key === LOCATION_PRIMED_KEY) locationFlag = value === '1';
+        }
+      } catch {
+        // storage unavailable — treat as unprimed
+      }
+      if (!active) return;
+      setCameraPrimed(cameraFlag);
+      if (locationFlag) {
+        void detectLocation();
+        return;
+      }
+      try {
+        const perm = await Location.getForegroundPermissionsAsync();
+        if (!active) return;
+        if (perm.granted) {
+          // Granted elsewhere — no pitch needed, remember it.
+          void AsyncStorage.setItem(LOCATION_PRIMED_KEY, '1').catch(() => {});
+          void detectLocation();
           return;
         }
-        const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-        if (!active) return;
-        setCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-        setLocStatus('ok');
       } catch {
-        if (active) setLocStatus('unavailable');
+        // fall through to priming
       }
+      if (active) setLocStatus('unprimed');
     })();
     return () => {
       active = false;
     };
-  }, []);
+  }, [detectLocation]);
 
-  // Auto-pick nearest parcel once coords + parcels are available (unless the user chose manually).
-  useEffect(() => {
-    if (parcelTouched || !coords || parcels.length === 0) return;
-    const near = nearestParcel(parcels, coords.lat, coords.lon, 2);
-    if (near) {
-      setParcelId(near.id);
-      setAutoPicked(true);
+  const acceptLocationPrime = () => {
+    void AsyncStorage.setItem(LOCATION_PRIMED_KEY, '1').catch(() => {});
+    void detectLocation();
+  };
+
+  // Where the fix lands, in field terms: inside a parcel beats near one; far keeps quiet coords.
+  // Derived at render (the compiler memoizes) — never stored, so it can't fight the user's pick.
+  let match: LocationMatch | null = null;
+  if (coords && parcels.length > 0) {
+    const inside = parcels.find((p) => pointInPolygon(coords.lon, coords.lat, p.geometry));
+    if (inside) {
+      match = { kind: 'inside', parcel: inside };
+    } else {
+      const near = nearestParcel(parcels, coords.lon, coords.lat);
+      match =
+        near && near.distanceM < NEAR_MAX_M
+          ? { kind: 'near', parcel: near.parcel, distanceM: near.distanceM }
+          : { kind: 'far' };
     }
-  }, [coords, parcels, parcelTouched]);
+  }
 
-  const selectedParcel = useMemo(
-    () => parcels.find((p) => p.id === parcelId) ?? null,
-    [parcels, parcelId],
-  );
+  // GPS auto-pick is derived state: the user's own choice (or ?parcelId=) always wins over it.
+  const autoParcel = !parcelTouched && match != null && match.kind !== 'far' ? match.parcel : null;
+  const effectiveParcelId = autoParcel ? autoParcel.id : parcelId;
+  const autoPicked = autoParcel != null;
+
+  const selectedParcel = parcels.find((p) => p.id === effectiveParcelId) ?? null;
 
   const toggleTag = (tag: string) =>
     setTags((prev) => (prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]));
@@ -119,15 +204,42 @@ export default function Screen() {
     ]);
   };
 
-  const pickFromCamera = async () => {
+  const launchCamera = useCallback(async () => {
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) return;
       const res = await ImagePicker.launchCameraAsync({ quality: 0.6 });
-      if (!res.canceled) addAssets(res.assets);
+      if (!res.canceled && mounted.current) addAssets(res.assets);
     } catch {
       // camera unavailable (e.g. web) — silently ignore
     }
+  }, []);
+
+  // First camera use goes through the PrimeCard; a permission granted elsewhere skips the pitch.
+  const pickFromCamera = async () => {
+    if (cameraPrimed) {
+      void launchCamera();
+      return;
+    }
+    try {
+      const perm = await ImagePicker.getCameraPermissionsAsync();
+      if (perm.granted) {
+        setCameraPrimed(true);
+        void AsyncStorage.setItem(CAMERA_PRIMED_KEY, '1').catch(() => {});
+        void launchCamera();
+        return;
+      }
+    } catch {
+      // fall through to priming
+    }
+    setShowCameraPrime(true);
+  };
+
+  const acceptCameraPrime = () => {
+    setShowCameraPrime(false);
+    setCameraPrimed(true);
+    void AsyncStorage.setItem(CAMERA_PRIMED_KEY, '1').catch(() => {});
+    void launchCamera();
   };
 
   const pickFromLibrary = async () => {
@@ -154,10 +266,10 @@ export default function Screen() {
     const now = new Date().toISOString();
     // The pin belongs to the parcel we arrived from — if the user re-picks another parcel the
     // plant no longer applies, and storing both would pair a plant with a foreign parcel.
-    const pinnedPlantId = plantId && parcelId === initialParcelId ? plantId : null;
+    const pinnedPlantId = plantId && effectiveParcelId === initialParcelId ? plantId : null;
     const obs: Observation = {
       id,
-      parcel_id: parcelId,
+      parcel_id: effectiveParcelId,
       plant_id: pinnedPlantId,
       note: note.trim(),
       tags,
@@ -173,80 +285,100 @@ export default function Screen() {
     for (const p of photos) {
       void queuePhoto({ obsId: id, localUri: p.uri, name: p.name, mime: p.mime });
     }
+    haptics.success();
+    showToast({ message: t(online ? 'toast.saved' : 'toast.saved_offline'), kind: 'success' });
     router.back();
   };
 
+  // The location line, in the farmer's words. Raw decimals survive only as a quiet caption.
+  const locationLine = (() => {
+    if (locStatus === 'ok' && match?.kind === 'inside') {
+      return t('observation.inside', {
+        name: match.parcel.name,
+        defaultValue: 'Dentro {{name}}',
+      });
+    }
+    if (locStatus === 'ok' && match?.kind === 'near') {
+      return t('observation.near', {
+        name: match.parcel.name,
+        m: Math.round(match.distanceM),
+        defaultValue: 'A {{m}} m da {{name}}',
+      });
+    }
+    if (locStatus === 'pending') return t('observation.location_detecting');
+    if (locStatus === 'denied') return t('observation.location_denied');
+    if (locStatus === 'unavailable') return t('observation.location_unavailable');
+    return null;
+  })();
+  const coordsCaption =
+    locStatus === 'ok' && coords && (match == null || match.kind === 'far')
+      ? `${coords.lat.toFixed(3)}, ${coords.lon.toFixed(3)}`
+      : null;
+
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      // Native stack header ≈ 44pt below the status bar (no useHeaderHeight in this navigator).
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 44 : 0}
+    >
       <Stack.Screen options={{ title: t('observation.new_title') }} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {/* Location */}
+        {/* Photos — camera first: the thing the thumb reaches for in the field */}
         <View style={styles.section}>
-          <Text style={styles.label}>{t('observation.location')}</Text>
-          <View style={styles.locRow}>
-            <Ionicons
-              name={locStatus === 'ok' ? 'location' : 'location-outline'}
-              size={18}
-              color={locStatus === 'ok' ? colors.primary : colors.textMuted}
+          {showCameraPrime ? (
+            <PrimeCard
+              icon="camera-outline"
+              titleKey="prime.camera_title"
+              bodyKey="prime.camera_body"
+              ctaKey="prime.camera_cta"
+              laterKey="prime.camera_later"
+              onAccept={acceptCameraPrime}
+              onLater={() => setShowCameraPrime(false)}
             />
-            <Text style={styles.locText}>
-              {locStatus === 'pending' && t('observation.location_detecting')}
-              {locStatus === 'ok' &&
-                coords &&
-                `${coords.lat.toFixed(5)}, ${coords.lon.toFixed(5)}`}
-              {locStatus === 'denied' && t('observation.location_denied')}
-              {locStatus === 'unavailable' && t('observation.location_unavailable')}
-            </Text>
-          </View>
-          {(locStatus === 'denied' || locStatus === 'unavailable') && (
-            <Text style={styles.hint}>{t('observation.location_manual_hint')}</Text>
-          )}
-        </View>
-
-        {/* Parcel */}
-        <View ref={pickerRef} style={styles.section}>
-          <View style={styles.rowBetween}>
-            <Text style={styles.label}>{t('observation.parcel')}</Text>
-            {autoPicked && !parcelTouched && parcelId ? (
-              <Text style={styles.autoTag}>{t('observation.parcel_auto')}</Text>
-            ) : null}
-          </View>
-          <Pressable
-            style={styles.selector}
-            accessibilityState={{ expanded: pickerOpen }}
-            onPress={() => setPickerOpen((o) => !o)}
-          >
-            <Text style={styles.selectorText}>
-              {selectedParcel ? selectedParcel.name : t('observation.parcel_none')}
-            </Text>
-            <Ionicons name={pickerOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
-          </Pressable>
-          {pickerOpen && (
-            <View style={styles.options}>
+          ) : (
+            <View style={styles.photoTiles}>
               <Pressable
-                style={styles.option}
-                onPress={() => {
-                  setParcelId(null);
-                  setParcelTouched(true);
-                  setPickerOpen(false);
-                }}
+                style={styles.cameraTile}
+                onPress={() => void pickFromCamera()}
+                accessibilityRole="button"
+                accessibilityLabel={t('observation.take_photo_big', {
+                  defaultValue: 'Scatta una foto',
+                })}
               >
-                <Text style={styles.optionText}>{t('observation.parcel_none')}</Text>
-                {parcelId === null && <Ionicons name="checkmark" size={18} color={colors.primary} />}
+                <Ionicons name="camera-outline" size={34} color={colors.primary} />
+                <Text style={styles.cameraTileText} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('observation.take_photo_big', { defaultValue: 'Scatta una foto' })}
+                </Text>
               </Pressable>
-              {parcels.map((p) => (
-                <Pressable
-                  key={p.id}
-                  style={styles.option}
-                  onPress={() => {
-                    setParcelId(p.id);
-                    setParcelTouched(true);
-                    setPickerOpen(false);
-                  }}
-                >
-                  <Text style={styles.optionText}>{p.name}</Text>
-                  {parcelId === p.id && <Ionicons name="checkmark" size={18} color={colors.primary} />}
-                </Pressable>
+              <Pressable
+                style={styles.galleryTile}
+                onPress={() => void pickFromLibrary()}
+                accessibilityRole="button"
+                accessibilityLabel={t('observation.pick_photo')}
+              >
+                <Ionicons name="images-outline" size={26} color={colors.primary} />
+                <Text style={styles.galleryTileText} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('observation.pick_photo')}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+          {photos.length > 0 && (
+            <View style={styles.thumbs}>
+              {photos.map((p) => (
+                <View key={p.uri} style={styles.thumbWrap}>
+                  <Image source={{ uri: p.uri }} style={styles.thumb} contentFit="cover" />
+                  <Pressable
+                    style={styles.thumbRemove}
+                    onPress={() => removePhoto(p.uri)}
+                    hitSlop={12}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common.cancel')}
+                  >
+                    <Ionicons name="close" size={14} color={colors.onPrimary} />
+                  </Pressable>
+                </View>
               ))}
             </View>
           )}
@@ -254,7 +386,9 @@ export default function Screen() {
 
         {/* Note */}
         <View style={styles.section}>
-          <Text style={styles.label}>{t('observation.note')}</Text>
+          <Text style={styles.label} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('observation.note')}
+          </Text>
           <TextInput
             style={styles.noteInput}
             value={note}
@@ -268,7 +402,9 @@ export default function Screen() {
 
         {/* Tags */}
         <View style={styles.section}>
-          <Text style={styles.label}>{t('observation.tags')}</Text>
+          <Text style={styles.label} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('observation.tags')}
+          </Text>
           <View style={styles.tagWrap}>
             {OBSERVATION_TAGS.map((tag) => {
               const on = tags.includes(tag);
@@ -277,8 +413,14 @@ export default function Screen() {
                   key={tag}
                   style={[styles.tagChip, on && styles.tagChipOn]}
                   onPress={() => toggleTag(tag)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: on }}
+                  accessibilityLabel={t(`tags.${tag}`, tag)}
                 >
-                  <Text style={[styles.tagChipText, on && styles.tagChipTextOn]}>
+                  <Text
+                    style={[styles.tagChipText, on && styles.tagChipTextOn]}
+                    maxFontSizeMultiplier={typeScale.maxMult}
+                  >
                     {t(`tags.${tag}`, tag)}
                   </Text>
                 </Pressable>
@@ -292,9 +434,17 @@ export default function Screen() {
                   key={tg}
                   style={[styles.tagChip, styles.tagChipOn]}
                   onPress={() => toggleTag(tg)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: true }}
+                  accessibilityLabel={tg}
                 >
-                  <Text style={[styles.tagChipText, styles.tagChipTextOn]}>{tg}</Text>
-                  <Ionicons name="close" size={14} color="#fff" />
+                  <Text
+                    style={[styles.tagChipText, styles.tagChipTextOn]}
+                    maxFontSizeMultiplier={typeScale.maxMult}
+                  >
+                    {tg}
+                  </Text>
+                  <Ionicons name="close" size={14} color={colors.onPrimary} />
                 </Pressable>
               ))}
           </View>
@@ -308,59 +458,154 @@ export default function Screen() {
               onSubmitEditing={addCustomTag}
               returnKeyType="done"
             />
-            <Pressable style={styles.addTagBtn} onPress={addCustomTag}>
-              <Text style={styles.addTagBtnText}>{t('observation.add_tag')}</Text>
+            <Pressable
+              style={styles.addTagBtn}
+              onPress={addCustomTag}
+              accessibilityRole="button"
+              accessibilityLabel={t('observation.add_tag')}
+            >
+              <Text style={styles.addTagBtnText} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('observation.add_tag')}
+              </Text>
             </Pressable>
           </View>
         </View>
 
-        {/* Photos */}
-        <View style={styles.section}>
-          <Text style={styles.label}>{t('observation.photos')}</Text>
-          <View style={styles.photoBtns}>
-            <Pressable style={styles.photoBtn} onPress={pickFromCamera}>
-              <Ionicons name="camera-outline" size={20} color={colors.primary} />
-              <Text style={styles.photoBtnText}>{t('observation.take_photo')}</Text>
-            </Pressable>
-            <Pressable style={styles.photoBtn} onPress={pickFromLibrary}>
-              <Ionicons name="images-outline" size={20} color={colors.primary} />
-              <Text style={styles.photoBtnText}>{t('observation.pick_photo')}</Text>
-            </Pressable>
+        {/* Location + field */}
+        <View ref={pickerRef} style={styles.section}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.label} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('observation.parcel')}
+            </Text>
+            {autoPicked ? (
+              <Text style={styles.autoTag} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('observation.parcel_auto')}
+              </Text>
+            ) : null}
           </View>
-          {photos.length > 0 && (
-            <View style={styles.thumbs}>
-              {photos.map((p) => (
-                <View key={p.uri} style={styles.thumbWrap}>
-                  <Image source={{ uri: p.uri }} style={styles.thumb} contentFit="cover" />
-                  <Pressable
-                    style={styles.thumbRemove}
-                    onPress={() => removePhoto(p.uri)}
-                    hitSlop={12}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.cancel')}
-                  >
-                    <Ionicons name="close" size={14} color="#fff" />
-                  </Pressable>
+          {locStatus === 'unprimed' ? (
+            <PrimeCard
+              icon="location-outline"
+              titleKey="prime.location_title"
+              bodyKey="prime.location_body"
+              ctaKey="prime.location_cta"
+              laterKey="prime.location_later"
+              onAccept={acceptLocationPrime}
+              onLater={() => setLocStatus('skipped')}
+            />
+          ) : (
+            <>
+              {locationLine ? (
+                <View style={styles.locRow}>
+                  <Ionicons
+                    name={locStatus === 'ok' ? 'location' : 'location-outline'}
+                    size={18}
+                    color={locStatus === 'ok' ? colors.primary : colors.textMuted}
+                  />
+                  <Text style={styles.locText} maxFontSizeMultiplier={typeScale.maxMult}>
+                    {locationLine}
+                  </Text>
                 </View>
+              ) : null}
+              {coordsCaption ? (
+                <Text style={styles.locCaption} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {coordsCaption}
+                </Text>
+              ) : null}
+              {(locStatus === 'denied' ||
+                locStatus === 'unavailable' ||
+                locStatus === 'skipped') && (
+                <Text style={styles.hint} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('observation.location_manual_hint')}
+                </Text>
+              )}
+            </>
+          )}
+          <Pressable
+            style={styles.selector}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: pickerOpen }}
+            accessibilityLabel={t('observation.parcel')}
+            onPress={() => setPickerOpen((o) => !o)}
+          >
+            <Text style={styles.selectorText} maxFontSizeMultiplier={typeScale.maxMult}>
+              {selectedParcel ? selectedParcel.name : t('observation.parcel_none')}
+            </Text>
+            <Ionicons
+              name={pickerOpen ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={colors.textMuted}
+            />
+          </Pressable>
+          {pickerOpen && (
+            <View style={styles.options}>
+              <Pressable
+                style={styles.option}
+                accessibilityRole="button"
+                accessibilityLabel={t('observation.parcel_none')}
+                onPress={() => {
+                  setParcelId(null);
+                  setParcelTouched(true);
+                  setPickerOpen(false);
+                }}
+              >
+                <Text style={styles.optionText} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('observation.parcel_none')}
+                </Text>
+                {effectiveParcelId === null && (
+                  <Ionicons name="checkmark" size={18} color={colors.primary} />
+                )}
+              </Pressable>
+              {parcels.map((p) => (
+                <Pressable
+                  key={p.id}
+                  style={styles.option}
+                  accessibilityRole="button"
+                  accessibilityLabel={p.name}
+                  onPress={() => {
+                    setParcelId(p.id);
+                    setParcelTouched(true);
+                    setPickerOpen(false);
+                  }}
+                >
+                  <Text style={styles.optionText} maxFontSizeMultiplier={typeScale.maxMult}>
+                    {p.name}
+                  </Text>
+                  {effectiveParcelId === p.id && (
+                    <Ionicons name="checkmark" size={18} color={colors.primary} />
+                  )}
+                </Pressable>
               ))}
             </View>
           )}
         </View>
       </ScrollView>
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: spacing.sm + insets.bottom }]}>
         <Pressable
           style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
           onPress={save}
           disabled={!canSave}
+          accessibilityRole="button"
+          accessibilityLabel={t('observation.save')}
+          accessibilityState={{ disabled: !canSave }}
         >
           <TintCard gradient={gradients.forest} style={styles.saveBtnInner}>
             <Ionicons name="checkmark" size={20} color={colors.onPrimary} />
-            <Text style={styles.saveBtnText}>{t('observation.save')}</Text>
+            <Text style={styles.saveBtnText} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('observation.save')}
+            </Text>
           </TintCard>
         </Pressable>
+        {!canSave && (
+          <Text style={styles.needHint} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('observation.need_something', {
+              defaultValue: 'Aggiungi una foto, una nota o una categoria per salvare',
+            })}
+          </Text>
+        )}
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -368,24 +613,63 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   content: { padding: spacing.md, gap: spacing.lg, paddingBottom: spacing.xl },
   section: { gap: spacing.sm },
-  label: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+  label: { fontSize: typeScale.body, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  autoTag: { fontSize: 12, color: colors.primary, fontFamily: fonts.bodySemiBold },
+  autoTag: { fontSize: typeScale.caption, color: colors.primary, fontFamily: fonts.bodySemiBold },
   locRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  locText: { fontSize: 15, fontFamily: fonts.body, color: colors.text },
-  hint: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
+  locText: { fontSize: typeScale.bodyLg, fontFamily: fonts.bodyMedium, color: colors.text, flexShrink: 1 },
+  locCaption: { fontSize: typeScale.caption, fontFamily: fonts.mono, color: colors.textFaint },
+  hint: { fontSize: typeScale.body, fontFamily: fonts.body, color: colors.textMuted },
+  photoTiles: { flexDirection: 'row', gap: spacing.sm },
+  cameraTile: {
+    flex: 2,
+    minHeight: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+  },
+  cameraTileText: {
+    color: colors.primary,
+    fontFamily: fonts.bodyBold,
+    fontSize: typeScale.bodyLg,
+    textAlign: 'center',
+  },
+  galleryTile: {
+    flex: 1,
+    minHeight: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    padding: spacing.sm,
+  },
+  galleryTileText: {
+    color: colors.primary,
+    fontFamily: fonts.bodySemiBold,
+    fontSize: typeScale.body,
+    textAlign: 'center',
+  },
   selector: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    minHeight: touch.min,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
   },
-  selectorText: { fontSize: 15, fontFamily: fonts.body, color: colors.text },
+  selectorText: { fontSize: typeScale.bodyLg, fontFamily: fonts.body, color: colors.text },
   options: {
     backgroundColor: colors.card,
     borderWidth: 1,
@@ -397,12 +681,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    minHeight: touch.min,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: colors.borderSoft,
   },
-  optionText: { fontSize: 15, fontFamily: fonts.body, color: colors.text },
+  optionText: { fontSize: typeScale.bodyLg, fontFamily: fonts.body, color: colors.text },
   noteInput: {
     backgroundColor: colors.card,
     borderWidth: 1,
@@ -410,7 +695,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.md,
     minHeight: 96,
-    fontSize: 15,
+    fontSize: typeScale.bodyLg,
     fontFamily: fonts.body,
     color: colors.text,
   },
@@ -419,6 +704,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
+    minHeight: touch.chip,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
@@ -427,42 +713,33 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   tagChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
-  tagChipText: { fontSize: 14, fontFamily: fonts.body, color: colors.text },
+  tagChipText: { fontSize: typeScale.body, fontFamily: fonts.body, color: colors.text },
   tagChipTextOn: { color: colors.onPrimary, fontFamily: fonts.bodySemiBold },
   addTagRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
   addTagInput: {
     flex: 1,
+    minHeight: touch.chip,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    fontSize: 15,
+    fontSize: typeScale.bodyLg,
     fontFamily: fonts.body,
     color: colors.text,
   },
   addTagBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  addTagBtnText: { color: '#fff', fontFamily: fonts.bodySemiBold },
-  photoBtns: { flexDirection: 'row', gap: spacing.sm },
-  photoBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    minHeight: touch.chip,
     justifyContent: 'center',
-    gap: spacing.sm,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.primary,
     borderRadius: radius.md,
-    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
-  photoBtnText: { color: colors.primary, fontFamily: fonts.bodySemiBold, fontSize: 15 },
+  addTagBtnText: { color: colors.primary, fontFamily: fonts.bodySemiBold, fontSize: typeScale.body },
   thumbs: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
   thumbWrap: { width: 84, height: 84 },
   thumb: { width: 84, height: 84, borderRadius: radius.sm },
@@ -478,7 +755,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   footer: {
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    gap: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.card,
@@ -489,9 +768,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
-    paddingVertical: spacing.md,
+    minHeight: touch.min,
+    paddingVertical: spacing.sm,
     borderColor: 'transparent',
   },
   saveBtnDisabled: { opacity: 0.5 },
-  saveBtnText: { color: colors.onPrimary, fontFamily: fonts.bodyBold, fontSize: 16 },
+  saveBtnText: { color: colors.onPrimary, fontFamily: fonts.bodyBold, fontSize: typeScale.bodyLg },
+  needHint: {
+    fontSize: typeScale.body,
+    fontFamily: fonts.body,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
 });

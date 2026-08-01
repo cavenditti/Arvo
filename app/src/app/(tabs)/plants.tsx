@@ -5,7 +5,7 @@
 // Full-bleed like (tabs)/map.tsx: the map fills the screen and every control floats over it.
 // Terra: no state dots, no left-border stripes, fonts are family tokens (never fontWeight).
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { format, parseISO } from 'date-fns';
@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PLANT_METRICS, type PlantMetric, type ReplantReason } from '@/api/types';
 import PlantMap from '@/components/PlantMap';
-import { MonoLabel, MonoValue, Pill } from '@/components/ui';
+import { InteractivePressable, MonoLabel, MonoValue, Pill } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
 import { useParcels } from '@/features/parcels/hooks';
 import { plantColor, rampForMetric } from '@/features/plants/colors';
@@ -28,14 +28,15 @@ import {
   useReplantList,
 } from '@/features/plants/hooks';
 import {
-  formatMetricValue,
+  PHYSICAL_METRICS,
   formatVsBlock,
   metricLabelKey,
   metricUnitKey,
   plantName,
   weakestN,
 } from '@/features/plants/ranking';
-import { colors, fonts, radius, severityTint, spacing } from '@/theme';
+import { formatNumber } from '@/lib/format';
+import { colors, fonts, radius, severityTint, spacing, touch, type as typeScale } from '@/theme';
 
 // Rows kept in each floating panel — the full lists live in the parcel/plant screens.
 const PANEL_LIMIT = 8;
@@ -50,6 +51,24 @@ const REASON_TINT: Record<ReplantReason, { fg: string; bg: string }> = {
   dead: severityTint.critical,
   vigor_collapse: severityTint.warning,
 };
+
+// Same decimals the server-facing helpers use, rendered through the locale-aware
+// formatter (docs/UX-REVAMP.md rule 7): "0,412" in Italian, never "0.412".
+const METRIC_DECIMALS: Record<PlantMetric, number> = {
+  ndvi: 3,
+  ndre: 3,
+  gndvi: 3,
+  ndmi: 3,
+  savi: 3,
+  canopy_m2: 1,
+  height_m: 2,
+};
+
+function metricText(metric: PlantMetric, value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return '—';
+  const digits = METRIC_DECIMALS[metric];
+  return formatNumber(value, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
 
 export default function PlantsScreen() {
   const { t } = useTranslation();
@@ -67,6 +86,7 @@ export default function PlantsScreen() {
   const [metric, setMetric] = useState<PlantMetric>('ndvi');
   const [segment, setSegment] = useState<Segment>('weakest');
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [metricOpen, setMetricOpen] = useState(false);
   const [panelHeight, setPanelHeight] = useState(0);
 
   // An explicit pick wins over the deep link — so the tab is useful without a selection step and
@@ -112,9 +132,16 @@ export default function PlantsScreen() {
     ? format(parseISO(observedAt), 'd MMM', { locale })
     : t('plants.no_capture');
 
-  function cycleMetric() {
-    const i = PLANT_METRICS.indexOf(metric);
-    setMetric(PLANT_METRICS[(i + 1) % PLANT_METRICS.length]);
+  // Plain phrase first, technical term in parentheses (docs/DESIGN.md §14):
+  // "Vigore (NDVI)", "Superficie chioma (m²)" — existing keys only.
+  function metricOptionLabel(m: PlantMetric): string {
+    const tech = PHYSICAL_METRICS.includes(m) ? t(`plant.metric_unit.${m}`) : m.toUpperCase();
+    return `${t(metricLabelKey(m))} (${tech})`;
+  }
+
+  function pickMetric(m: PlantMetric) {
+    setMetric(m);
+    setMetricOpen(false);
   }
 
   function openPlant(plantId: string) {
@@ -141,21 +168,31 @@ export default function PlantsScreen() {
   if (parcelsQ.isError) {
     return (
       <View style={styles.center}>
-        <Text style={styles.msg}>{t('map.load_error')}</Text>
-        <Pressable style={styles.retry} onPress={() => parcelsQ.refetch()}>
-          <Text style={styles.retryTxt}>{t('common.retry')}</Text>
-        </Pressable>
+        <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+          {t('map.load_error')}
+        </Text>
+        <InteractivePressable style={styles.retry} onPress={() => parcelsQ.refetch()}>
+          <Text style={styles.retryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('common.retry')}
+          </Text>
+        </InteractivePressable>
       </View>
     );
   }
   if (!parcel) {
     return (
       <View style={styles.center}>
-        <Text style={styles.emptyTitle}>{t('dashboard.empty_title')}</Text>
-        <Text style={styles.msg}>{t('dashboard.empty_body')}</Text>
-        <Pressable style={styles.retry} onPress={() => router.push('/parcel/new')}>
-          <Text style={styles.retryTxt}>{t('dashboard.empty_cta')}</Text>
-        </Pressable>
+        <Text style={styles.emptyTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+          {t('dashboard.empty_title')}
+        </Text>
+        <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+          {t('dashboard.empty_body')}
+        </Text>
+        <InteractivePressable style={styles.retry} onPress={() => router.push('/parcel/new')}>
+          <Text style={styles.retryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('dashboard.empty_cta')}
+          </Text>
+        </InteractivePressable>
       </View>
     );
   }
@@ -174,31 +211,37 @@ export default function PlantsScreen() {
       ) : (
         <View style={styles.center}>
           <ActivityIndicator color={colors.primary} />
-          <Text style={styles.msg}>{t('plantmap.loading')}</Text>
+          <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('plantmap.loading')}
+          </Text>
         </View>
       )}
 
       {/* parcel + metric selectors */}
       <View style={[styles.topRow, { top: insets.top + spacing.sm }]}>
-        <Pressable
-          style={({ pressed }) => [styles.parcelChip, pressed && styles.pressed]}
+        <InteractivePressable
+          haptic
+          style={styles.parcelChip}
+          accessibilityLabel={parcel.name}
+          accessibilityState={{ expanded: pickerOpen }}
           onPress={() => setPickerOpen((v) => !v)}
         >
           <Ionicons name="leaf-outline" size={15} color={colors.primary} />
-          <Text style={styles.parcelChipTxt} numberOfLines={1}>
+          <Text style={styles.parcelChipTxt} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
             {parcel.name}
           </Text>
-          <Text style={styles.caret}>▾</Text>
-        </Pressable>
-        <Pressable
-          style={({ pressed }) => [styles.metricChip, pressed && styles.pressed]}
-          onPress={cycleMetric}
-          accessibilityLabel={t('plantmap.change_metric')}
+          <Text style={styles.caret} maxFontSizeMultiplier={typeScale.maxMult}>
+            ▾
+          </Text>
+        </InteractivePressable>
+        <InteractivePressable
+          haptic
+          style={styles.metricChip}
+          onPress={() => setMetricOpen(true)}
+          accessibilityLabel={`${t('plantmap.change_metric')} · ${metricOptionLabel(metric)}`}
         >
-          <MonoLabel color={colors.text} size={11}>
-            {`${t(metricLabelKey(metric))} ▾`}
-          </MonoLabel>
-        </Pressable>
+          <MonoLabel color={colors.text}>{`${metricOptionLabel(metric)} ▾`}</MonoLabel>
+        </InteractivePressable>
       </View>
 
       {pickerOpen ? (
@@ -207,47 +250,96 @@ export default function PlantsScreen() {
             {parcels.map((p) => {
               const active = p.id === parcel.id;
               return (
-                <Pressable
+                <InteractivePressable
                   key={p.id}
-                  style={({ pressed }) => [
-                    styles.pickerItem,
-                    active && styles.pickerItemActive,
-                    pressed && styles.pressed,
-                  ]}
+                  haptic
+                  style={[styles.pickerItem, active && styles.pickerItemActive]}
+                  accessibilityLabel={p.name}
+                  accessibilityState={{ selected: active }}
                   onPress={() => {
                     setPickedId(p.id);
                     setPickerOpen(false);
                   }}
                 >
-                  <Text style={[styles.pickerTxt, active && styles.pickerTxtActive]} numberOfLines={1}>
+                  <Text
+                    style={[styles.pickerTxt, active && styles.pickerTxtActive]}
+                    numberOfLines={1}
+                    maxFontSizeMultiplier={typeScale.maxMult}
+                  >
                     {p.name}
                   </Text>
-                </Pressable>
+                </InteractivePressable>
               );
             })}
           </ScrollView>
         </View>
       ) : null}
 
+      {/* metric picker — a real choice, not a blind cycle: plain names first, sigla in parens */}
+      <Modal
+        visible={metricOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setMetricOpen(false)}
+      >
+        <View style={styles.sheetWrap}>
+          <InteractivePressable
+            style={styles.sheetBackdrop}
+            accessibilityLabel={t('common.close', { defaultValue: 'Chiudi' })}
+            onPress={() => setMetricOpen(false)}
+          />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
+            <Text style={styles.sheetTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('plant.select_metric')}
+            </Text>
+            {PLANT_METRICS.map((m) => {
+              const active = m === metric;
+              return (
+                <InteractivePressable
+                  key={m}
+                  haptic
+                  style={styles.sheetRow}
+                  accessibilityLabel={metricOptionLabel(m)}
+                  accessibilityState={{ selected: active }}
+                  onPress={() => pickMetric(m)}
+                >
+                  <Text
+                    style={[styles.sheetRowTxt, active && styles.sheetRowTxtActive]}
+                    maxFontSizeMultiplier={typeScale.maxMult}
+                  >
+                    {metricOptionLabel(m)}
+                  </Text>
+                  {active ? <Ionicons name="checkmark" size={20} color={colors.primary} /> : null}
+                </InteractivePressable>
+              );
+            })}
+          </View>
+        </View>
+      </Modal>
+
       {/* legend + weakest-N / replant panels */}
       <View style={styles.panel} onLayout={(e) => setPanelHeight(e.nativeEvent.layout.height)}>
         <View style={styles.legendRow}>
-          <MonoLabel color={colors.textMuted} size={10}>
+          <MonoLabel color={colors.textMuted}>
             {t('plantmap.legend', { metric: t(metricLabelKey(metric)), date: legendDate })}
           </MonoLabel>
         </View>
         <View style={styles.legendScale}>
-          <Text style={styles.legendEdge}>{t('plantmap.legend_low')}</Text>
+          <Text style={styles.legendEdge} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('plantmap.legend_low')}
+          </Text>
           <View style={styles.gradientBar}>
             {ramp.map((c) => (
               <View key={c} style={[styles.gradientCell, { backgroundColor: c }]} />
             ))}
           </View>
-          <Text style={styles.legendEdge}>{t('plantmap.legend_high')}</Text>
+          <Text style={styles.legendEdge} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('plantmap.legend_high')}
+          </Text>
           <View style={styles.flex1} />
-          <MonoValue size={10} weight="600" color={colors.textMuted}>
+          <MonoValue size={typeScale.caption} weight="600" color={colors.textMuted}>
             {domain
-              ? `${formatMetricValue(metric, domain.p5)} → ${formatMetricValue(metric, domain.p95)}`
+              ? `${metricText(metric, domain.p5)} → ${metricText(metric, domain.p95)}`
               : t('plantmap.no_data')}
           </MonoValue>
         </View>
@@ -272,24 +364,34 @@ export default function PlantsScreen() {
         <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
           {noPlants ? (
             <View style={styles.emptyBox}>
-              <Text style={styles.emptyTitle}>{t('plants.empty_title')}</Text>
-              <Text style={styles.msg}>{t('plants.empty_body')}</Text>
-              <Pressable style={styles.retry} onPress={openCapture}>
-                <Text style={styles.retryTxt}>{t('plants.empty_cta')}</Text>
-              </Pressable>
+              <Text style={styles.emptyTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('plants.empty_title')}
+              </Text>
+              <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('plants.empty_body')}
+              </Text>
+              <InteractivePressable style={styles.retry} onPress={openCapture}>
+                <Text style={styles.retryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('plants.empty_cta')}
+                </Text>
+              </InteractivePressable>
             </View>
           ) : segment === 'weakest' ? (
             rankingQ.isLoading ? (
               <ActivityIndicator color={colors.primary} style={styles.pad} />
             ) : weakest.length === 0 ? (
-              <Text style={styles.msg}>{t('plants.ranking_empty')}</Text>
+              <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('plants.ranking_empty')}
+              </Text>
             ) : (
               weakest.map((r) => {
                 const vs = formatVsBlock(r.vs_block_pct);
+                const rowName = plantName(r, t('plant.unlabeled'));
                 return (
-                  <Pressable
+                  <InteractivePressable
                     key={r.plant_id}
-                    style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+                    style={styles.row}
+                    accessibilityLabel={`${rowName} · ${t('plants.open_plant')}`}
                     onPress={() => openPlant(r.plant_id)}
                   >
                     <View
@@ -298,39 +400,53 @@ export default function PlantsScreen() {
                         { backgroundColor: plantColor(r.status, metric, r.normalized) },
                       ]}
                     >
-                      <Text style={styles.swatchTxt}>{r.rank}</Text>
+                      <Text style={styles.swatchTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                        {r.rank}
+                      </Text>
                     </View>
                     <View style={styles.flex1}>
-                      <Text style={styles.rowName} numberOfLines={1}>
-                        {plantName(r, t('plant.unlabeled'))}
+                      <Text
+                        style={styles.rowName}
+                        numberOfLines={1}
+                        maxFontSizeMultiplier={typeScale.maxMult}
+                      >
+                        {rowName}
                       </Text>
                       <MonoLabel>
-                        {`${formatMetricValue(metric, r.value)}${unit}${
+                        {`${metricText(metric, r.value)}${unit}${
                           vs ? ` · ${t('plants.vs_block')} ${vs}` : ''
                         }`}
                       </MonoLabel>
                     </View>
                     <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-                  </Pressable>
+                  </InteractivePressable>
                 );
               })
             )
           ) : replantQ.isLoading ? (
             <ActivityIndicator color={colors.primary} style={styles.pad} />
           ) : replant.length === 0 ? (
-            <Text style={styles.msg}>{t('replant.empty')}</Text>
+            <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('replant.empty')}
+            </Text>
           ) : (
             replant.map((e) => {
               const tint = REASON_TINT[e.reason];
+              const rowName = plantName(e, t('plant.unlabeled'));
               return (
-                <Pressable
+                <InteractivePressable
                   key={e.plant_id}
-                  style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+                  style={styles.row}
+                  accessibilityLabel={`${rowName} · ${t('replant.open_plant')}`}
                   onPress={() => openPlant(e.plant_id)}
                 >
                   <View style={styles.flex1}>
-                    <Text style={styles.rowName} numberOfLines={1}>
-                      {plantName(e, t('plant.unlabeled'))}
+                    <Text
+                      style={styles.rowName}
+                      numberOfLines={1}
+                      maxFontSizeMultiplier={typeScale.maxMult}
+                    >
+                      {rowName}
                     </Text>
                     <MonoLabel>
                       {e.last_seen_at
@@ -342,20 +458,20 @@ export default function PlantsScreen() {
                   </View>
                   <Pill label={t(`replant.reason.${e.reason}`)} fg={tint.fg} bg={tint.bg} />
                   <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-                </Pressable>
+                </InteractivePressable>
               );
             })
           )}
         </ScrollView>
       </View>
 
-      <Pressable
+      <InteractivePressable
         style={[styles.fab, { bottom: fabBottom }]}
         onPress={openCapture}
         accessibilityLabel={t('plants.empty_cta')}
       >
         <Ionicons name="add" size={30} color={colors.onPrimary} />
-      </Pressable>
+      </InteractivePressable>
     </View>
   );
 }
@@ -370,12 +486,17 @@ function SegButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable
-      style={({ pressed }) => [styles.segBtn, active && styles.segBtnActive, pressed && styles.pressed]}
+    <InteractivePressable
+      haptic
+      style={[styles.segBtn, active && styles.segBtnActive]}
+      accessibilityLabel={label}
+      accessibilityState={{ selected: active }}
       onPress={onPress}
     >
-      <Text style={[styles.segTxt, active && styles.segTxtActive]}>{label}</Text>
-    </Pressable>
+      <Text style={[styles.segTxt, active && styles.segTxtActive]} maxFontSizeMultiplier={typeScale.maxMult}>
+        {label}
+      </Text>
+    </InteractivePressable>
   );
 }
 
@@ -390,18 +511,19 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     backgroundColor: colors.bg,
   },
-  msg: { color: colors.textMuted, fontSize: 14, fontFamily: fonts.body, textAlign: 'center' },
+  msg: { color: colors.textMuted, fontSize: typeScale.body, fontFamily: fonts.body, textAlign: 'center' },
   emptyTitle: { color: colors.text, fontSize: 17, fontFamily: fonts.display, textAlign: 'center' },
   emptyBox: { alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.md },
   retry: {
+    minHeight: touch.min,
+    justifyContent: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     backgroundColor: colors.primary,
     borderRadius: radius.md,
   },
-  retryTxt: { color: colors.onPrimary, fontFamily: fonts.bodySemiBold, fontSize: 14 },
+  retryTxt: { color: colors.onPrimary, fontFamily: fonts.bodySemiBold, fontSize: typeScale.body },
   pad: { paddingVertical: spacing.md },
-  pressed: { opacity: 0.7 },
 
   // floating selectors
   topRow: {
@@ -418,7 +540,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    height: 40,
+    minHeight: touch.chip,
     paddingHorizontal: spacing.md,
     backgroundColor: colors.card,
     borderRadius: radius.pill,
@@ -430,10 +552,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
   },
-  parcelChipTxt: { flex: 1, fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.text },
-  caret: { fontSize: 12, fontFamily: fonts.body, color: colors.textFaint },
+  parcelChipTxt: { flex: 1, fontSize: typeScale.body, fontFamily: fonts.bodySemiBold, color: colors.text },
+  caret: { fontSize: typeScale.caption, fontFamily: fonts.body, color: colors.textFaint },
   metricChip: {
-    height: 40,
+    minHeight: touch.chip,
     paddingHorizontal: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
@@ -463,11 +585,53 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 6,
   },
-  pickerScroll: { maxHeight: 220 },
-  pickerItem: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm },
+  pickerScroll: { maxHeight: 264 },
+  pickerItem: {
+    minHeight: touch.min,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
+  },
   pickerItemActive: { backgroundColor: colors.primarySoft },
-  pickerTxt: { fontSize: 14, fontFamily: fonts.body, color: colors.text },
+  pickerTxt: { fontSize: typeScale.body, fontFamily: fonts.body, color: colors.text },
   pickerTxtActive: { fontFamily: fonts.bodySemiBold, color: colors.primary },
+
+  // metric bottom sheet (same scrim + sheet pattern as DateField)
+  sheetWrap: { flex: 1, justifyContent: 'flex-end' },
+  sheetBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(27, 30, 26, 0.35)',
+  },
+  sheet: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    gap: spacing.xs,
+  },
+  sheetTitle: {
+    fontSize: typeScale.title,
+    fontFamily: fonts.display,
+    color: colors.text,
+    marginBottom: spacing.xs,
+  },
+  sheetRow: {
+    minHeight: touch.min,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+  },
+  sheetRowTxt: { fontSize: typeScale.bodyLg, fontFamily: fonts.body, color: colors.text },
+  sheetRowTxtActive: { fontFamily: fonts.bodySemiBold, color: colors.primary },
 
   // bottom panel
   panel: {
@@ -475,7 +639,7 @@ const styles = StyleSheet.create({
     left: spacing.md,
     right: spacing.md,
     bottom: spacing.md,
-    maxHeight: 320,
+    maxHeight: 340,
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     borderWidth: 1,
@@ -490,11 +654,13 @@ const styles = StyleSheet.create({
   },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   legendScale: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  legendEdge: { fontSize: 10, fontFamily: fonts.body, color: colors.textFaint },
+  legendEdge: { fontSize: typeScale.caption, fontFamily: fonts.body, color: colors.textMuted },
   gradientBar: { flexDirection: 'row', borderRadius: 2, overflow: 'hidden' },
   gradientCell: { width: 13, height: 10 },
   segRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   segBtn: {
+    minHeight: touch.min,
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
     borderRadius: radius.pill,
@@ -503,12 +669,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardAlt,
   },
   segBtnActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  segTxt: { fontSize: 12.5, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+  segTxt: { fontSize: typeScale.caption, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
   segTxtActive: { color: colors.onPrimary },
   // bounded so the panel keeps its shape and the list scrolls inside it
   list: { maxHeight: 176, flexGrow: 0 },
   listContent: { gap: spacing.xs, paddingBottom: spacing.xs },
   row: {
+    minHeight: touch.min,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
@@ -518,8 +685,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardAlt,
   },
   swatch: { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
-  swatchTxt: { fontFamily: fonts.monoSemiBold, fontSize: 12, color: '#FFFFFF' },
-  rowName: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.text },
+  swatchTxt: { fontFamily: fonts.monoSemiBold, fontSize: typeScale.caption, color: '#FFFFFF' },
+  rowName: { fontSize: typeScale.body, fontFamily: fonts.bodySemiBold, color: colors.text },
 
   fab: {
     position: 'absolute',

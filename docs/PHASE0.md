@@ -97,7 +97,13 @@ Deferred: FR-0-013/014/025/026/043/054/062, GraphQL (REST-only v1), OGC WMTS cap
    revoke live 7-day JWTs); EXIF stripping on photo upload; initial-sync paging for very large
    orgs; rate limiting beyond the auth endpoints; a guard on farm hard-delete (cascades a whole
    season of derived data); STAC pagination past the 100-item page (currently clamped `days` +
-   a page-full warning).
+   a page-full warning). Added 2026-08-01 (UX revamp): push delivery honouring per-user locale +
+   server-side severe-only/digest scheduling; SMTP email delivery for password-reset links
+   (currently logged server-side only); EAS `projectId` + Sign in with Apple (pre-App-Store
+   requirements); offline basemap strategy for the field map; iOS widget app-group data bridge;
+   Nominatim → self-hosted geocoder for address search; batched dashboard series endpoint (one
+   request instead of N per-parcel fetches); Quaderno di Campagna (see docs/BUSINESS.md — the
+   next paid module).
 
 ## 5. Data model (migrations/0001_init.sql)
 

@@ -7,7 +7,7 @@ season reports — multi-tenant, decision-support only (no actuation).
 
 - **backend/** — Rust (axum + sqlx + PostGIS). Single binary: HTTP API + CLI (`migrate`, `seed`, `ingest-imagery`, `detect-anomalies`).
 - **app/** — Expo (React Native, TypeScript). One codebase → iOS, Android **and web portal**. Italian-first i18n.
-- **docs/** — [PHASE0.md](docs/PHASE0.md) (scope & traceability) · [API.md](docs/API.md) (REST contract) · [DESIGN.md](docs/DESIGN.md) (Terra design language) · [AGENTS.md](docs/AGENTS.md) (conventions).
+- **docs/** — [PHASE0.md](docs/PHASE0.md) (scope & traceability) · [API.md](docs/API.md) (REST contract) · [DESIGN.md](docs/DESIGN.md) (Terra design language) · [AGENTS.md](docs/AGENTS.md) (conventions) · [BUSINESS.md](docs/BUSINESS.md) (business model).
 
 ## Quickstart
 
@@ -58,3 +58,12 @@ Without the feature the default build stays dependency-free: the platform still 
 scene catalog, and `make seed` synthesizes realistic index series so the full loop (series →
 anomaly → alert → report) runs end to end. See [docs/PHASE0.md](docs/PHASE0.md) for scope,
 deviations, and the FR traceability matrix.
+
+## Product & business
+
+How Arvo makes money — a permanently free tier (the data layer costs cents, see the unit
+economics), paid Pro/Agronomo tiers, hardware at cost+margin, and the non-enshittification
+commitments that bind it all — is documented in [docs/BUSINESS.md](docs/BUSINESS.md), including
+the roadmap for the Quaderno di Campagna as the first paid module. The iOS-first UX revamp that
+turns the Tier-0 build into a product farmers trust is specified in
+[docs/UX-REVAMP.md](docs/UX-REVAMP.md).

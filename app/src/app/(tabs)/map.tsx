@@ -1,9 +1,18 @@
-// OWNER: fe-map — Map tab: every parcel on Leaflet, filled by latest selected-index choropleth,
-// floating search (filter + focus) and index-cycle chip, tap → bottom selection card, floating +
-// → new parcel.
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
+// OWNER: map-native — Mappa tab: every field on Leaflet (OSM or satellite base), colored by the
+// Arvo score or one chosen index, floating search with an explicit results list, bottom selection
+// card driven by the shared status pipeline, labeled "Nuovo campo" pill.
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
@@ -13,13 +22,31 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@/api/client';
 import { INDEX_NAMES, type Alert, type IndexName } from '@/api/types';
 import MapView from '@/components/MapView';
+import { StaleBanner, useOnlineStatus } from '@/components/StaleBanner';
 import type { ParcelFeature } from '@/components/types';
 import { InteractivePressable, MonoLabel, MonoValue, StatusChip, TintCard } from '@/components/ui';
-import { severityRank } from '@/features/insights/alerts';
-import { INDEX_DOMAIN, arvoScore, cropLabel, indexColor, scoreColor } from '@/features/insights/format';
-import { NEUTRAL_FILL, formatArea, ndviColor } from '@/features/parcels/crops';
-import { useLatestIndices, useParcels } from '@/features/parcels/hooks';
-import { colors, fonts, gradients, radius, spacing, statusForSeverity } from '@/theme';
+import {
+  INDEX_DOMAIN,
+  arvoScoreDetail,
+  cropLabel,
+  indexColor,
+  scoreColor,
+} from '@/features/insights/format';
+import { countAlertEvents } from '@/features/insights/grouping';
+import { deriveFieldStatus, trendFromSeries } from '@/features/insights/status';
+import { NEUTRAL_FILL, ndviColor } from '@/features/parcels/crops';
+import { useIndexSeries, useLatestIndices, useParcels } from '@/features/parcels/hooks';
+import { formatHectares } from '@/lib/format';
+import {
+  colors,
+  fonts,
+  gradients,
+  radius,
+  spacing,
+  touch,
+  type as typeScale,
+  type Status,
+} from '@/theme';
 
 // Legend value labels are numeric ranges except the no-data slot, translated at render.
 const LEGEND: { color: string; label: string | null }[] = [
@@ -33,37 +60,51 @@ const LEGEND: { color: string; label: string | null }[] = [
 // Selection-card height guess used for the FAB offset until onLayout reports the real value.
 const CARD_HEIGHT_ESTIMATE = 148;
 
-/** Worst open-alert severity for a parcel (alerts already filtered to state=open). */
-function worstOpenSeverity(alerts: Alert[], parcelId: string): string | null {
-  let worst: string | null = null;
-  for (const a of alerts) {
-    if (a.parcel_id !== parcelId) continue;
-    if (severityRank(a.severity) > severityRank(worst)) {
-      worst = a.severity;
-    }
-  }
-  return worst;
-}
+// What paints the fields: the Arvo score (default), nothing (boundaries only — the natural
+// companion of the satellite basemap), or one of the five indices.
+type MapChoropleth = 'score' | 'none' | IndexName;
+
+const BASEMAP_KEY = 'arvo.map.basemap';
+const MAX_SEARCH_RESULTS = 6;
 
 export default function MapScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const online = useOnlineStatus();
   const parcelsQ = useParcels();
 
   const [query, setQuery] = useState('');
-  const [selectedIndex, setSelectedIndex] = useState<IndexName | null>(null);
+  const [choropleth, setChoropleth] = useState<MapChoropleth>('score');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [basemap, setBasemap] = useState<'map' | 'sat'>('map');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focus, setFocus] = useState<[number, number, number?] | undefined>(undefined);
   const [cardHeight, setCardHeight] = useState(0);
-  // last parcel focused from the search box — avoids re-setting focus on every keystroke
-  const focusedIdRef = useRef<string | null>(null);
+  // Quiet "map unavailable offline" pill: set on the doc's debounced tileerror while offline,
+  // hidden by the render condition (`&& !online`) as soon as the connection returns.
+  const [tilesOffline, setTilesOffline] = useState(false);
+
+  // Basemap choice persists — farmers who recognize their land from the air keep satellite.
+  useEffect(() => {
+    AsyncStorage.getItem(BASEMAP_KEY)
+      .then((v) => {
+        if (v === 'sat' || v === 'map') setBasemap(v);
+      })
+      .catch(() => {});
+  }, []);
+  const toggleBasemap = () => {
+    setBasemap((prev) => {
+      const next = prev === 'map' ? 'sat' : 'map';
+      AsyncStorage.setItem(BASEMAP_KEY, next).catch(() => {});
+      return next;
+    });
+  };
 
   const parcels = useMemo(
     () => (parcelsQ.data ?? []).filter((p) => !p.archived),
     [parcelsQ.data],
   );
-  // latest-indices query key stays stable while typing: always fetch for all parcels
   const ids = useMemo(() => parcels.map((p) => p.id), [parcels]);
   const latestQ = useLatestIndices(ids);
 
@@ -72,62 +113,102 @@ export default function MapScreen() {
     queryFn: () => api.get<Alert[]>('/alerts?state=open'),
   });
 
+  // The map always shows EVERY field. Searching only filters the result list below the bar, so
+  // the parcel set — and with it the camera (doc-side viewKey) — never changes per keystroke;
+  // on first load the document fits the bounds of all org parcels with padding.
   const features: ParcelFeature[] = useMemo(() => {
     const latest = latestQ.data ?? {};
-    const q = query.trim().toLowerCase();
-    const visible = q ? parcels.filter((p) => p.name.toLowerCase().includes(q)) : parcels;
-    return visible.map((parcel) => {
-      if (!selectedIndex) {
-        const score = arvoScore(latest[parcel.id])?.value ?? null;
+    return parcels.map((parcel) => {
+      if (choropleth === 'none') return { parcel, color: 'transparent' };
+      if (choropleth === 'score') {
+        const score = arvoScoreDetail(latest[parcel.id]).score;
         return { parcel, color: score == null ? NEUTRAL_FILL : scoreColor(score) };
       }
-      const mean = latest[parcel.id]?.[selectedIndex]?.mean ?? null;
-      return { parcel, color: mean == null ? NEUTRAL_FILL : indexColor(selectedIndex, mean) };
+      const mean = latest[parcel.id]?.[choropleth]?.mean ?? null;
+      return { parcel, color: mean == null ? NEUTRAL_FILL : indexColor(choropleth, mean) };
     });
-  }, [parcels, latestQ.data, selectedIndex, query]);
+  }, [parcels, latestQ.data, choropleth]);
 
-  // Search → focus the first name match; clear focus (map refits bounds) when text is cleared.
-  useEffect(() => {
+  const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const match = q ? parcels.find((p) => p.name.toLowerCase().includes(q)) : undefined;
-    if (!match) {
-      focusedIdRef.current = null;
-      setFocus(undefined);
-      return;
-    }
-    if (focusedIdRef.current !== match.id) {
-      focusedIdRef.current = match.id;
-      setFocus([match.centroid.lon, match.centroid.lat, 15]);
-    }
+    if (!q) return [];
+    return parcels.filter((p) => p.name.toLowerCase().includes(q)).slice(0, MAX_SEARCH_RESULTS);
   }, [query, parcels]);
 
-  const selected = selectedId ? (parcels.find((p) => p.id === selectedId) ?? null) : null;
-  const selectedStatus = statusForSeverity(
-    selected ? worstOpenSeverity(openAlertsQ.data ?? [], selected.id) : null,
-  );
-  const selectedScore = selected ? arvoScore(latestQ.data?.[selected.id]) : null;
-  const selectedMean = selected && selectedIndex
-    ? (latestQ.data?.[selected.id]?.[selectedIndex]?.mean ?? null)
-    : selectedScore?.value ?? null;
-
-  const mapViews: (IndexName | null)[] = [null, ...INDEX_NAMES];
-  const cycleIndex = () => {
-    const current = mapViews.findIndex((v) => v === selectedIndex);
-    setSelectedIndex(mapViews[(current + 1) % mapViews.length]);
+  // Camera moves ONLY on an explicit pick from the results list — never while typing.
+  const pickParcel = (id: string, lon: number, lat: number) => {
+    setQuery('');
+    setSelectedId(id);
+    setFocus([lon, lat, 15]);
   };
 
-  const [domainMin, domainMax] = selectedIndex ? INDEX_DOMAIN[selectedIndex] : [0, 100];
+  const selected = selectedId ? (parcels.find((p) => p.id === selectedId) ?? null) : null;
+
+  // Selection-card verdict comes from the shared status pipeline ONLY (status.ts): score and
+  // coverage via arvoScoreDetail, NDVI trend via trendFromSeries, open events via grouping.
+  const ndviSeriesQ = useIndexSeries(selected?.id ?? '', 'ndvi');
+  const selectedTrend = useMemo(() => {
+    const series = ndviSeriesQ.data?.series;
+    if (!series || series.length === 0) return null;
+    return trendFromSeries(series.map((pt) => ({ date: pt.observed_at, value: pt.mean })));
+  }, [ndviSeriesQ.data]);
+  const selectedDetail = selected ? arvoScoreDetail(latestQ.data?.[selected.id]) : null;
+  const selectedOpenEvents = useMemo(
+    () =>
+      selected
+        ? countAlertEvents((openAlertsQ.data ?? []).filter((a) => a.parcel_id === selected.id))
+        : 0,
+    [openAlertsQ.data, selected],
+  );
+  const fieldStatus =
+    selected && selectedDetail
+      ? deriveFieldStatus({
+          score: selectedDetail.score,
+          trend: selectedTrend,
+          openAlertEvents: selectedOpenEvents,
+          coverage: selectedDetail.coverage,
+        })
+      : null;
+  // theme's StatusChip speaks 'healthy'|'watch'|'attention'; status.ts speaks 'ok' for the first.
+  const chipStatus: Status =
+    fieldStatus == null || fieldStatus.level === 'ok' ? 'healthy' : fieldStatus.level;
+
+  const selectedMean = selected
+    ? choropleth !== 'score' && choropleth !== 'none'
+      ? (latestQ.data?.[selected.id]?.[choropleth]?.mean ?? null)
+      : (selectedDetail?.score ?? null)
+    : null;
+  const selectedIsIndex = choropleth !== 'score' && choropleth !== 'none';
+
+  const viewOptions: { key: MapChoropleth; label: string }[] = useMemo(
+    () => [
+      { key: 'score', label: t('map.score_view') },
+      { key: 'none', label: t('map.view_none', { defaultValue: 'Solo confini' }) },
+      ...INDEX_NAMES.map((i) => ({
+        key: i as MapChoropleth,
+        label: `${t(`index.${i}.name`)} (${i.toUpperCase()})`,
+      })),
+    ],
+    [t],
+  );
+  const currentViewLabel =
+    viewOptions.find((v) => v.key === choropleth)?.label ?? t('map.score_view');
+
+  const legendIndex: IndexName | null = selectedIsIndex ? (choropleth as IndexName) : null;
+  const [domainMin, domainMax] = legendIndex ? INDEX_DOMAIN[legendIndex] : [0, 100];
   const gradientStops = useMemo(
     () =>
       Array.from({ length: 5 }, (_, i) =>
-        selectedIndex
-          ? indexColor(selectedIndex, domainMin + ((domainMax - domainMin) * i) / 4)
+        legendIndex
+          ? indexColor(legendIndex, domainMin + ((domainMax - domainMin) * i) / 4)
           : scoreColor(domainMin + ((domainMax - domainMin) * i) / 4),
       ),
-    [selectedIndex, domainMin, domainMax],
+    [legendIndex, domainMin, domainMax],
   );
 
   const mapReady = !parcelsQ.isLoading && !parcelsQ.isError;
+  const showResults = query.trim().length > 0;
+  const newFieldLabel = t('map.new_field', { defaultValue: 'Nuovo campo' });
 
   return (
     <View style={styles.root}>
@@ -137,9 +218,13 @@ export default function MapScreen() {
         </View>
       ) : parcelsQ.isError ? (
         <View style={styles.center}>
-          <Text style={styles.msg}>{t('map.load_error')}</Text>
+          <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('map.load_error')}
+          </Text>
           <InteractivePressable style={styles.retry} onPress={() => parcelsQ.refetch()}>
-            <Text style={styles.retryTxt}>{t('common.retry')}</Text>
+            <Text style={styles.retryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('common.retry')}
+            </Text>
           </InteractivePressable>
         </View>
       ) : (
@@ -147,47 +232,69 @@ export default function MapScreen() {
           parcels={features}
           mode="view"
           focus={focus}
+          basemap={basemap}
           onSelectParcel={(id) => setSelectedId(id)}
+          onTileError={() => {
+            if (!online) setTilesOffline(true);
+          }}
         />
       )}
 
       {mapReady && parcels.length === 0 ? (
-        <View style={styles.emptyWrap} pointerEvents="none">
-          <View style={styles.emptyCard}>
+        <View style={styles.emptyWrap} pointerEvents="box-none">
+          <InteractivePressable
+            style={styles.emptyCard}
+            onPress={() => router.push('/parcel/new')}
+            accessibilityLabel={newFieldLabel}
+          >
             <Ionicons name="map-outline" size={28} color={colors.textMuted} />
-            <Text style={styles.emptyTxt}>{t('map.empty')}</Text>
-          </View>
+            <Text style={styles.emptyTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('map.empty')}
+            </Text>
+            <View style={styles.emptyCta}>
+              <Ionicons name="add" size={18} color={colors.onPrimary} />
+              <Text style={styles.emptyCtaTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                {newFieldLabel}
+              </Text>
+            </View>
+          </InteractivePressable>
         </View>
       ) : null}
 
-      {parcels.length > 0 ? (
+      {parcels.length > 0 && choropleth !== 'none' ? (
         <View style={styles.legend} pointerEvents="none">
-          <Text style={styles.legendTitle}>
-            {!selectedIndex
+          <Text style={styles.legendTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+            {!legendIndex
               ? t('map.score_legend')
-              : selectedIndex === 'ndvi'
+              : legendIndex === 'ndvi'
               ? t('map.ndvi_legend')
               : t('map.index_legend', {
                   defaultValue: '{{index}} (latest)',
-                  index: selectedIndex.toUpperCase(),
+                  index: legendIndex.toUpperCase(),
                 })}
           </Text>
-          {!selectedIndex ? (
+          {!legendIndex ? (
             <View style={styles.legendGradientRow}>
-              <Text style={styles.legendLabel}>{t('map.score_low')}</Text>
+              <Text style={styles.legendLabel} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('map.score_low')}
+              </Text>
               <View style={styles.gradientBar}>
                 {gradientStops.map((c, i) => (
                   <View key={i} style={[styles.gradientCell, { backgroundColor: c }]} />
                 ))}
               </View>
-              <Text style={styles.legendLabel}>{t('map.score_high')}</Text>
+              <Text style={styles.legendLabel} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('map.score_high')}
+              </Text>
             </View>
-          ) : selectedIndex === 'ndvi' ? (
+          ) : legendIndex === 'ndvi' ? (
             <View style={styles.legendRow}>
               {LEGEND.map((l) => (
                 <View key={l.color} style={styles.legendItem}>
                   <View style={[styles.swatch, { backgroundColor: l.color }]} />
-                  <Text style={styles.legendLabel}>{l.label ?? t('map.no_data')}</Text>
+                  <Text style={styles.legendLabel} maxFontSizeMultiplier={typeScale.maxMult}>
+                    {l.label ?? t('map.no_data')}
+                  </Text>
                 </View>
               ))}
             </View>
@@ -206,7 +313,9 @@ export default function MapScreen() {
               </MonoValue>
               <View style={styles.legendItem}>
                 <View style={[styles.swatch, { backgroundColor: NEUTRAL_FILL }]} />
-                <Text style={styles.legendLabel}>n/d</Text>
+                <Text style={styles.legendLabel} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('map.no_data')}
+                </Text>
               </View>
             </View>
           )}
@@ -219,24 +328,43 @@ export default function MapScreen() {
           onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
         >
           <View style={styles.selRow}>
-            <View style={[styles.scoreBadge, { backgroundColor: selectedIndex ? indexColor(selectedIndex, selectedMean) : scoreColor(selectedMean) }]}>
-              <Text style={styles.scoreBadgeValue}>{selectedMean == null ? '—' : selectedIndex ? selectedMean.toFixed(2) : Math.round(selectedMean)}</Text>
+            <View
+              style={[
+                styles.scoreBadge,
+                {
+                  backgroundColor: selectedIsIndex
+                    ? indexColor(choropleth as IndexName, selectedMean)
+                    : scoreColor(selectedMean),
+                },
+              ]}
+            >
+              <Text style={styles.scoreBadgeValue} maxFontSizeMultiplier={typeScale.maxMult}>
+                {selectedMean == null
+                  ? '—'
+                  : selectedIsIndex
+                  ? selectedMean.toFixed(2)
+                  : Math.round(selectedMean)}
+              </Text>
             </View>
             <View style={styles.selInfo}>
-              <Text style={styles.selName} numberOfLines={1}>
+              <Text style={styles.selName} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
                 {selected.name}
               </Text>
-              <Text style={styles.selMeta} numberOfLines={1}>
-                {[cropLabel(selected.crop), formatArea(selected.area_ha)]
+              <Text style={styles.selMeta} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
+                {[
+                  cropLabel(selected.crop),
+                  selected.area_ha != null ? formatHectares(selected.area_ha) : null,
+                  fieldStatus?.partial ? t('status.partial') : null,
+                ]
                   .filter(Boolean)
                   .join(' · ')}
               </Text>
             </View>
-            <StatusChip status={selectedStatus} label={t(`status.${selectedStatus}`)} />
+            {fieldStatus ? <StatusChip status={chipStatus} label={t(fieldStatus.chipKey)} /> : null}
             <InteractivePressable
               onPress={() => setSelectedId(null)}
-              hitSlop={8}
-              accessibilityLabel={t('map.close_selection', { defaultValue: 'Close' })}
+              hitSlop={10}
+              accessibilityLabel={t('map.close_selection')}
               style={styles.iconButton}
               hoverStyle={styles.iconButtonHover}
             >
@@ -247,20 +375,22 @@ export default function MapScreen() {
             <InteractivePressable
               style={styles.detailBtn}
               onPress={() => router.push(`/parcel/${selected.id}`)}
+              accessibilityLabel={t('map.open_detail')}
             >
               <TintCard gradient={gradients.forest} style={styles.detailBtnInner}>
-                <Text style={styles.detailBtnTxt}>
-                  {t('map.open_detail', { defaultValue: 'Open detail' })}
+                <Text style={styles.detailBtnTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('map.open_detail')}
                 </Text>
               </TintCard>
             </InteractivePressable>
             <InteractivePressable
               style={styles.scoutBtn}
               hoverStyle={styles.scoutBtnHover}
-              onPress={() => router.push('/observation/new')}
+              onPress={() => router.push(`/observation/new?parcelId=${selected.id}`)}
+              accessibilityLabel={t('map.scout_here')}
             >
-              <Text style={styles.scoutBtnTxt}>
-                {t('map.scout_here', { defaultValue: 'Scout here' })}
+              <Text style={styles.scoutBtnTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('map.scout_here')}
               </Text>
             </InteractivePressable>
           </View>
@@ -268,32 +398,135 @@ export default function MapScreen() {
       ) : null}
 
       {mapReady ? (
-        <View style={[styles.topRow, { top: insets.top + spacing.sm }]}>
-          <View style={styles.search}>
-            <Ionicons name="search" size={16} color={colors.textFaint} />
-            <TextInput
-              style={styles.searchInput}
-              value={query}
-              onChangeText={setQuery}
-              placeholder={t('map.search_placeholder', { defaultValue: 'Search parcels' })}
-              placeholderTextColor={colors.textFaint}
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="search"
-            />
+        <View style={[styles.topCol, { top: insets.top + spacing.sm }]} pointerEvents="box-none">
+          <View style={styles.topRow} pointerEvents="box-none">
+            <View style={styles.search}>
+              <Ionicons name="search" size={16} color={colors.textFaint} />
+              <TextInput
+                style={styles.searchInput}
+                value={query}
+                onChangeText={setQuery}
+                placeholder={t('map.search_fields')}
+                placeholderTextColor={colors.textFaint}
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="search"
+                accessibilityLabel={t('map.search_fields')}
+                maxFontSizeMultiplier={typeScale.maxMult}
+              />
+            </View>
+            <InteractivePressable
+              style={styles.topChip}
+              hoverStyle={styles.topChipHover}
+              onPress={toggleBasemap}
+              accessibilityLabel={t(basemap === 'map' ? 'map.basemap_sat' : 'map.basemap_map')}
+            >
+              <Ionicons name="layers-outline" size={14} color={colors.text} />
+              <MonoLabel color={colors.text} size={11}>
+                {t(basemap === 'map' ? 'map.basemap_sat' : 'map.basemap_map')}
+              </MonoLabel>
+            </InteractivePressable>
+            <InteractivePressable
+              style={[styles.topChip, styles.viewChip]}
+              hoverStyle={styles.topChipHover}
+              onPress={() => setPickerOpen(true)}
+              accessibilityLabel={t('map.change_index')}
+            >
+              <MonoLabel color={colors.text} size={11}>
+                {`${currentViewLabel} ▾`}
+              </MonoLabel>
+            </InteractivePressable>
           </View>
-          <InteractivePressable
-            style={styles.indexChip}
-            hoverStyle={styles.indexChipHover}
-            onPress={cycleIndex}
-            accessibilityLabel={t('map.change_index', { defaultValue: 'Change index' })}
-          >
-            <MonoLabel color={colors.text} size={11}>
-              {`${selectedIndex ? t(`index.${selectedIndex}.name`) : t('map.score_view')} ▾`}
-            </MonoLabel>
-          </InteractivePressable>
+
+          {showResults ? (
+            <View style={styles.results}>
+              {matches.map((p) => (
+                <InteractivePressable
+                  key={p.id}
+                  style={styles.resultRow}
+                  onPress={() => pickParcel(p.id, p.centroid.lon, p.centroid.lat)}
+                  accessibilityLabel={p.name}
+                >
+                  <Ionicons name="location-outline" size={16} color={colors.textMuted} />
+                  <Text
+                    style={styles.resultName}
+                    numberOfLines={1}
+                    maxFontSizeMultiplier={typeScale.maxMult}
+                  >
+                    {p.name}
+                  </Text>
+                  <Text style={styles.resultMeta} maxFontSizeMultiplier={typeScale.maxMult}>
+                    {p.area_ha != null ? formatHectares(p.area_ha) : ''}
+                  </Text>
+                </InteractivePressable>
+              ))}
+              {matches.length === 0 ? (
+                <View style={styles.resultRow}>
+                  <Text style={styles.resultMeta} maxFontSizeMultiplier={typeScale.maxMult}>
+                    {t('map.search_no_results', { defaultValue: 'Nessun campo trovato' })}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
+          <View style={styles.banners} pointerEvents="none">
+            <StaleBanner updatedAt={parcelsQ.dataUpdatedAt || null} />
+            {tilesOffline && !online ? (
+              <View style={styles.tilePill} accessibilityLiveRegion="polite">
+                <Ionicons name="cloud-offline-outline" size={14} color={colors.textMuted} />
+                <Text style={styles.tileTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('map.offline_tiles')}
+                </Text>
+              </View>
+            ) : null}
+          </View>
         </View>
       ) : null}
+
+      <Modal
+        visible={pickerOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPickerOpen(false)}
+      >
+        <View style={styles.sheetRoot}>
+          <Pressable
+            style={styles.sheetBackdrop}
+            onPress={() => setPickerOpen(false)}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.close')}
+          />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
+            <Text style={styles.sheetTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('map.change_index')}
+            </Text>
+            {viewOptions.map((v) => {
+              const active = v.key === choropleth;
+              return (
+                <InteractivePressable
+                  key={String(v.key)}
+                  style={styles.sheetRow}
+                  onPress={() => {
+                    setChoropleth(v.key);
+                    setPickerOpen(false);
+                  }}
+                  accessibilityLabel={v.label}
+                  accessibilityState={{ selected: active }}
+                >
+                  <Text
+                    style={[styles.sheetRowTxt, active && styles.sheetRowTxtActive]}
+                    maxFontSizeMultiplier={typeScale.maxMult}
+                  >
+                    {v.label}
+                  </Text>
+                  {active ? <Ionicons name="checkmark" size={20} color={colors.primary} /> : null}
+                </InteractivePressable>
+              );
+            })}
+          </View>
+        </View>
+      </Modal>
 
       <InteractivePressable
         style={[
@@ -304,9 +537,15 @@ export default function MapScreen() {
         ]}
         hoverStyle={styles.fabHover}
         onPress={() => router.push('/parcel/new')}
-        accessibilityLabel={t('map.add_parcel')}
+        accessibilityLabel={newFieldLabel}
+        haptic
       >
-        <Ionicons name="add" size={30} color="#fff" />
+        <TintCard gradient={gradients.forest} style={styles.fabInner}>
+          <Ionicons name="add" size={20} color={colors.onPrimary} />
+          <Text style={styles.fabTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+            {newFieldLabel}
+          </Text>
+        </TintCard>
       </InteractivePressable>
     </View>
   );
@@ -315,18 +554,23 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
-  msg: { color: colors.textMuted, fontSize: 15, fontFamily: fonts.body },
+  msg: { color: colors.textMuted, fontSize: typeScale.bodyLg, fontFamily: fonts.body },
   retry: {
+    minHeight: touch.min,
+    justifyContent: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     backgroundColor: colors.primary,
     borderRadius: radius.md,
   },
   retryTxt: { color: colors.onPrimary, fontFamily: fonts.bodySemiBold },
-  topRow: {
+  topCol: {
     position: 'absolute',
     left: spacing.md,
     right: spacing.md,
+    gap: spacing.sm,
+  },
+  topRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
@@ -338,7 +582,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    height: 40,
+    minHeight: touch.min,
     paddingHorizontal: spacing.md,
     backgroundColor: colors.card,
     borderRadius: radius.pill,
@@ -352,16 +596,18 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
+    fontSize: typeScale.body,
     fontFamily: fonts.body,
     color: colors.text,
     paddingVertical: 0,
   },
-  indexChip: {
-    height: 40,
+  topChip: {
+    minHeight: touch.min,
     paddingHorizontal: spacing.md,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 5,
     backgroundColor: colors.card,
     borderRadius: radius.pill,
     borderWidth: 1,
@@ -372,7 +618,45 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
   },
-  indexChipHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
+  viewChip: { maxWidth: 190 },
+  topChipHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
+  results: {
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+    maxWidth: 420,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
+  },
+  resultRow: {
+    minHeight: touch.min,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  resultName: { flex: 1, fontSize: typeScale.bodyLg, fontFamily: fonts.bodyMedium, color: colors.text },
+  resultMeta: { fontSize: typeScale.caption, fontFamily: fonts.mono, color: colors.textMuted },
+  banners: { alignItems: 'center', gap: spacing.sm },
+  tilePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 28,
+    backgroundColor: colors.cardAlt,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  tileTxt: { fontFamily: fonts.bodyMedium, fontSize: typeScale.caption, color: colors.textMuted },
   emptyWrap: {
     position: 'absolute',
     top: 0,
@@ -391,8 +675,25 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
+    maxWidth: 320,
   },
-  emptyTxt: { color: colors.textMuted, fontSize: 15, fontFamily: fonts.body, textAlign: 'center' },
+  emptyTxt: {
+    color: colors.textMuted,
+    fontSize: typeScale.bodyLg,
+    fontFamily: fonts.body,
+    textAlign: 'center',
+  },
+  emptyCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: touch.min,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.primary,
+    borderRadius: radius.pill,
+  },
+  emptyCtaTxt: { color: colors.onPrimary, fontSize: typeScale.body, fontFamily: fonts.bodyBold },
   legend: {
     position: 'absolute',
     left: spacing.md,
@@ -404,7 +705,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  legendTitle: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.text, marginBottom: 2 },
+  legendTitle: {
+    fontSize: 11,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.text,
+    marginBottom: 2,
+  },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, maxWidth: 230 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   swatch: { width: 10, height: 10, borderRadius: 2 },
@@ -437,23 +743,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  scoreBadgeValue: { fontFamily: fonts.monoSemiBold, fontSize: 12, color: '#FFFFFF' },
+  scoreBadgeValue: { fontFamily: fonts.monoSemiBold, fontSize: typeScale.caption, color: '#FFFFFF' },
   selInfo: { flex: 1 },
-  selName: { fontSize: 16, fontFamily: fonts.display, color: colors.text },
+  selName: { fontSize: typeScale.bodyLg, fontFamily: fonts.display, color: colors.text },
   selMeta: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
   selButtons: { flexDirection: 'row', gap: spacing.sm },
   detailBtn: { flex: 1 },
   detailBtnInner: {
+    minHeight: touch.min,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: spacing.sm + spacing.xs,
+    paddingVertical: spacing.sm,
     borderColor: 'transparent',
   },
-  detailBtnTxt: { color: colors.onPrimary, fontSize: 14, fontFamily: fonts.bodyBold },
+  detailBtnTxt: { color: colors.onPrimary, fontSize: typeScale.body, fontFamily: fonts.bodyBold },
   scoutBtn: {
+    minHeight: touch.min,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: spacing.sm + spacing.xs,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     backgroundColor: colors.card,
     borderWidth: 1,
@@ -461,24 +769,66 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   scoutBtnHover: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
-  scoutBtnTxt: { color: colors.text, fontSize: 14, fontFamily: fonts.bodySemiBold },
-  iconButton: { padding: 5, borderRadius: radius.sm },
+  scoutBtnTxt: { color: colors.text, fontSize: typeScale.body, fontFamily: fonts.bodySemiBold },
+  iconButton: { padding: 6, borderRadius: radius.sm },
   iconButtonHover: { backgroundColor: colors.cardAlt },
+  sheetRoot: { flex: 1, justifyContent: 'flex-end' },
+  sheetBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(27,30,26,0.35)',
+  },
+  sheet: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingTop: spacing.md,
+    paddingHorizontal: spacing.md,
+    gap: 2,
+  },
+  sheetTitle: {
+    fontSize: typeScale.title,
+    fontFamily: fonts.display,
+    color: colors.text,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.sm,
+  },
+  sheetRow: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+  },
+  sheetRowTxt: { fontSize: typeScale.bodyLg, fontFamily: fonts.body, color: colors.text },
+  sheetRowTxtActive: { fontFamily: fonts.bodySemiBold, color: colors.primary },
   fab: {
     position: 'absolute',
     right: spacing.md,
     bottom: spacing.md,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: radius.pill,
     shadowColor: '#000',
     shadowOpacity: 0.25,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
     elevation: 5,
   },
-  fabHover: { backgroundColor: colors.primaryDark, transform: [{ translateY: -2 }, { scale: 1.03 }] },
+  fabHover: { transform: [{ translateY: -2 }, { scale: 1.03 }] },
+  fabInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 48,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 0,
+    borderRadius: radius.pill,
+    borderColor: 'transparent',
+  },
+  fabTxt: { color: colors.onPrimary, fontSize: typeScale.bodyLg, fontFamily: fonts.bodyBold },
 });

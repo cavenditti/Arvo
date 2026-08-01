@@ -7,7 +7,6 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -39,25 +38,38 @@ import {
   type PlantSeriesResponse,
   type PlantStatus,
 } from '@/api/types';
-import AlertList from '@/components/AlertList';
-import type { GlyphName } from '@/components/glyphs';
-import { GlyphCard, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
+import { kindGlyph, type GlyphName } from '@/components/glyphs';
+import {
+  GlyphBadge,
+  GlyphCard,
+  InteractivePressable,
+  MonoLabel,
+  MonoValue,
+  Pill,
+  TintCard,
+} from '@/components/ui';
 import { INDEX_DOMAIN, dfLocale, indexColor } from '@/features/insights/format';
-import { useAlertActions } from '@/features/insights/useAlertActions';
+import { useAlertActions, type AlertAction } from '@/features/insights/useAlertActions';
 import { mediaUri, useMediaToken } from '@/features/media';
 import { confirmDestructive, notify } from '@/features/parcels/dialog';
 import { useParcel } from '@/features/parcels/hooks';
 import { usePlant } from '@/features/plants/hooks';
 import { PHYSICAL_METRICS, metricLabelKey, plantName } from '@/features/plants/ranking';
 import { useParcelObservations } from '@/features/scouting/byParcel';
+import { formatDay, formatNumber, formatShortDay } from '@/lib/format';
+import * as haptics from '@/lib/haptics';
 import {
+  alertStateTint,
   colors,
   fonts,
   gradients,
   radius,
+  severityGradient,
   severityTint,
   spacing,
   statusColors,
+  touch,
+  type as typeScale,
 } from '@/theme';
 
 // Legal transitions, docs/API-PLANT.md §Plants (POST /plants/{id}/status). `removed` is terminal.
@@ -87,6 +99,8 @@ export default function PlantDetailScreen() {
   const [metric, setMetric] = useState<PlantMetric>('ndvi');
   const [growth, setGrowth] = useState<PlantMetric>('canopy_m2');
   const [note, setNote] = useState('');
+  // Identity keeps the farmer's facts; codes, indices and coordinates wait behind this.
+  const [techOpen, setTechOpen] = useState(false);
 
   const plantQ = usePlant(plantId);
   // The rest of docs/API-PLANT.md §Plant insights is fetched here rather than through
@@ -136,8 +150,11 @@ export default function PlantDetailScreen() {
       void qc.invalidateQueries({ queryKey: ['plant-summary'] });
       void qc.invalidateQueries({ queryKey: ['alerts'] });
       setNote('');
+      haptics.success();
       notify(t('plant.status_change_title'), t('plant.status_saved'));
     },
+    // humanized: the one legal-transition error gets its friendly copy, everything else the
+    // generic retry line — never a raw server code.
     onError: (e) =>
       notify(
         t('plant.status_change_title'),
@@ -164,9 +181,15 @@ export default function PlantDetailScreen() {
             ? t('plant.not_found')
             : t('plant.load_error')}
         </Text>
-        <Pressable style={styles.retry} onPress={() => plantQ.refetch()}>
-          <Text style={styles.primaryTxt}>{t('common.retry')}</Text>
-        </Pressable>
+        <InteractivePressable
+          style={styles.retry}
+          accessibilityLabel={t('common.retry')}
+          onPress={() => plantQ.refetch()}
+        >
+          <Text style={styles.primaryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('common.retry')}
+          </Text>
+        </InteractivePressable>
       </View>
     );
   }
@@ -210,12 +233,16 @@ export default function PlantDetailScreen() {
           style={styles.hero}
         >
           <View style={styles.heroTitleRow}>
-            <Text style={styles.title} numberOfLines={2}>
+            <Text style={styles.title} numberOfLines={2} maxFontSizeMultiplier={typeScale.maxMult}>
               {name}
             </Text>
             <Pill label={t(`plant.status.${p.status}`)} fg={tone.fg} bg={tone.bg} />
           </View>
-          {identityLine ? <Text style={styles.subtitle}>{identityLine}</Text> : null}
+          {identityLine ? (
+            <Text style={styles.subtitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {identityLine}
+            </Text>
+          ) : null}
           {headline ? (
             <View style={styles.heroReading}>
               <MonoValue size={38} style={styles.heroValue}>
@@ -236,70 +263,108 @@ export default function PlantDetailScreen() {
           )}
         </GlyphCard>
 
-        {/* identity */}
+        {/* identity — the farmer's facts stay visible; codes, indices and coordinates live
+            behind the "Dettagli tecnici" disclosure (docs/UX-REVAMP.md rule 7) */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('plant.identity')}</Text>
+          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('plant.identity')}
+          </Text>
           <View style={styles.fields}>
-            <Field label={t('plant.unit_type')} value={t(`plant.unit.${p.unit_type}`)} />
-            <Field label={t('plant.label')} value={p.label} />
-            <Field label={t('plant.external_ref')} value={p.external_ref} mono />
-            <Field label={t('plant.variety')} value={p.variety} />
-            <Field label={t('plant.rootstock')} value={p.rootstock} />
+            <Field label={t('plant.parcel')} value={parcelQ.data?.name} />
             <Field
               label={t('plant.planted_on')}
-              value={p.planted_on ? format(parseISO(p.planted_on), 'd MMM yyyy', { locale }) : null}
-              mono
+              value={p.planted_on ? formatDay(p.planted_on) : null}
             />
-            <Field label={t('plant.block')} value={p.block_name} />
-            <Field label={t('plant.row')} value={p.row_name} />
-            <Field label={t('plant.row_index')} value={numText(p.row_index)} mono />
-            <Field label={t('plant.col_index')} value={numText(p.col_index)} mono />
-            <Field label={t('plant.source_label')} value={t(`plant.source.${p.source}`)} />
-            <Field
-              label={t('plant.coordinates')}
-              value={`${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`}
-              mono
-            />
-            <Field
-              label={t('plant.updated_at')}
-              value={format(parseISO(p.updated_at), 'd MMM yyyy', { locale })}
-              mono
-            />
+            <Field label={t('plant.variety')} value={p.variety} />
           </View>
-          <Pressable style={styles.linkRow} onPress={() => router.push(`/parcel/${p.parcel_id}`)}>
+          <InteractivePressable
+            style={styles.linkRow}
+            accessibilityLabel={`${t('plant.open_parcel')}${parcelQ.data ? ` ${parcelQ.data.name}` : ''}`}
+            onPress={() => router.push(`/parcel/${p.parcel_id}`)}
+          >
             <Ionicons name="map-outline" size={16} color={colors.primary} />
-            <Text style={styles.linkTxt}>
+            <Text style={styles.linkTxt} maxFontSizeMultiplier={typeScale.maxMult}>
               {t('plant.open_parcel')}
               {parcelQ.data ? ` · ${parcelQ.data.name}` : ''}
             </Text>
-          </Pressable>
+          </InteractivePressable>
+          <InteractivePressable
+            style={styles.disclosure}
+            accessibilityState={{ expanded: techOpen }}
+            accessibilityLabel={
+              techOpen
+                ? t('alerts_group.hide_detail', { defaultValue: 'Nascondi dettagli' })
+                : t('alerts_group.show_detail')
+            }
+            onPress={() => setTechOpen((v) => !v)}
+          >
+            <Ionicons
+              name={techOpen ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color={colors.textMuted}
+            />
+            <Text style={styles.disclosureLabel} maxFontSizeMultiplier={typeScale.maxMult}>
+              {techOpen
+                ? t('alerts_group.hide_detail', { defaultValue: 'Nascondi dettagli' })
+                : t('alerts_group.show_detail')}
+            </Text>
+          </InteractivePressable>
+          {techOpen ? (
+            <View style={styles.fields}>
+              <Field label={t('plant.unit_type')} value={t(`plant.unit.${p.unit_type}`)} />
+              <Field label={t('plant.label')} value={p.label} />
+              <Field label={t('plant.external_ref')} value={p.external_ref} mono />
+              <Field label={t('plant.rootstock')} value={p.rootstock} />
+              <Field label={t('plant.block')} value={p.block_name} />
+              <Field label={t('plant.row')} value={p.row_name} />
+              <Field label={t('plant.row_index')} value={numText(p.row_index)} mono />
+              <Field label={t('plant.col_index')} value={numText(p.col_index)} mono />
+              <Field label={t('plant.source_label')} value={t(`plant.source.${p.source}`)} />
+              <Field
+                label={t('plant.coordinates')}
+                value={`${formatNumber(p.lat, { minimumFractionDigits: 5, maximumFractionDigits: 5 })}, ${formatNumber(p.lon, { minimumFractionDigits: 5, maximumFractionDigits: 5 })}`}
+                mono
+              />
+              <Field label={t('plant.updated_at')} value={formatDay(p.updated_at)} />
+            </View>
+          ) : null}
         </View>
 
         {/* latest readings */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('plant.latest_metrics')}</Text>
+          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('plant.latest_metrics')}
+          </Text>
           {latestQ.isLoading ? (
             <ActivityIndicator color={colors.primary} style={styles.pad} />
           ) : headline ? (
-            <View style={styles.tiles}>
-              {PLANT_METRICS.map((m) => {
-                const point = latest[m];
-                if (!point) return null;
-                return (
-                  <View key={m} style={styles.tile}>
-                    <MonoLabel>{t(metricLabelKey(m))}</MonoLabel>
-                    <MonoValue size={18} style={styles.tileValue}>
-                      {formatMetric(m, point.value)}
-                      {unitFor(m) ? ` ${t(unitFor(m)!)}` : ''}
-                    </MonoValue>
-                    <MonoLabel>
-                      {format(parseISO(point.observed_at), 'd MMM', { locale })}
-                      {point.quality != null ? ` · ${point.quality}%` : ''}
-                    </MonoLabel>
-                  </View>
-                );
-              })}
-            </View>
+            <>
+              <View style={styles.tiles}>
+                {PLANT_METRICS.map((m) => {
+                  const point = latest[m];
+                  if (!point) return null;
+                  return (
+                    <View key={m} style={styles.tile}>
+                      <MonoLabel>{t(metricLabelKey(m))}</MonoLabel>
+                      <MonoValue size={18} style={styles.tileValue}>
+                        {formatMetric(m, point.value)}
+                        {unitFor(m) ? ` ${t(unitFor(m)!)}` : ''}
+                      </MonoValue>
+                      <MonoLabel>{format(parseISO(point.observed_at), 'd MMM', { locale })}</MonoLabel>
+                    </View>
+                  );
+                })}
+              </View>
+              {headline.point.quality != null ? (
+                // the naked "87%" becomes a sentence a farmer can trust at a glance
+                <Text style={styles.hint} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('plant.quality_note', {
+                    pct: headline.point.quality,
+                    defaultValue: 'Affidabilità della misura: {{pct}}%',
+                  })}
+                </Text>
+              ) : null}
+            </>
           ) : (
             <Text style={styles.muted}>{t('plant.no_metrics')}</Text>
           )}
@@ -307,7 +372,9 @@ export default function PlantDetailScreen() {
 
         {/* per-metric series */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('plant.series')}</Text>
+          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('plant.series')}
+          </Text>
           <View style={styles.chips} accessibilityLabel={t('plant.select_metric')}>
             {INDEX_NAMES.map((m) => (
               <MetricChip
@@ -318,7 +385,9 @@ export default function PlantDetailScreen() {
               />
             ))}
           </View>
-          <Text style={styles.hint}>{t(`index.${metric}.description`)}</Text>
+          <Text style={styles.hint} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t(`index.${metric}.description`)}
+          </Text>
           {seriesQ.isLoading ? (
             <ActivityIndicator color={colors.primary} style={styles.pad} />
           ) : (
@@ -328,8 +397,12 @@ export default function PlantDetailScreen() {
 
         {/* canopy / height growth curve (FR-P-044) */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t(metricLabelKey(growth))}</Text>
-          <Text style={styles.hint}>{t(`plant.metric_desc.${growth}`)}</Text>
+          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t(metricLabelKey(growth))}
+          </Text>
+          <Text style={styles.hint} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t(`plant.metric_desc.${growth}`)}
+          </Text>
           <View style={styles.chips}>
             {PHYSICAL_METRICS.map((m) => (
               <MetricChip
@@ -349,7 +422,9 @@ export default function PlantDetailScreen() {
 
         {/* flight history */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('plant.history')}</Text>
+          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('plant.history')}
+          </Text>
           {capturesQ.isLoading ? (
             <ActivityIndicator color={colors.primary} style={styles.pad} />
           ) : captures.length === 0 ? (
@@ -388,24 +463,35 @@ export default function PlantDetailScreen() {
           )}
         </View>
 
-        {/* plant alerts */}
+        {/* plant alerts — PlantAlert is per-plant, not an org Alert event, so these render as a
+            small local card list in AlertList's visual language instead of going through
+            groupAlerts (which would fold distinct plant signals into one event). */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('plant.alerts')}</Text>
+          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('plant.alerts')}
+          </Text>
           {alertsQ.isLoading ? (
             <ActivityIndicator color={colors.primary} style={styles.pad} />
           ) : alerts.length === 0 ? (
             <Text style={styles.muted}>{t('plant.no_alerts')}</Text>
           ) : (
-            <AlertList
-              alerts={alerts}
-              onAction={(alertId, action) => alertAction.mutate({ id: alertId, action })}
-            />
+            <View style={styles.alertList}>
+              {alerts.map((a) => (
+                <PlantAlertCard
+                  key={a.id}
+                  alert={a}
+                  onAction={(action) => alertAction.mutate({ id: a.id, action })}
+                />
+              ))}
+            </View>
           )}
         </View>
 
         {/* scouting pinned to this plant */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('plant.scouting')}</Text>
+          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('plant.scouting')}
+          </Text>
           {observations.length === 0 ? (
             <Text style={styles.muted}>{t('plant.no_observations')}</Text>
           ) : (
@@ -413,7 +499,8 @@ export default function PlantDetailScreen() {
           )}
         </View>
 
-        <Pressable
+        <InteractivePressable
+          accessibilityLabel={t('plant.add_note')}
           onPress={() =>
             router.push({
               pathname: '/observation/new',
@@ -423,28 +510,38 @@ export default function PlantDetailScreen() {
         >
           <TintCard gradient={gradients.forest} style={styles.cta}>
             <Ionicons name="add" size={20} color={colors.onPrimary} />
-            <Text style={styles.ctaTxt}>{t('plant.add_note')}</Text>
+            <Text style={styles.ctaTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('plant.add_note')}
+            </Text>
           </TintCard>
-        </Pressable>
+        </InteractivePressable>
 
         {/* status lifecycle */}
         {TRANSITIONS[p.status].length > 0 ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{t('plant.actions')}</Text>
-            <Text style={styles.fieldLabel}>{t('plant.status_note')}</Text>
+            <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('plant.actions')}
+            </Text>
+            <Text style={styles.fieldLabel} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('plant.status_note')}
+            </Text>
             <TextInput
               style={styles.input}
               value={note}
               onChangeText={setNote}
               placeholder={t('plant.status_note_ph')}
               placeholderTextColor={colors.textFaint}
+              accessibilityLabel={t('plant.status_note')}
+              maxFontSizeMultiplier={typeScale.maxMult}
               multiline
             />
             {TRANSITIONS[p.status].map((next) => (
-              <Pressable
+              <InteractivePressable
                 key={next}
-                style={[styles.actionBtn, statusMut.isPending && styles.disabled]}
+                style={styles.actionBtn}
                 disabled={statusMut.isPending}
+                accessibilityLabel={t(MARK_KEY[next])}
+                accessibilityState={{ disabled: statusMut.isPending }}
                 onPress={() => askStatus(next)}
               >
                 <Ionicons
@@ -452,15 +549,20 @@ export default function PlantDetailScreen() {
                   size={17}
                   color={next === 'removed' ? colors.danger : colors.primary}
                 />
-                <Text style={[styles.actionTxt, next === 'removed' && styles.dangerTxt]}>
+                <Text
+                  style={[styles.actionTxt, next === 'removed' && styles.dangerTxt]}
+                  maxFontSizeMultiplier={typeScale.maxMult}
+                >
                   {t(MARK_KEY[next])}
                 </Text>
-              </Pressable>
+              </InteractivePressable>
             ))}
           </View>
         ) : null}
 
-        <Text style={styles.disclaimer}>{t('common.decision_support')}</Text>
+        <Text style={styles.disclaimer} maxFontSizeMultiplier={typeScale.maxMult}>
+          {t('common.decision_support')}
+        </Text>
       </ScrollView>
     </>
   );
@@ -478,9 +580,17 @@ function MetricChip({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={[styles.chip, active && styles.chipActive]} onPress={onPress}>
-      <Text style={[styles.chipTxt, active && styles.chipTxtActive]}>{label}</Text>
-    </Pressable>
+    <InteractivePressable
+      haptic
+      style={[styles.chip, active && styles.chipActive]}
+      accessibilityLabel={label}
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+    >
+      <Text style={[styles.chipTxt, active && styles.chipTxtActive]} maxFontSizeMultiplier={typeScale.maxMult}>
+        {label}
+      </Text>
+    </InteractivePressable>
   );
 }
 
@@ -502,9 +612,97 @@ function Field({
           {value}
         </MonoValue>
       ) : (
-        <Text style={styles.fieldValue}>{value}</Text>
+        <Text style={styles.fieldValue} maxFontSizeMultiplier={typeScale.maxMult}>
+          {value}
+        </Text>
       )}
     </View>
+  );
+}
+
+// ── per-plant alert cards ────────────────────────────────────────────────────
+// PlantAlert ≠ org Alert event: one signal, one plant, acted on individually through the
+// existing per-alert endpoints. Same visual language as components/AlertList (semantic
+// gradient card, glyph badge, plain title first, ≥44pt actions) without the event grouping.
+
+function PlantAlertCard({
+  alert,
+  onAction,
+}: {
+  alert: PlantAlert;
+  onAction: (action: AlertAction) => void;
+}) {
+  const { t } = useTranslation();
+  const sev = severityTint[alert.severity] ?? severityTint.info;
+  const state = alertStateTint[alert.state] ?? alertStateTint.open;
+  const actionable = alert.state === 'open' || alert.state === 'snoozed';
+  return (
+    <TintCard gradient={severityGradient(alert.severity)} style={styles.alertCard}>
+      <View style={styles.alertHead}>
+        <GlyphBadge glyph={kindGlyph(alert.kind)} fg={sev.fg} bg={sev.bg} size={28} />
+        <Text style={styles.alertTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+          {t(`plant.alert.${alert.kind}`, { defaultValue: alert.title })}
+        </Text>
+        <Pill label={t(`severity.${alert.severity}`)} fg={sev.fg} bg={sev.bg} />
+      </View>
+      <MonoLabel style={styles.alertMeta}>
+        {[alert.plant_label, formatShortDay(alert.created_at)].filter(Boolean).join(' · ')}
+      </MonoLabel>
+      <Text style={styles.alertBody} maxFontSizeMultiplier={typeScale.maxMult}>
+        {alert.message}
+      </Text>
+      {actionable ? (
+        <View style={styles.alertActions}>
+          <PlantAlertButton
+            primary
+            label={t('alerts.ack')}
+            onPress={() => {
+              haptics.success();
+              onAction('ack');
+            }}
+          />
+          <PlantAlertButton label={t('alerts.snooze')} onPress={() => onAction('snooze')} />
+          <PlantAlertButton label={t('alerts.dismiss')} onPress={() => onAction('dismiss')} />
+        </View>
+      ) : (
+        <View style={styles.alertFooter}>
+          <Pill label={t(`alerts.state.${alert.state}`)} fg={state.fg} bg={state.bg} />
+        </View>
+      )}
+    </TintCard>
+  );
+}
+
+function PlantAlertButton({
+  label,
+  onPress,
+  primary,
+}: {
+  label: string;
+  onPress: () => void;
+  primary?: boolean;
+}) {
+  if (primary) {
+    return (
+      <InteractivePressable
+        style={styles.alertBtnPrimaryWrap}
+        accessibilityLabel={label}
+        onPress={onPress}
+      >
+        <TintCard gradient={gradients.forest} style={styles.alertBtnPrimary}>
+          <Text style={styles.alertBtnPrimaryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+            {label}
+          </Text>
+        </TintCard>
+      </InteractivePressable>
+    );
+  }
+  return (
+    <InteractivePressable style={styles.alertBtn} accessibilityLabel={label} onPress={onPress}>
+      <Text style={styles.alertBtnTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+        {label}
+      </Text>
+    </InteractivePressable>
   );
 }
 
@@ -763,17 +961,19 @@ function unitFor(m: PlantMetric): string | null {
 
 function formatMetric(m: PlantMetric, v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—';
-  return m === 'canopy_m2' ? v.toFixed(1) : v.toFixed(2);
+  const digits = m === 'canopy_m2' ? 1 : 2;
+  // locale-aware ("0,82" in Italian) — docs/UX-REVAMP.md rule 7
+  return formatNumber(v, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
 function numText(v: number | null | undefined): string | null {
-  return v == null ? null : String(v);
+  return v == null ? null : formatNumber(v);
 }
 
 function tickText(v: number): string {
   const abs = Math.abs(v);
-  if (abs >= 100) return v.toFixed(0);
-  return v.toFixed(v % 1 === 0 ? 0 : abs >= 10 ? 0 : 1);
+  const digits = abs >= 10 || v % 1 === 0 ? 0 : 1;
+  return formatNumber(v, { minimumFractionDigits: 0, maximumFractionDigits: digits });
 }
 
 /** Indices use their fixed domain; canopy/height are sizes → data-driven, zero-based. */
@@ -876,8 +1076,31 @@ const styles = StyleSheet.create({
   field: { flexGrow: 1, flexBasis: 130, gap: 2 },
   fieldValue: { fontSize: 14, fontFamily: fonts.body, color: colors.text },
   fieldLabel: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
-  linkRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: spacing.xs },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: touch.chip,
+    alignSelf: 'flex-start',
+    paddingRight: spacing.sm,
+  },
   linkTxt: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.primary },
+
+  // "Dettagli tecnici" disclosure (same chevron pattern as AlertList)
+  disclosure: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    minHeight: touch.chip,
+    alignSelf: 'flex-start',
+    paddingRight: spacing.sm,
+    borderRadius: radius.sm,
+  },
+  disclosureLabel: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: typeScale.caption,
+    color: colors.textMuted,
+  },
 
   // reading tiles
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
@@ -894,9 +1117,11 @@ const styles = StyleSheet.create({
   },
   tileValue: { marginVertical: 1 },
 
-  // chips
+  // chips (tappable — ≥40pt, docs/DESIGN.md §11)
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   chip: {
+    minHeight: touch.chip,
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.lg,
@@ -930,6 +1155,63 @@ const styles = StyleSheet.create({
   colDate: { flex: 1.4, gap: 2 },
   colValue: { flex: 1, textAlign: 'right' },
 
+  // per-plant alert cards (AlertList's visual language, single-signal)
+  alertList: { gap: spacing.sm },
+  alertCard: {
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  alertHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  alertTitle: {
+    flex: 1,
+    fontFamily: fonts.display,
+    fontSize: typeScale.bodyLg,
+    lineHeight: 22,
+    color: colors.text,
+  },
+  alertMeta: { marginTop: 6 },
+  alertBody: {
+    fontFamily: fonts.body,
+    fontSize: typeScale.body,
+    color: colors.textMuted,
+    marginTop: 6,
+    lineHeight: 20,
+  },
+  alertActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+    paddingTop: spacing.sm,
+  },
+  alertFooter: { flexDirection: 'row', marginTop: spacing.sm },
+  alertBtn: {
+    flexGrow: 1,
+    minHeight: touch.min,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  alertBtnTxt: { fontFamily: fonts.bodySemiBold, fontSize: typeScale.body, color: colors.primaryDark },
+  alertBtnPrimaryWrap: { flexGrow: 1, borderRadius: radius.lg },
+  alertBtnPrimary: {
+    minHeight: touch.min,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.lg,
+    borderWidth: 0,
+  },
+  alertBtnPrimaryTxt: { fontFamily: fonts.bodyBold, fontSize: typeScale.body, color: colors.onPrimary },
+
   // scouting
   obsRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start', marginTop: spacing.xs },
   obsThumb: { width: 48, height: 48, borderRadius: radius.sm, backgroundColor: colors.cardAlt },
@@ -960,7 +1242,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.cardAlt,
-    minHeight: 48,
+    minHeight: touch.min + 4,
   },
   actionTxt: { fontSize: 15, fontFamily: fonts.bodySemiBold, color: colors.primary },
   dangerTxt: { color: colors.danger },
@@ -981,13 +1263,14 @@ const styles = StyleSheet.create({
   muted: { color: colors.textMuted, fontFamily: fonts.body, fontSize: 14, paddingVertical: spacing.xs },
   pad: { paddingVertical: spacing.md },
   retry: {
+    minHeight: touch.min,
+    justifyContent: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     backgroundColor: colors.primary,
     borderRadius: radius.md,
   },
   primaryTxt: { color: colors.onPrimary, fontFamily: fonts.bodyBold, fontSize: 16 },
-  disabled: { opacity: 0.5 },
   disclaimer: {
     color: colors.textFaint,
     fontFamily: fonts.body,

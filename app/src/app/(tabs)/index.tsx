@@ -1,44 +1,42 @@
-// OWNER: fe-dashboard — Fields home (Campo): header + latest-pass meta, top attention banner,
-// parcel rows with NDVI swatch, status chip (worst open alert), and 7-day delta.
+// OWNER: dashboard — Campi home: header with weather/scouting/alerts shortcuts, grouped
+// attention banner, human meta line, and one status voice per row (deriveFieldStatus +
+// trendFromSeries — no local status/delta logic, docs/UX-REVAMP.md).
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { format, parseISO } from 'date-fns';
+import { differenceInCalendarDays, isToday, isValid, isYesterday, parseISO } from 'date-fns';
 import { useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { api } from '@/api/client';
 import type { Alert, LatestIndices, Org, Parcel, Role, User } from '@/api/types';
 import { kindGlyph } from '@/components/glyphs';
-import { GlyphBadge, MonoLabel, StatusChip, TintCard } from '@/components/ui';
-import { sortBySeverityThenRecency, worstSeverityByParcel } from '@/features/insights/alerts';
-import { arvoScore, cropLabel, dfLocale, scoreColor, trendBand } from '@/features/insights/format';
-import { sevenDayDelta } from '@/features/insights/series';
+import { StaleBanner } from '@/components/StaleBanner';
+import { GlyphBadge, StatusChip, TintCard } from '@/components/ui';
+import { arvoScoreDetail, cropLabel, scoreColor } from '@/features/insights/format';
+import { countAlertEvents, groupAlerts, type AlertEvent } from '@/features/insights/grouping';
+import { deriveFieldStatus, trendFromSeries } from '@/features/insights/status';
 import { useIndexSeries, useLatestIndices, useParcels } from '@/features/parcels/hooks';
 import { useParcelNames } from '@/features/parcels/names';
+import { formatHectares } from '@/lib/format';
 import {
   colors,
   fonts,
+  gradients,
   radius,
   severityGradient,
   severityTint,
   spacing,
-  statusForSeverity,
+  touch,
+  type as typeScale,
   type Status,
 } from '@/theme';
 
 type Me = { user: User; org: Org; role: Role };
 
+const HIT_SLOP = { top: 4, right: 4, bottom: 4, left: 4 }; // 40pt glyph buttons → 48pt targets
 
 export default function Dashboard() {
   const { t } = useTranslation();
@@ -58,19 +56,34 @@ export default function Dashboard() {
     queryFn: () => api.get<Alert[]>('/alerts?state=open'),
   });
 
-  const severityByParcel = worstSeverityByParcel(openAlerts.data ?? []);
   const parcelNames = useParcelNames();
 
-  // banner = worst open alert (critical first, then warning), newest wins ties
-  const banner = sortBySeverityThenRecency(
-    (openAlerts.data ?? []).filter((a) => a.severity !== 'info'),
-  )[0];
+  // One grouped-event view of the open alerts: banner = worst/latest event, badge = event
+  // count, per-row status = events of that parcel. Same grouping as the alerts tab.
+  const events = useMemo(
+    () => groupAlerts(openAlerts.data ?? [], (id) => (id ? (parcelNames[id] ?? '') : '')),
+    [openAlerts.data, parcelNames],
+  );
+  const openEventsByParcel = useMemo(() => {
+    const byParcel: Record<string, Alert[]> = {};
+    for (const a of openAlerts.data ?? []) {
+      if (!a.parcel_id) continue;
+      (byParcel[a.parcel_id] ??= []).push(a);
+    }
+    const counts: Record<string, number> = {};
+    for (const [id, list] of Object.entries(byParcel)) counts[id] = countAlertEvents(list);
+    return counts;
+  }, [openAlerts.data]);
+  const eventCount = countAlertEvents(openAlerts.data ?? []);
+  const bannerEvent = events[0];
 
-  // latest acquisition across parcels → "14 JUL PASS"
+  // Latest satellite acquisition across parcels (drone rollups don't count as a "pass").
   let lastPass: string | null = null;
   for (const li of Object.values(latest.data ?? {})) {
-    const at = li.ndvi?.observed_at;
-    if (at && (!lastPass || at > lastPass)) lastPass = at;
+    for (const point of Object.values(li)) {
+      if (!point || point.source === 'drone') continue;
+      if (!lastPass || point.observed_at > lastPass) lastPass = point.observed_at;
+    }
   }
 
   const onRefresh = useCallback(async () => {
@@ -80,54 +93,114 @@ export default function Dashboard() {
   }, [qc]);
 
   const list = parcels.data ?? [];
-  const metaParts = [t('dashboard.parcel_count', { count: list.length })];
-  if (lastPass) {
-    metaParts.push(
-      t('dashboard.last_pass', { date: format(parseISO(lastPass), 'd MMM', { locale: dfLocale() }) }),
-    );
+
+  // "3 campi · foto satellitare di ieri" — relative day in plain words, never a raw date.
+  const passDate = lastPass ? parseISO(lastPass) : null;
+  let when: string | null = null;
+  if (passDate && isValid(passDate)) {
+    when = isToday(passDate)
+      ? t('dashboard.when_today', { defaultValue: 'di oggi' })
+      : isYesterday(passDate)
+        ? t('dashboard.when_yesterday', { defaultValue: 'di ieri' })
+        : t('dashboard.when_days_ago', {
+            days: differenceInCalendarDays(new Date(), passDate),
+            defaultValue: 'di {{days}} giorni fa',
+          });
   }
+  const metaLine = when
+    ? t('dashboard.meta_line', {
+        count: list.length,
+        when,
+        defaultValue_one: '{{count}} campo · foto satellitare {{when}}',
+        defaultValue_other: '{{count}} campi · foto satellitare {{when}}',
+        defaultValue: '{{count}} campi · foto satellitare {{when}}',
+      })
+    : t('dashboard.parcel_count', { count: list.length });
+
+  // Every field exists but none has a score yet → quiet "first satellite photos on the way".
+  const allPending =
+    list.length > 0 &&
+    latest.isSuccess &&
+    list.every((p) => arvoScoreDetail(latest.data?.[p.id]).score == null);
 
   const header = (
     <View style={styles.header}>
       <View style={styles.headerRow}>
         <View style={styles.flex1}>
-          <Text style={styles.title}>{t('dashboard.title')}</Text>
-          <Text style={styles.org}>{me.data?.org.name ?? '—'}</Text>
+          <Text style={styles.title} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('dashboard.title')}
+          </Text>
+          <Text style={styles.org} maxFontSizeMultiplier={typeScale.maxMult}>
+            {me.data?.org.name ?? '—'}
+          </Text>
         </View>
         <Pressable
+          onPress={() => router.push('/weather')}
+          style={styles.headerButton}
+          hitSlop={HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel={t('dashboard.weather_link', { defaultValue: 'Meteo' })}
+        >
+          <Ionicons name="partly-sunny-outline" size={20} color={colors.text} />
+        </Pressable>
+        <Pressable
+          onPress={() => router.push('/scouting')}
+          style={styles.headerButton}
+          hitSlop={HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel={t('scouting.open_list')}
+        >
+          <Ionicons name="journal-outline" size={20} color={colors.text} />
+        </Pressable>
+        <Pressable
           onPress={() => router.push('/alerts')}
-          style={styles.bell}
+          style={styles.headerButton}
+          hitSlop={HIT_SLOP}
+          accessibilityRole="button"
           accessibilityLabel={t('tabs.alerts')}
         >
           <Ionicons name="notifications-outline" size={20} color={colors.text} />
-          {(openAlerts.data?.length ?? 0) > 0 ? (
+          {eventCount > 0 ? (
             <View style={styles.bellBadge}>
-              <Text style={styles.bellBadgeText}>
-                {(openAlerts.data?.length ?? 0) > 99 ? '99+' : (openAlerts.data?.length ?? 0)}
+              <Text style={styles.bellBadgeText} maxFontSizeMultiplier={typeScale.maxMult}>
+                {eventCount > 99 ? '99+' : eventCount}
               </Text>
             </View>
           ) : null}
         </Pressable>
       </View>
 
-      {banner ? (
-        <BannerCard
-          alert={banner}
-          parcelName={banner.parcel_id ? parcelNames[banner.parcel_id] : undefined}
-          onPress={() =>
-            banner.parcel_id ? router.push(`/parcel/${banner.parcel_id}`) : router.push('/alerts')
-          }
-        />
+      <StaleBanner updatedAt={parcels.dataUpdatedAt > 0 ? parcels.dataUpdatedAt : null} />
+
+      {bannerEvent ? (
+        <AttentionBanner event={bannerEvent} onPress={() => router.push('/alerts')} />
+      ) : null}
+
+      {allPending ? (
+        <TintCard gradient={gradients.eucalyptus} style={styles.firstValue}>
+          <Text style={styles.firstValueTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('onboarding.first_value_title')}
+          </Text>
+          <Text style={styles.firstValueBody} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('onboarding.first_value_body')}
+          </Text>
+        </TintCard>
       ) : null}
 
       {list.length > 0 ? (
         <>
-          <MonoLabel style={styles.listMeta}>{metaParts.join(' · ')}</MonoLabel>
+          <Text style={styles.listMeta} maxFontSizeMultiplier={typeScale.maxMult}>
+            {metaLine}
+          </Text>
           <View style={styles.scoreExplainer}>
             <Ionicons name="sparkles-outline" size={16} color={colors.primary} />
             <View style={styles.flex1}>
-              <Text style={styles.scoreExplainerTitle}>{t('score.name')}</Text>
-              <Text style={styles.scoreExplainerBody}>{t('score.short_explanation')}</Text>
+              <Text style={styles.scoreExplainerTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('score.name')}
+              </Text>
+              <Text style={styles.scoreExplainerBody} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('score.short_explanation')}
+              </Text>
             </View>
           </View>
         </>
@@ -137,8 +210,15 @@ export default function Dashboard() {
 
   if (parcels.isLoading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator color={colors.primary} />
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        <View style={styles.content}>
+          {header}
+          <View style={styles.skeletonGroup} accessibilityLabel={t('common.loading')}>
+            <SkeletonRow />
+            <SkeletonRow />
+            <SkeletonRow />
+          </View>
+        </View>
       </View>
     );
   }
@@ -146,9 +226,18 @@ export default function Dashboard() {
   if (parcels.isError) {
     return (
       <View style={styles.center}>
-        <Text style={styles.errorText}>{t('dashboard.load_error')}</Text>
-        <Pressable style={styles.cta} onPress={() => parcels.refetch()}>
-          <Text style={styles.ctaText}>{t('common.retry')}</Text>
+        <Text style={styles.errorText} maxFontSizeMultiplier={typeScale.maxMult}>
+          {t('dashboard.load_error')}
+        </Text>
+        <Pressable
+          style={styles.cta}
+          onPress={() => parcels.refetch()}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.retry')}
+        >
+          <Text style={styles.ctaText} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('common.retry')}
+          </Text>
         </Pressable>
       </View>
     );
@@ -168,16 +257,27 @@ export default function Dashboard() {
           <ParcelRow
             parcel={item}
             latest={latest.data?.[item.id]}
-            status={statusForSeverity(severityByParcel[item.id])}
+            openAlertEvents={openEventsByParcel[item.id] ?? 0}
             onPress={() => router.push(`/parcel/${item.id}`)}
           />
         )}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>{t('dashboard.empty_title')}</Text>
-            <Text style={styles.emptyBody}>{t('dashboard.empty_body')}</Text>
-            <Pressable style={styles.cta} onPress={() => router.push('/parcel/new')}>
-              <Text style={styles.ctaText}>{t('dashboard.empty_cta')}</Text>
+            <Text style={styles.emptyTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('dashboard.empty_title')}
+            </Text>
+            <Text style={styles.emptyBody} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('dashboard.empty_body')}
+            </Text>
+            <Pressable
+              style={styles.cta}
+              onPress={() => router.push('/parcel/new')}
+              accessibilityRole="button"
+              accessibilityLabel={t('onboarding.add_first_field')}
+            >
+              <Text style={styles.ctaText} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('onboarding.add_first_field')}
+              </Text>
             </Pressable>
           </View>
         }
@@ -186,28 +286,33 @@ export default function Dashboard() {
   );
 }
 
-function BannerCard({
-  alert,
-  parcelName,
-  onPress,
-}: {
-  alert: Alert;
-  parcelName?: string;
-  onPress: () => void;
-}) {
-  const tint = severityTint[alert.severity];
+/**
+ * Worst/latest grouped event, in plain language: title carries the parcel name via
+ * titleParams; plant IDs and index values stay behind the alerts tab's technical
+ * disclosure. `body_single` is the raw detector message (may lead with NDVI) — skipped
+ * here so the banner never shows jargon.
+ */
+function AttentionBanner({ event, onPress }: { event: AlertEvent; onPress: () => void }) {
+  const { t } = useTranslation();
+  const tint = severityTint[event.severity] ?? severityTint.info;
+  const showBody = event.bodyKey !== 'alerts_group.body_single';
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => (pressed ? styles.pressed : null)}>
-      <TintCard gradient={severityGradient(alert.severity)} style={styles.banner}>
-        <GlyphBadge glyph={kindGlyph(alert.kind)} fg={tint.fg} bg={tint.bg} size={26} />
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      style={({ pressed }) => (pressed ? styles.pressed : null)}
+    >
+      <TintCard gradient={severityGradient(event.severity)} style={styles.banner}>
+        <GlyphBadge glyph={kindGlyph(event.kind)} fg={tint.fg} bg={tint.bg} size={26} />
         <View style={styles.flex1}>
-          <Text style={styles.bannerTitle} numberOfLines={1}>
-            {alert.title}
-            {parcelName ? ` — ${parcelName}` : ''}
+          <Text style={styles.bannerTitle} numberOfLines={2} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t(event.titleKey, event.titleParams)}
           </Text>
-          <Text style={styles.bannerBody} numberOfLines={1}>
-            {alert.message}
-          </Text>
+          {showBody ? (
+            <Text style={styles.bannerBody} numberOfLines={2} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t(event.bodyKey, event.bodyParams)}
+            </Text>
+          ) : null}
         </View>
         <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
       </TintCard>
@@ -218,48 +323,99 @@ function BannerCard({
 function ParcelRow({
   parcel,
   latest,
-  status,
+  openAlertEvents,
   onPress,
 }: {
   parcel: Parcel;
   latest: LatestIndices | undefined;
-  status: Status;
+  openAlertEvents: number;
   onPress: () => void;
 }) {
   const { t } = useTranslation();
   const crop = cropLabel(parcel.crop);
-  const score = arvoScore(latest);
 
-  // 7-day delta from the cached series — same key + fetch as the parcel detail chart,
-  // so the dashboard and detail genuinely share one cache entry.
+  // Same cache entry as the parcel-detail chart; status/trend come ONLY from status.ts.
   const { data } = useIndexSeries(parcel.id, 'ndvi');
-  const delta = sevenDayDelta(data?.series ?? []);
+  const trend = trendFromSeries(
+    (data?.series ?? []).map((p) => ({ date: p.observed_at, value: p.mean })),
+  );
+  const { score, coverage } = arvoScoreDetail(latest);
+  const fs = deriveFieldStatus({ score, trend, openAlertEvents, coverage });
+  const chipStatus: Status = fs.level === 'ok' ? 'healthy' : fs.level;
+  const chipLabel = t(fs.chipKey);
+
+  const trendIcon =
+    trend.direction === 'up' ? 'trending-up' : trend.direction === 'down' ? 'trending-down' : 'remove';
+  const trendColor =
+    trend.direction === 'down'
+      ? colors.accent
+      : trend.direction === 'up'
+        ? colors.success
+        : colors.textMuted;
+
+  const a11yLabel =
+    score != null
+      ? t('dashboard.row_a11y', {
+          name: parcel.name,
+          score,
+          status: chipLabel,
+          defaultValue: '{{name}}, punteggio {{score}}, {{status}}',
+        })
+      : t('dashboard.row_a11y_pending', {
+          name: parcel.name,
+          status: chipLabel,
+          defaultValue: '{{name}}, in attesa dei primi dati, {{status}}',
+        });
 
   return (
-    <Pressable style={({ pressed }) => [styles.row, pressed && styles.pressed]} onPress={onPress}>
-      <View style={[styles.scoreBadge, { backgroundColor: scoreColor(score?.value) }]}>
-        <Text style={styles.scoreValue}>{score?.value ?? '—'}</Text>
+    <Pressable
+      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={a11yLabel}
+    >
+      <View style={[styles.scoreBadge, { backgroundColor: scoreColor(score) }]}>
+        <Text style={styles.scoreValue} maxFontSizeMultiplier={typeScale.maxMult}>
+          {score ?? '—'}
+        </Text>
       </View>
       <View style={styles.rowInfo}>
-        <Text style={styles.rowName} numberOfLines={1}>
+        <Text style={styles.rowName} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
           {parcel.name}
         </Text>
-        <Text style={styles.rowMeta} numberOfLines={1}>
-          {[crop, `${parcel.area_ha.toFixed(1)} ha`].filter(Boolean).join(' · ')}
+        <Text style={styles.rowMeta} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
+          {[crop, formatHectares(parcel.area_ha)].filter(Boolean).join(' · ')}
         </Text>
+        {fs.partial && score != null ? (
+          <Text style={styles.partialText} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('status.partial')}
+          </Text>
+        ) : null}
       </View>
       <View style={styles.rowRight}>
-        <StatusChip status={status} label={t(`status.${status}`)} />
+        <StatusChip status={chipStatus} label={chipLabel} />
         <View style={styles.trendRow}>
-          <Ionicons
-            name={trendBand(delta) === 'improving' ? 'trending-up' : trendBand(delta) === 'declining' ? 'trending-down' : 'remove'}
-            size={14}
-            color={trendBand(delta) === 'declining' ? colors.accent : colors.primary}
-          />
-          <Text style={styles.trendText}>{t(`trend.${trendBand(delta)}`)}</Text>
+          <Ionicons name={trendIcon} size={14} color={trendColor} />
+          <Text style={styles.trendText} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t(trend.labelKey)}
+          </Text>
         </View>
       </View>
     </Pressable>
+  );
+}
+
+/** Plain placeholder row while the first parcels load — no spinner, no animation. */
+function SkeletonRow() {
+  return (
+    <View style={styles.row}>
+      <View style={styles.skeletonCircle} />
+      <View style={styles.rowInfo}>
+        <View style={[styles.skeletonBar, styles.skeletonBarWide]} />
+        <View style={[styles.skeletonBar, styles.skeletonBarNarrow]} />
+      </View>
+      <View style={styles.skeletonChip} />
+    </View>
   );
 }
 
@@ -278,7 +434,7 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   title: { fontFamily: fonts.displayBold, fontSize: 28, color: colors.text },
   org: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2 },
-  bell: {
+  headerButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -312,10 +468,19 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+    minHeight: touch.min,
   },
   bannerTitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.text },
-  bannerBody: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, marginTop: 1 },
-  listMeta: { marginTop: spacing.xs },
+  bannerBody: { fontFamily: fonts.body, fontSize: typeScale.caption, color: colors.textMuted, marginTop: 1 },
+  firstValue: { padding: spacing.md, gap: 2 },
+  firstValueTitle: { fontFamily: fonts.bodyBold, fontSize: typeScale.body, color: colors.text },
+  firstValueBody: { fontFamily: fonts.body, fontSize: typeScale.caption, color: colors.textMuted },
+  listMeta: {
+    fontFamily: fonts.bodyMedium,
+    fontSize: typeScale.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
   scoreExplainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -324,8 +489,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: colors.primarySoft,
   },
-  scoreExplainerTitle: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.primaryDark },
-  scoreExplainerBody: { fontFamily: fonts.body, fontSize: 11.5, color: colors.textMuted, marginTop: 1 },
+  scoreExplainerTitle: { fontFamily: fonts.bodyBold, fontSize: typeScale.caption, color: colors.primaryDark },
+  scoreExplainerBody: { fontFamily: fonts.body, fontSize: typeScale.caption, color: colors.textMuted, marginTop: 1 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -338,8 +503,14 @@ const styles = StyleSheet.create({
   },
   pressed: { opacity: 0.7 },
   rowInfo: { flex: 1 },
-  rowName: { fontFamily: fonts.display, fontSize: 16, color: colors.text },
+  rowName: { fontFamily: fonts.display, fontSize: typeScale.bodyLg, color: colors.text },
   rowMeta: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  partialText: {
+    fontFamily: fonts.bodyMedium,
+    fontSize: typeScale.caption,
+    color: colors.textFaint,
+    marginTop: 2,
+  },
   rowRight: { alignItems: 'flex-end', gap: 6 },
   scoreBadge: {
     width: 46,
@@ -352,17 +523,25 @@ const styles = StyleSheet.create({
   },
   scoreValue: { fontFamily: fonts.monoSemiBold, fontSize: 14, color: '#FFFFFF' },
   trendRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  trendText: { fontFamily: fonts.bodyMedium, fontSize: 10.5, color: colors.textMuted },
+  trendText: { fontFamily: fonts.bodyMedium, fontSize: typeScale.caption, color: colors.textMuted },
+  skeletonGroup: { gap: spacing.sm },
+  skeletonCircle: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.border },
+  skeletonBar: { height: 12, borderRadius: radius.sm, backgroundColor: colors.border },
+  skeletonBarWide: { width: '60%' },
+  skeletonBarNarrow: { width: '40%', marginTop: spacing.sm },
+  skeletonChip: { width: 88, height: 28, borderRadius: radius.pill, backgroundColor: colors.border },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
-  emptyTitle: { fontFamily: fonts.display, fontSize: 18, color: colors.text },
-  emptyBody: { fontFamily: fonts.body, fontSize: 14, color: colors.textMuted, textAlign: 'center' },
+  emptyTitle: { fontFamily: fonts.display, fontSize: typeScale.title, color: colors.text },
+  emptyBody: { fontFamily: fonts.body, fontSize: typeScale.body, color: colors.textMuted, textAlign: 'center' },
   cta: {
     backgroundColor: colors.primary,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     borderRadius: radius.md,
     marginTop: spacing.sm,
+    minHeight: touch.min,
+    justifyContent: 'center',
   },
   ctaText: { fontFamily: fonts.bodyBold, color: colors.onPrimary, fontSize: 15 },
-  errorText: { fontFamily: fonts.body, color: colors.danger, fontSize: 14 },
+  errorText: { fontFamily: fonts.body, color: colors.danger, fontSize: typeScale.body },
 });

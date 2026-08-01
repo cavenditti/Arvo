@@ -13,10 +13,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
 import * as DocumentPicker from 'expo-document-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import type { TFunction } from 'i18next';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -25,6 +27,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { API_URL, ApiError, api, getAuthToken } from '@/api/client';
 import {
@@ -40,6 +43,7 @@ import {
   type PlantUnit,
 } from '@/api/types';
 import { useAuth } from '@/auth/AuthContext';
+import DateField from '@/components/DateField';
 import type { GlyphName } from '@/components/glyphs';
 import { GlyphBadge, GlyphCard, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
 import { useOutsideDismiss } from '@/components/useOutsideDismiss';
@@ -61,6 +65,8 @@ import {
   severityTint,
   spacing,
   statusColors,
+  touch,
+  type as typeScale,
 } from '@/theme';
 
 const SOURCES: CaptureSource[] = ['drone', 'prebuilt', 'demo'];
@@ -85,6 +91,15 @@ function stagesFor(source: CaptureSource): PipelineStage[] {
 
 function apiMessage(e: unknown, fallback: string): string {
   return e instanceof ApiError || e instanceof Error ? e.message || fallback : fallback;
+}
+
+/** Raw pipeline error strings never reach the farmer's eye line — plain words lead, the raw
+ * string survives only in the technical-detail disclosure (docs/UX-REVAMP.md plain-language). */
+function humanJobError(t: TFunction, raw: string | null | undefined): string {
+  if (raw?.includes('stage_unsupported')) return t('capture.error_stage_unsupported');
+  return t('capture.job_failed_human', {
+    defaultValue: "Elaborazione non riuscita — riprova o contatta l'assistenza.",
+  });
 }
 
 // ─── Uploads ─────────────────────────────────────────────────────────────────
@@ -256,6 +271,7 @@ function stageViews(capture: Capture, info: CaptureStatusInfo | undefined): Stag
 
 export default function NewCaptureScreen() {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const { parcelId: paramParcelId, captureId: paramCaptureId } = useLocalSearchParams<{
     parcelId?: string;
     captureId?: string;
@@ -264,7 +280,12 @@ export default function NewCaptureScreen() {
   const [justCreated, setJustCreated] = useState(false);
 
   return (
-    <View style={styles.screen}>
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      // Native stack header ≈ 44pt below the status bar (no useHeaderHeight in this navigator).
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 44 : 0}
+    >
       <Stack.Screen options={{ title: t('capture.new_title') }} />
       {captureId ? (
         <FlightPanel
@@ -284,7 +305,7 @@ export default function NewCaptureScreen() {
           }}
         />
       )}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -298,6 +319,7 @@ function RegisterForm({
   onCreated: (id: string) => void;
 }) {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const { role } = useAuth();
   const parcelsQ = useParcels();
   const parcels = useMemo(() => parcelsQ.data ?? [], [parcelsQ.data]);
@@ -465,17 +487,13 @@ function RegisterForm({
           ) : null}
         </View>
 
-        {/* Flight date */}
+        {/* Flight date — picker, not free text: stores ISO, shows the localized prose day */}
         <View style={styles.section}>
-          <Text style={styles.label}>{t('capture.captured_at')}</Text>
-          <TextInput
-            style={styles.input}
-            value={capturedAt}
-            onChangeText={setCapturedAt}
-            placeholder={t('capture.captured_at_ph')}
-            placeholderTextColor={colors.textFaint}
-            autoCapitalize="none"
-            autoCorrect={false}
+          <DateField
+            label={t('capture.captured_at')}
+            value={capturedAt || null}
+            onChange={(v) => setCapturedAt(v ?? '')}
+            maximumDate={new Date()}
           />
         </View>
 
@@ -596,7 +614,7 @@ function RegisterForm({
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
       </ScrollView>
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: spacing.md + insets.bottom }]}>
         <PrimaryButton
           label={t('capture.create')}
           icon="airplane-outline"
@@ -620,6 +638,7 @@ function FlightPanel({
   onRestart: () => void;
 }) {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const qc = useQueryClient();
   const captureQ = useCapture(captureId);
@@ -637,6 +656,8 @@ function FlightPanel({
     count: number;
   } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Raw pipeline error string, shown only behind the "Dettagli tecnici" disclosure.
+  const [showRawError, setShowRawError] = useState(false);
   // Known only for a run started in this session; a deep-linked run reads it off the job rows.
   const [localStart, setLocalStart] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -847,24 +868,43 @@ function FlightPanel({
           ) : null}
         </GlyphCard>
 
-        {/* Failure — the message a field user can act on, no logs required */}
+        {/* Failure — the message a field user can act on; the raw string waits behind the
+            "Dettagli tecnici" disclosure for whoever calls support. */}
         {status === 'failed' ? (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>{t('capture.error_detail')}</Text>
-            <Text style={styles.errorText}>
-              {unsupported
-                ? t('capture.error_stage_unsupported')
-                : (errorMessage ?? t('capture.status.failed'))}
+            <Text style={styles.cardTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('capture.error_detail')}
             </Text>
-            {unsupported ? (
+            <Text style={styles.errorText} maxFontSizeMultiplier={typeScale.maxMult}>
+              {humanJobError(t, errorMessage)}
+            </Text>
+            {errorMessage ? (
               <>
-                <MonoLabel color={colors.textFaint}>{errorMessage}</MonoLabel>
-                {/* Retrying the same stage would fail identically — the way out is a demo flight. */}
-                <Pressable style={styles.secondaryBtn} onPress={onRestart}>
-                  <Ionicons name="add" size={18} color={colors.primary} />
-                  <Text style={styles.secondaryBtnText}>{t('capture.new_title')}</Text>
+                <Pressable
+                  style={styles.detailToggle}
+                  onPress={() => setShowRawError((v) => !v)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: showRawError }}
+                  accessibilityLabel={t('alerts_group.show_detail')}
+                >
+                  <Ionicons
+                    name={showRawError ? 'chevron-up' : 'chevron-down'}
+                    size={14}
+                    color={colors.textMuted}
+                  />
+                  <Text style={styles.detailToggleText} maxFontSizeMultiplier={typeScale.maxMult}>
+                    {t('alerts_group.show_detail')}
+                  </Text>
                 </Pressable>
+                {showRawError ? <MonoLabel color={colors.textFaint}>{errorMessage}</MonoLabel> : null}
               </>
+            ) : null}
+            {unsupported ? (
+              /* Retrying the same stage would fail identically — the way out is a demo flight. */
+              <Pressable style={styles.secondaryBtn} onPress={onRestart}>
+                <Ionicons name="add" size={18} color={colors.primary} />
+                <Text style={styles.secondaryBtnText}>{t('capture.new_title')}</Text>
+              </Pressable>
             ) : null}
           </View>
         ) : null}
@@ -974,10 +1014,8 @@ function FlightPanel({
                       </MonoLabel>
                     ) : null}
                     {s.state === 'failed' && s.error ? (
-                      <Text style={styles.stageError}>
-                        {s.error.includes('stage_unsupported')
-                          ? t('capture.error_stage_unsupported')
-                          : s.error}
+                      <Text style={styles.stageError} maxFontSizeMultiplier={typeScale.maxMult}>
+                        {humanJobError(t, s.error)}
                       </Text>
                     ) : null}
                   </View>
@@ -991,7 +1029,7 @@ function FlightPanel({
         {!started && blocked ? <Text style={styles.hint}>{blocked}</Text> : null}
       </ScrollView>
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: spacing.md + insets.bottom }]}>
         {status === 'failed' ? (
           <PrimaryButton
             label={t('capture.retry')}
@@ -1234,6 +1272,19 @@ const styles = StyleSheet.create({
   stageName: { flex: 1, fontSize: 15, fontFamily: fonts.bodySemiBold, color: colors.text },
   stageHint: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
   stageError: { fontSize: 13, fontFamily: fonts.bodyMedium, color: colors.danger },
+  detailToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    minHeight: touch.chip,
+    alignSelf: 'flex-start',
+    paddingRight: spacing.sm,
+  },
+  detailToggleText: {
+    fontSize: typeScale.caption,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.textMuted,
+  },
 
   // footer
   footer: {

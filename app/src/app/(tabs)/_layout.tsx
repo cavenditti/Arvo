@@ -1,22 +1,27 @@
-// SPINE — Campo tab shell: Fields · Map · [Scout +] · Insights · Me, raised Scout FAB,
-// open-alert badge on Insights. Screens with custom headers opt out via headerShown:false.
+// OWNER: shell-nav — Campo tab shell: Fields · Map · [+] · Insights · Me. The raised "+"
+// opens the capture flow directly (the scouting tab stays registered but is intercepted);
+// the Insights badge counts grouped alert EVENTS, not raw signal volume.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { api } from '@/api/client';
 import type { Alert } from '@/api/types';
-import { colors, fonts } from '@/theme';
+import { countAlertEvents } from '@/features/insights/grouping';
+import { colors, fonts, type as typeScale } from '@/theme';
 
 export default function TabsLayout() {
   const { t } = useTranslation();
+  const router = useRouter();
   const openAlerts = useQuery({
     queryKey: ['alerts', 'open'],
     queryFn: () => api.get<Alert[]>('/alerts?state=open'),
   });
-  const openCount = openAlerts.data?.length ?? 0;
+  // Same number the Insights screen shows as cards: events (kind + campo + day),
+  // so 12 signals on one parcel badge as 1, not 12.
+  const eventCount = countAlertEvents(openAlerts.data ?? []);
 
   return (
     <Tabs
@@ -24,7 +29,18 @@ export default function TabsLayout() {
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textFaint,
         tabBarStyle: styles.tabBar,
-        tabBarLabelStyle: styles.tabLabel,
+        tabBarAllowFontScaling: true,
+        // Custom label so tab text scales with Dynamic Type but stays capped at maxMult.
+        tabBarLabel: ({ color, children }) => (
+          <Text
+            style={[styles.tabLabel, { color }]}
+            allowFontScaling
+            maxFontSizeMultiplier={typeScale.maxMult}
+            numberOfLines={1}
+          >
+            {children}
+          </Text>
+        ),
         headerStyle: styles.header,
         headerTitleStyle: styles.headerTitle,
         headerShadowVisible: false,
@@ -59,13 +75,23 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="scouting"
         options={{
+          // Tab title stays generic; the screen itself is a stub — the FAB below
+          // intercepts the press and opens capture directly.
           title: t('tabs.scouting'),
+          headerShown: false,
           tabBarLabel: () => null,
+          tabBarAccessibilityLabel: t('tabs.new_observation', { defaultValue: 'Nuovo rilievo' }),
           tabBarIcon: () => (
             <View style={styles.fab}>
               <Ionicons name="add" size={28} color={colors.onPrimary} />
             </View>
           ),
+        }}
+        listeners={{
+          tabPress: (e) => {
+            e.preventDefault();
+            router.push('/observation/new');
+          },
         }}
       />
       <Tabs.Screen
@@ -74,7 +100,7 @@ export default function TabsLayout() {
           title: t('tabs.alerts'),
           headerShown: false,
           tabBarIcon: ({ color, size }) => <Ionicons name="warning-outline" color={color} size={size} />,
-          tabBarBadge: openCount > 0 ? openCount : undefined,
+          tabBarBadge: eventCount > 0 ? eventCount : undefined,
           tabBarBadgeStyle: styles.badge,
         }}
       />
@@ -85,8 +111,8 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" color={color} size={size} />,
         }}
       />
-      {/* web-portal page; reachable on native only via deep link, never as a tab */}
-      <Tabs.Screen name="weather" options={{ href: null }} />
+      {/* Renders its own header; hidden from the bar, reachable via deep link only. */}
+      <Tabs.Screen name="weather" options={{ href: null, headerShown: false }} />
     </Tabs>
   );
 }
@@ -106,6 +132,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: fonts.bodyBold,
   },
+  // Primary action — 52pt, above the touch.min (44) floor.
   fab: {
     width: 52,
     height: 52,

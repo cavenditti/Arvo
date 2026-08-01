@@ -7,6 +7,23 @@
     "icon": "./assets/images/icon.png",
     "scheme": "arvo",
     "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.arvo.app",
+      "buildNumber": "1",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Arvo uses your location to find your fields on the map and attach each scouting note to the exact spot in the field.",
+        "NSCameraUsageDescription": "Arvo uses the camera to photograph plants and problems while you scout your fields.",
+        "NSPhotoLibraryUsageDescription": "Arvo accesses your photo library so you can attach existing photos to your scouting notes.",
+        "UIBackgroundModes": [
+          "remote-notification"
+        ],
+        "NSFaceIDUsageDescription": "Arvo uses Face ID only to unlock the app."
+      }
+    },
+    "locales": {
+      "it": "./locales/it.json"
+    },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#F2F1EC",
@@ -33,7 +50,13 @@
       "expo-secure-store",
       "expo-localization",
       "expo-sharing",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": false,

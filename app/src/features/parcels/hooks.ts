@@ -182,6 +182,61 @@ export function useImportParcels() {
   });
 }
 
+// --- parcel/new save helpers: the farm concept disappears for the common case ---
+// (docs/UX-REVAMP.md parcel-flow) A first-time user never names or picks a farm: when the
+// org has none, one is created silently right before the parcel, in the same mutation.
+
+/** Resolve the target farm id, silently creating a farm named `autoName` when needed.
+ * Invalidates ['farms'] immediately after a creation so a failed follow-up (parcel create)
+ * leaves the client aware of the new farm instead of silently re-creating it on retry. */
+async function ensureFarmId(
+  qc: ReturnType<typeof useQueryClient>,
+  farmId: string | null,
+  autoName: string,
+): Promise<string> {
+  if (farmId) return farmId;
+  const farm = await api.post<Farm>('/farms', { name: autoName });
+  void qc.invalidateQueries({ queryKey: ['farms'] });
+  return farm.id;
+}
+
+export interface CreateParcelAutoFarmInput {
+  /** null → create a farm named `autoFarmName` first, then the parcel inside it */
+  farmId: string | null;
+  autoFarmName: string;
+  parcel: Omit<CreateParcelInput, 'farm_id'>;
+}
+
+/** POST /farms (only when the org has none) then POST /parcels — one mutation per save tap. */
+export function useCreateParcelAutoFarm() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ farmId, autoFarmName, parcel }: CreateParcelAutoFarmInput) => {
+      const fid = await ensureFarmId(qc, farmId, autoFarmName);
+      return api.post<Parcel>('/parcels', { ...parcel, farm_id: fid });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['parcels'] }),
+  });
+}
+
+export interface ImportParcelsAutoFarmInput {
+  farmId: string | null;
+  autoFarmName: string;
+  feature_collection: unknown;
+}
+
+/** Same silent-farm rule for the cadastre multi-select / GeoJSON-file bulk import path. */
+export function useImportParcelsAutoFarm() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ farmId, autoFarmName, feature_collection }: ImportParcelsAutoFarmInput) => {
+      const fid = await ensureFarmId(qc, farmId, autoFarmName);
+      return api.post<ImportResult>('/parcels/import', { farm_id: fid, feature_collection });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['parcels'] }),
+  });
+}
+
 /** Round a bbox for cache identity: ~1e-4 deg ≈ 10 m — pans smaller than that reuse the
  * cached detection instead of hammering the public WFS. */
 function bboxKey(bbox: [number, number, number, number]): string {

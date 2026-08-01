@@ -1,7 +1,7 @@
-// OWNER: fe-shell — Register (creates org).
+// OWNER: auth-flow — Register (creates org; account locale = app language).
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -13,12 +13,12 @@ import {
 
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
-import { ErrorBanner, Field, LinkButton, PrimaryButton } from '../auth/ui';
+import { ErrorBanner, Field, LinkButton, PasswordField, PrimaryButton } from '../auth/ui';
 import Logo from '../components/Logo';
-import { colors, fonts, spacing } from '../theme';
+import { colors, fonts, spacing, type as typeScale } from '../theme';
 
 export default function RegisterScreen() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { register } = useAuth();
   const router = useRouter();
   const [fullName, setFullName] = useState('');
@@ -40,7 +40,9 @@ export default function RegisterScreen() {
     setBusy(true);
     setError(null);
     try {
-      await register(email.trim(), password, fullName.trim(), orgName.trim());
+      // The new account speaks the language this screen is in.
+      const locale = i18n.language?.toLowerCase().startsWith('en') ? 'en' : 'it';
+      await register(email.trim(), password, fullName.trim(), orgName.trim(), locale);
       // On success the token flips and the root gate redirects into the app.
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t('auth.error_generic'));
@@ -59,10 +61,20 @@ export default function RegisterScreen() {
       >
         <View style={styles.brandRow}>
           <Logo variant="plain" size={64} />
-          <Text style={styles.brand}>Arvo</Text>
+          <Text style={styles.brand} maxFontSizeMultiplier={typeScale.maxMult}>
+            Arvo
+          </Text>
         </View>
-        <Text style={styles.title}>{t('auth.register_title')}</Text>
-        <Text style={styles.subtitle}>{t('auth.register_subtitle')}</Text>
+        <Text
+          style={styles.title}
+          accessibilityRole="header"
+          maxFontSizeMultiplier={typeScale.maxMult}
+        >
+          {t('auth.register_title')}
+        </Text>
+        <Text style={styles.subtitle} maxFontSizeMultiplier={typeScale.maxMult}>
+          {t('auth.register_subtitle')}
+        </Text>
 
         {error ? <ErrorBanner message={error} /> : null}
 
@@ -75,6 +87,9 @@ export default function RegisterScreen() {
         />
         <Field
           label={t('auth.org_name')}
+          caption={t('auth.org_hint', {
+            defaultValue: 'Il nome della tua azienda agricola — puoi cambiarlo quando vuoi',
+          })}
           value={orgName}
           onChangeText={setOrgName}
           autoComplete="organization"
@@ -89,17 +104,42 @@ export default function RegisterScreen() {
           inputMode="email"
           textContentType="emailAddress"
         />
-        <Field
+        <PasswordField
           label={t('auth.password')}
+          caption={t('auth.password_hint')}
           value={password}
           onChangeText={setPassword}
-          secureTextEntry
-          autoCapitalize="none"
+          autoComplete="new-password"
           textContentType="newPassword"
           onSubmitEditing={onSubmit}
           returnKeyType="go"
         />
-        <Text style={styles.hint}>{t('auth.password_hint')}</Text>
+
+        <Text style={styles.consent} maxFontSizeMultiplier={typeScale.maxMult}>
+          <Trans
+            i18nKey="auth.consent_line"
+            defaults="Creando l'account accetti i <terms>Termini di servizio</terms> e l'<privacy>Informativa sulla privacy</privacy>"
+            t={t}
+            components={{
+              terms: (
+                <Text
+                  accessibilityRole="link"
+                  accessibilityLabel={t('auth.legal_terms')}
+                  style={styles.consentLink}
+                  onPress={() => router.push('/legal/terms')}
+                />
+              ),
+              privacy: (
+                <Text
+                  accessibilityRole="link"
+                  accessibilityLabel={t('auth.legal_privacy')}
+                  style={styles.consentLink}
+                  onPress={() => router.push('/legal/privacy')}
+                />
+              ),
+            }}
+          />
+        </Text>
 
         <PrimaryButton title={t('auth.register_button')} onPress={onSubmit} loading={busy} />
         <LinkButton title={t('auth.have_account')} onPress={() => router.replace('/login')} />
@@ -119,20 +159,31 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.lg },
-  brand: { fontSize: 34, fontFamily: fonts.displayBold, color: colors.primary, letterSpacing: -0.5 },
-  title: { fontSize: 24, fontFamily: fonts.display, color: colors.text },
+  brand: {
+    fontSize: typeScale.hero,
+    fontFamily: fonts.displayBold,
+    color: colors.primary,
+    letterSpacing: -0.5,
+  },
+  title: { fontSize: typeScale.titleLg, fontFamily: fonts.display, color: colors.text },
   subtitle: {
-    fontSize: 15,
+    fontSize: typeScale.body,
     fontFamily: fonts.body,
     color: colors.textMuted,
     marginBottom: spacing.lg,
     marginTop: spacing.xs,
   },
-  hint: {
-    fontSize: 13,
+  consent: {
+    fontSize: typeScale.body,
     fontFamily: fonts.body,
     color: colors.textMuted,
-    marginTop: -spacing.sm,
-    marginBottom: spacing.sm,
+    lineHeight: 22,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  consentLink: {
+    color: colors.primary,
+    fontFamily: fonts.bodySemiBold,
+    textDecorationLine: 'underline',
   },
 });

@@ -1,0 +1,6 @@
+{
+  "NSLocationWhenInUseUsageDescription": "La posizione serve per trovare i tuoi campi sulla mappa e collegare ogni rilievo al punto esatto del campo.",
+  "NSCameraUsageDescription": "La fotocamera serve per fotografare piante e problemi mentre fai i rilievi in campo.",
+  "NSPhotoLibraryUsageDescription": "L'accesso alle foto serve per allegare ai rilievi immagini che hai già scattato.",
+  "NSFaceIDUsageDescription": "Arvo usa Face ID solo per sbloccare l'app."
+}

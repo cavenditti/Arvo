@@ -3,7 +3,6 @@
 import type {
   Advisory,
   AgroSummary,
-  Alert,
   GeoJSONPolygon,
   IndexName,
   IndexPoint,
@@ -52,6 +51,12 @@ export interface MapViewProps {
   onCadastreTap?: (ref: string) => void;
   /** fires after every pan/zoom settles — feeds viewport cadastre detection */
   onViewportChange?: (view: { bbox: [number, number, number, number]; zoom: number }) => void;
+  /** base tiles: OpenStreetMap cartography ('map', default) or Esri World Imagery ('sat') */
+  basemap?: 'map' | 'sat';
+  /** debounced signal from the map document that base tiles repeatedly failed to load */
+  onTileError?: () => void;
+  /** true while a touch gesture is on the map — parents pause outer scrolling (native only) */
+  onInteractionChange?: (active: boolean) => void;
   height?: number;
 }
 
@@ -67,15 +72,12 @@ export interface WeatherPanelProps {
   advisories?: Advisory[];
 }
 
+/**
+ * Legacy per-alert action verb. AlertList no longer consumes this (it takes grouped-event
+ * callbacks now); kept only for app/src/app/(tabs)/alerts.web.tsx — remove once that screen
+ * migrates to features/insights/useAlertActions. (The stale AlertListProps twin is gone.)
+ */
 export type AlertAction = 'ack' | 'dismiss' | 'snooze';
-
-export interface AlertListProps {
-  alerts: Alert[];
-  onAction: (id: string, action: AlertAction) => void;
-  parcelNames?: Record<string, string>;
-  /** when set, cards with a parcel show an "Open parcel →" link */
-  onOpenParcel?: (parcelId: string) => void;
-}
 
 /**
  * FROZEN (docs/API-PLANT.md §App-side contracts). A parcel can hold tens of thousands of plants,

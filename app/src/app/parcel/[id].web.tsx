@@ -48,6 +48,7 @@ import {
 import { useParcelObservations } from '@/features/scouting/byParcel';
 import { arvoScore, dfLocale, scoreBand, scoreColor, trendBand } from '@/features/insights/format';
 import { worstOpenAlert } from '@/features/insights/alerts';
+import { setSnoozeDays } from '@/features/insights/snooze';
 import { useAlertActions } from '@/features/insights/useAlertActions';
 import { mediaUri, useMediaToken } from '@/features/media';
 import {
@@ -458,8 +459,17 @@ export default function ParcelDetailWeb() {
                   ) : (
                     <AlertList
                       alerts={alertsQ.data ?? []}
-                      parcelNames={{ [p.id]: p.name }}
-                      onAction={(alertId, action) => alertAction.mutate({ id: alertId, action })}
+                      parcelName={() => p.name}
+                      onConfirm={(ids) =>
+                        ids.forEach((alertId) => alertAction.mutate({ id: alertId, action: 'ack' }))
+                      }
+                      onSnooze={(ids, days) => {
+                        setSnoozeDays(days);
+                        ids.forEach((alertId) => alertAction.mutate({ id: alertId, action: 'snooze' }));
+                      }}
+                      onDismiss={(ids) =>
+                        ids.forEach((alertId) => alertAction.mutate({ id: alertId, action: 'dismiss' }))
+                      }
                     />
                   )}
                 </SectionCard>

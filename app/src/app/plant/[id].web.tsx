@@ -30,7 +30,6 @@ import {
   type PlantSeriesResponse,
   type PlantStatus,
 } from '@/api/types';
-import AlertList from '@/components/AlertList';
 import type { GlyphName } from '@/components/glyphs';
 import { GlyphCard, InteractivePressable, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
 import PortalShell from '@/components/web/PortalShell';
@@ -42,7 +41,7 @@ import { useParcel } from '@/features/parcels/hooks';
 import { usePlant } from '@/features/plants/hooks';
 import { PHYSICAL_METRICS, metricLabelKey, plantName } from '@/features/plants/ranking';
 import { useParcelObservations } from '@/features/scouting/byParcel';
-import { colors, fonts, gradients, radius, severityTint, spacing, statusColors, WEB_COMPACT_BREAKPOINT } from '@/theme';
+import { alertStateTint, colors, fonts, gradients, radius, severityTint, spacing, statusColors, WEB_COMPACT_BREAKPOINT } from '@/theme';
 
 // Legal transitions, docs/API-PLANT.md §Plants (POST /plants/{id}/status). `removed` is terminal.
 const TRANSITIONS: Record<PlantStatus, PlantStatus[]> = {
@@ -494,10 +493,43 @@ export default function PlantDetailWebScreen() {
               ) : alerts.length === 0 ? (
                 <Text style={styles.muted}>{t('plant.no_alerts')}</Text>
               ) : (
-                <AlertList
-                  alerts={alerts}
-                  onAction={(alertId, action) => alertAction.mutate({ id: alertId, action })}
-                />
+                // PlantAlert is per-plant, not an org Alert event — the reworked AlertList groups
+                // events, so these render as a plain local list over the same per-alert actions.
+                <View style={styles.alertItems}>
+                  {alerts.map((a) => {
+                    const sev = severityTint[a.severity] ?? severityTint.info;
+                    const st = alertStateTint[a.state] ?? alertStateTint.open;
+                    const actionable = a.state === 'open' || a.state === 'snoozed';
+                    return (
+                      <View key={a.id} style={styles.alertItem}>
+                        <View style={styles.alertItemHead}>
+                          <Text style={styles.alertItemTitle}>
+                            {t(`plant.alert.${a.kind}`, { defaultValue: a.title })}
+                          </Text>
+                          <Pill label={t(`severity.${a.severity}`)} fg={sev.fg} bg={sev.bg} />
+                          {!actionable ? (
+                            <Pill label={t(`alerts.state.${a.state}`)} fg={st.fg} bg={st.bg} />
+                          ) : null}
+                        </View>
+                        <Text style={styles.alertItemMsg}>{a.message}</Text>
+                        {actionable ? (
+                          <View style={styles.alertItemActions}>
+                            {(['ack', 'snooze', 'dismiss'] as const).map((action) => (
+                              <InteractivePressable
+                                key={action}
+                                style={styles.alertItemBtn}
+                                hoverStyle={styles.actionHover}
+                                onPress={() => alertAction.mutate({ id: a.id, action })}
+                              >
+                                <Text style={styles.actionTxt}>{t(`alerts.${action}`)}</Text>
+                              </InteractivePressable>
+                            ))}
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
               )}
             </View>
 
@@ -1090,6 +1122,29 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
     lineHeight: 18,
+  },
+
+  // per-plant alert rows (local list — see the alerts card note above)
+  alertItems: { gap: spacing.sm },
+  alertItem: {
+    gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radius.md,
+    backgroundColor: colors.cardAlt,
+    padding: spacing.sm,
+  },
+  alertItemHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' },
+  alertItemTitle: { flex: 1, fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.text },
+  alertItemMsg: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, lineHeight: 18 },
+  alertItemActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  alertItemBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
   },
 
   // actions

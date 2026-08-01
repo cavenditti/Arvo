@@ -1,4 +1,4 @@
-// OWNER: fe-shell — Login (prefill demo@arvo.local/demo1234 in __DEV__).
+// OWNER: auth-flow — Login (prefill demo@arvo.local/demo1234 in __DEV__).
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -13,9 +13,9 @@ import {
 
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
-import { ErrorBanner, Field, LinkButton, PrimaryButton } from '../auth/ui';
+import { ErrorBanner, Field, LinkButton, PasswordField, PrimaryButton } from '../auth/ui';
 import Logo from '../components/Logo';
-import { colors, fonts, spacing } from '../theme';
+import { colors, fonts, spacing, type as typeScale } from '../theme';
 
 export default function LoginScreen() {
   const { t } = useTranslation();
@@ -53,10 +53,20 @@ export default function LoginScreen() {
       >
         <View style={styles.brandRow}>
           <Logo variant="plain" size={64} />
-          <Text style={styles.brand}>Arvo</Text>
+          <Text style={styles.brand} maxFontSizeMultiplier={typeScale.maxMult}>
+            Arvo
+          </Text>
         </View>
-        <Text style={styles.title}>{t('auth.login_title')}</Text>
-        <Text style={styles.subtitle}>{t('auth.login_subtitle')}</Text>
+        <Text
+          style={styles.title}
+          accessibilityRole="header"
+          maxFontSizeMultiplier={typeScale.maxMult}
+        >
+          {t('auth.login_title')}
+        </Text>
+        <Text style={styles.subtitle} maxFontSizeMultiplier={typeScale.maxMult}>
+          {t('auth.login_subtitle')}
+        </Text>
 
         {error ? <ErrorBanner message={error} /> : null}
 
@@ -70,18 +80,18 @@ export default function LoginScreen() {
           inputMode="email"
           textContentType="emailAddress"
         />
-        <Field
+        <PasswordField
           label={t('auth.password')}
           value={password}
           onChangeText={setPassword}
-          secureTextEntry
-          autoCapitalize="none"
+          autoComplete="current-password"
           textContentType="password"
           onSubmitEditing={onSubmit}
           returnKeyType="go"
         />
 
         <PrimaryButton title={t('auth.login_button')} onPress={onSubmit} loading={busy} />
+        <LinkButton title={t('auth.forgot')} onPress={() => router.push('/forgot-password')} />
         <LinkButton title={t('auth.no_account')} onPress={() => router.push('/register')} />
       </ScrollView>
     </KeyboardAvoidingView>
@@ -99,10 +109,15 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.lg },
-  brand: { fontSize: 34, fontFamily: fonts.displayBold, color: colors.primary, letterSpacing: -0.5 },
-  title: { fontSize: 24, fontFamily: fonts.display, color: colors.text },
+  brand: {
+    fontSize: typeScale.hero,
+    fontFamily: fonts.displayBold,
+    color: colors.primary,
+    letterSpacing: -0.5,
+  },
+  title: { fontSize: typeScale.titleLg, fontFamily: fonts.display, color: colors.text },
   subtitle: {
-    fontSize: 15,
+    fontSize: typeScale.body,
     fontFamily: fonts.body,
     color: colors.textMuted,
     marginBottom: spacing.lg,

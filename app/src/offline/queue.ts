@@ -6,8 +6,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { AppState, Platform } from 'react-native';
 
-import { API_URL, api, getAuthToken } from '@/api/client';
+import { API_URL, ApiError, api, getAuthToken } from '@/api/client';
 import type { Observation, SyncRequest, SyncResponse } from '@/api/types';
+import { showToast } from '@/components/Toast';
+import i18n from '@/i18n';
 
 export interface PhotoQueueEntry {
   obsId: string;
@@ -197,6 +199,8 @@ export async function queuePhoto(entry: PhotoQueueEntry): Promise<void> {
 // --- sync -----------------------------------------------------------------------------------
 
 function isNetworkError(e: unknown): boolean {
+  // api/client wraps offline/timeout failures as ApiError(status 0, code 'network').
+  if (e instanceof ApiError) return e.status === 0;
   if (e instanceof TypeError) return true;
   // Fetch timeouts (AbortController in api/client) are connectivity, not app errors.
   if (e instanceof Error && (e.name === 'AbortError' || e.name === 'TimeoutError')) return true;
@@ -344,6 +348,12 @@ export async function sync(): Promise<void> {
       }
       return { ...st, observations, outbox, lastPulledAt: res.server_time };
     });
+
+    // Reassure as soon as local work actually reached the server (photos drain after,
+    // best-effort). Fires only when this run pushed at least one observation.
+    if (upserts.length > 0) {
+      showToast({ kind: 'success', message: i18n.t('toast.synced') });
+    }
 
     await drainPhotos();
   } catch (e) {
