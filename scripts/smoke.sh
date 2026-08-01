@@ -578,4 +578,88 @@ else
   warn "imagery feature off — skipping tile/GeoTIFF steps (FR-0-027)"
 fi
 
+# ---------------------------------------------------------------------------
+# Part E — cadastre-assisted onboarding + parcel cover photo (FR-0-010b)
+# ---------------------------------------------------------------------------
+
+# bbox validation is deterministic (rejected before any upstream call)
+R=$(api GET "/api/v1/cadastre/parcels?bbox=junk" "$TOK_A")
+[ "$(code_of "$R")" = "400" ] || fail "cadastre junk bbox: expected 400, got $(code_of "$R")"
+R=$(api GET "/api/v1/cadastre/parcels?bbox=15.0,41.0,15.5,41.5" "$TOK_A")
+[ "$(code_of "$R")" = "400" ] || fail "cadastre oversized bbox: expected 400, got $(code_of "$R")"
+R=$(api GET "/api/v1/cadastre/parcels?bbox=2.30,48.80,2.32,48.82" "$TOK_A")
+[ "$(code_of "$R")" = "400" ] || fail "cadastre out-of-coverage bbox: expected 400, got $(code_of "$R")"
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/api/v1/cadastre/parcels?bbox=15.848,41.451,15.853,41.453")
+[ "$CODE" = "401" ] || fail "cadastre without auth: expected 401, got ${CODE}"
+pass "cadastre bbox validation (400 junk/oversized/out-of-coverage, 401 unauthenticated)"
+
+# Live WFS detect: tolerant like the other network steps — the API must answer coherently
+# (200 FeatureCollection, or 502 with the upstream error envelope), never crash.
+R=$(api GET "/api/v1/cadastre/parcels?bbox=15.845,41.449,15.856,41.454" "$TOK_A")
+CODE=$(code_of "$R")
+if [ "$CODE" = "200" ]; then
+  CB="$(body_of "$R")"
+  [ "$(jq_get "$CB" '.type')" = "FeatureCollection" ] || fail "cadastre detect: bad shape"
+  echo "$CB" | jq -e '.features | type == "array"' >/dev/null || fail "cadastre features not an array"
+  pass "cadastre live detect ($(echo "$CB" | jq '.features | length') parcels from $(echo "$CB" | jq -r '.source'))"
+elif [ "$CODE" = "502" ]; then
+  [ "$(echo "$(body_of "$R")" | jq -r '.error.code')" = "upstream" ] \
+    || fail "cadastre 502 without the upstream error code"
+  warn "cadastre WFS unreachable — live detect skipped, upstream envelope verified"
+  pass "cadastre upstream failure surfaced as 502/upstream"
+else
+  fail "cadastre detect: expected 200 or 502, got ${CODE}"
+fi
+
+# cadastral_ref provenance survives create and echoes in the read shape
+GEOM_E='{"type":"Polygon","coordinates":[[[15.908,41.400],[15.912,41.400],[15.912,41.401],[15.908,41.401],[15.908,41.400]]]}'
+R=$(api POST /api/v1/parcels "$TOK_A" "{\"farm_id\":\"${FARM_A}\",\"name\":\"Campo Catasto ${RND}\",\"geometry\":${GEOM_E},\"cadastral_ref\":\"D643_001500042\"}")
+[ "$(code_of "$R")" = "201" ] || fail "create parcel with cadastral_ref ($(code_of "$R"))"
+CAD_PARCEL=$(jq_get "$(body_of "$R")" '.id')
+[ "$(echo "$(body_of "$R")" | jq -r '.cadastral_ref')" = "D643_001500042" ] \
+  || fail "cadastral_ref not echoed on create"
+pass "parcel created with cadastral_ref provenance"
+
+# Cover photo lifecycle: upload (magic-sniffed) → owner reads → wrong org 404 → delete → gone.
+PJPG="$(mkt arvo-cover .jpg)"
+printf '\xff\xd8\xff\xe0arvo-smoke-cover-placeholder' > "$PJPG"
+R=$(curl -sS -w $'\n%{http_code}' -X POST -H "Authorization: Bearer ${TOK_A}" \
+  -F "file=@${PJPG};type=image/jpeg" "${BASE}/api/v1/parcels/${CAD_PARCEL}/photo")
+[ "$(code_of "$R")" = "201" ] || fail "cover photo upload: expected 201, got $(code_of "$R")"
+COVER_PATH=$(jq_get "$(body_of "$R")" '.path')
+pass "cover photo uploaded (${COVER_PATH})"
+
+R=$(api GET "/api/v1/parcels/${CAD_PARCEL}" "$TOK_A")
+[ "$(echo "$(body_of "$R")" | jq -r '.photo_path')" = "$COVER_PATH" ] \
+  || fail "photo_path not reflected on the parcel"
+pass "photo_path present in the parcel read shape"
+
+# Non-image content must be rejected regardless of declared type (content sniffing).
+PBAD="$(mkt arvo-cover-bad .jpg)"
+printf 'not-an-image' > "$PBAD"
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer ${TOK_A}" \
+  -F "file=@${PBAD};type=image/jpeg" "${BASE}/api/v1/parcels/${CAD_PARCEL}/photo")
+[ "$CODE" = "400" ] || fail "cover photo magic sniffing: expected 400, got ${CODE}"
+pass "cover photo content sniffing rejects fake jpeg (400)"
+
+R=$(api POST /api/v1/auth/media-token "$TOK_A")
+MEDIA_A_COVER=$(jq_get "$(body_of "$R")" '.token')
+COUT="$(mkt arvo-cover-out .jpg)"
+CODE=$(curl -sS -o "$COUT" -w '%{http_code}' "${BASE}${COVER_PATH}?token=${MEDIA_A_COVER}")
+[ "$CODE" = "200" ] || fail "owner cannot read its own cover photo: got ${CODE}"
+[ -s "$COUT" ] || fail "cover photo download was empty"
+pass "cover photo readable by its owner ($(wc -c < "$COUT" | tr -d '[:space:]') bytes)"
+
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}${COVER_PATH}?token=${MEDIA_B}")
+[ "$CODE" = "404" ] || fail "cross-tenant leak: org B media token got ${CODE} on org A cover photo"
+pass "cross-tenant isolation (org B media token → 404 on org A cover photo)"
+
+R=$(api DELETE "/api/v1/parcels/${CAD_PARCEL}/photo" "$TOK_A")
+[ "$(code_of "$R")" = "204" ] || fail "cover photo delete: expected 204, got $(code_of "$R")"
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}${COVER_PATH}?token=${MEDIA_A_COVER}")
+[ "$CODE" = "404" ] || fail "deleted cover photo still served (${CODE})"
+R=$(api GET "/api/v1/parcels/${CAD_PARCEL}" "$TOK_A")
+[ "$(echo "$(body_of "$R")" | jq -r '.photo_path')" = "null" ] || fail "photo_path not cleared"
+pass "cover photo delete clears the column and the file"
+
 echo "== ALL ${N} STEPS PASSED =="

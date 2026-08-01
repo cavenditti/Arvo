@@ -45,20 +45,44 @@ keep working on these endpoints for API clients.
 
 ## Parcels
 `Parcel = {id, farm_id, name, geometry: GeoJSON, area_ha, centroid: {lon, lat}, bbox: [w,s,e,n],
-crop, variety, planting_date, season_year, archived, created_at}`
+crop, variety, planting_date, season_year, cadastral_ref, photo_path, archived, created_at}`
 crop is a free string; known crops (drive GDD base temp): `vine, olive, tomato, wheat, maize, other`.
+`cadastral_ref` records provenance when the boundary came from the cadastre (FR-0-010b);
+`photo_path` is the cover photo's server path (`/uploads/parcels/...`), null when unset.
 
 - `GET /api/v1/parcels?farm_id=&include_archived=` → `[Parcel]`
-- `POST /api/v1/parcels` `{farm_id, name, geometry (Polygon|MultiPolygon), crop?, variety?, planting_date?, season_year?}`
+- `POST /api/v1/parcels` `{farm_id, name, geometry (Polygon|MultiPolygon), crop?, variety?, planting_date?, season_year?, cadastral_ref?}`
   → `201 Parcel`. Validate: valid GeoJSON, `ST_IsValid`, area ≤ 10,000 ha. Geometry stored as MultiPolygon.
 - `GET /api/v1/parcels/{id}` → `Parcel` · `PATCH /api/v1/parcels/{id}` (any field incl. geometry) → `Parcel`
   Omitted fields keep their value; sending `crop/variety/planting_date/season_year` as explicit
-  `null` clears them. Caps: name ≤200, crop/variety ≤100, season_year 1900–2100.
+  `null` clears them. Caps: name ≤200, crop/variety ≤100, cadastral_ref ≤100, season_year 1900–2100.
 - `DELETE /api/v1/parcels/{id}` → 204 (soft: `archived=true`)
 - `POST /api/v1/parcels/import` `{farm_id, feature_collection: FeatureCollection}` → `201 {created: [Parcel]}`
-  (per-feature `properties.name/crop` honored; skips invalid features, reports `{skipped: n}`;
-  max 1000 features; all-or-nothing on DB errors)
+  (per-feature `properties.name/crop/cadastral_ref` honored; skips invalid features, reports
+  `{skipped: n}`; max 1000 features; all-or-nothing on DB errors)
 - `GET /api/v1/parcels/export.geojson?farm_id=` → FeatureCollection (all parcel fields as properties)
+
+### Parcel cover photo (FR-0-010b)
+- `POST /api/v1/parcels/{id}/photo` — multipart field `file` (jpeg/png ≤ 10 MB, content-sniffed)
+  → `201 {path}`. One cover per parcel: a new upload replaces and removes the previous file.
+- `DELETE /api/v1/parcels/{id}/photo` → 204 (clears the column, removes the file)
+- `GET /uploads/parcels/{parcel_id}/{file}` — serve; auth = media token (`?token=`) or Bearer,
+  org-gated exactly like scouting photos (cross-tenant → 404).
+
+## Cadastre (FR-0-010b — onboarding boundary detection)
+Proxy over the Agenzia delle Entrate INSPIRE WFS (open data CC-BY 4.0, no key; MapServer,
+DefaultCRS EPSG::6706 ≈ WGS84 over Italy). GML parsing stays server-side; the app only ever
+sees GeoJSON. Endpoint override: `CADASTRE_WFS_URL` (tests, other providers).
+
+- `GET /api/v1/cadastre/parcels?bbox=w,s,e,n` (EPSG:4326 viewport) →
+  `{type: "FeatureCollection", features, truncated, source}` where each feature has
+  `geometry` (Polygon|MultiPolygon, lon/lat) and
+  `properties = {cadastral_ref, label, area_m2, existing_parcel_id}`.
+  `existing_parcel_id` marks candidates already covered by one of the org's non-archived
+  parcels (same `cadastral_ref`, or spatial overlap > 50% of the candidate) so the app offers
+  only NEW parcels. `truncated=true` when the 60-feature cap was hit (zoom in).
+  Validation → 400: malformed bbox, empty extent, span > 0.08°, outside Italy.
+  Upstream failure or OGC exception document → `502 {error: {code: "upstream"}}`.
 
 ## Imagery — scenes & indices
 `IndexName = ndvi | ndre | gndvi | ndmi | savi`

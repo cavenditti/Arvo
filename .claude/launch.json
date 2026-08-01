@@ -6,6 +6,15 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": ["-c", "cd app && npx expo start --web --port 8081"],
       "port": 8081
+    },
+    {
+      "name": "web-alt",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd app && EXPO_PUBLIC_API_URL=http://localhost:8790 npx expo start --web --port 8082"
+      ],
+      "port": 8082
     }
   ]
 }

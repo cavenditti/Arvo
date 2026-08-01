@@ -48,6 +48,7 @@ arvo/
 | FR-0-002 | OIDC + RBAC | **Deviation:** JWT+argon2 now, role lattice viewer<operator<agronomist<admin<owner; OIDC behind same module later | ✅ (deviation) |
 | FR-0-004 | Append-only audit log | `audit_log` table + DB trigger blocking UPDATE/DELETE + helper called on mutations | ✅ |
 | FR-0-010 | Parcels: draw on map or import | Draw in Leaflet + GeoJSON FeatureCollection import (KML/SHP/ISO-XML deferred) | ✅ |
+| FR-0-010b | Cadastre-assisted onboarding (2026-08-01): detect boundaries from the Italian cadastre + optional field cover photo | `GET /cadastre/parcels` (AdE INSPIRE WFS proxy, GML→GeoJSON server-side, existing-field dedup) + tap-to-select map overlay (default new-field mode) + `POST/DELETE /parcels/{id}/photo` (cover shown in field workspace) | ✅ |
 | FR-0-011 | Geometry, area, centroid, bbox | PostGIS `ST_Area(geography)`, `ST_Centroid`, `ST_Envelope` | ✅ |
 | FR-0-012 | Crop, variety, planting date, season | parcel columns | ✅ |
 | FR-0-020 | Sentinel-2 L2A via STAC | Earth Search catalog search per parcel; scenes stored with cloud % | ✅ |
@@ -121,6 +122,7 @@ note, tags[], photos jsonb, taken_at, updated_at, deleted)`, `audit_log(append-o
 |-------|-------|------|
 | be-auth | register/login/me/switch-org, invites, members | `modules/auth.rs`, `modules/orgs.rs` |
 | be-parcels | farms + parcels CRUD, GeoJSON import/export, PostGIS ops | `modules/farms.rs`, `modules/parcels.rs` |
+| be-cadastre | cadastral parcel detection for onboarding (AdE INSPIRE WFS proxy) | `modules/cadastre.rs` |
 | be-weather | Open-Meteo ingest+cache, agro models, advisories | `modules/weather.rs`, `core/src/agro.rs` |
 | be-imagery | STAC client, index endpoints, GDAL worker, demo synth | `modules/{scenes,indices}.rs`, `imagery/*`, `core/src/indices.rs` |
 | be-alerts | anomaly detector, alert lifecycle | `modules/alerts.rs`, `jobs/detect.rs`, `core/src/anomaly.rs` |
@@ -139,7 +141,9 @@ weather refresh+read (real Open-Meteo) → agro (GDD/ET0/balance) → advisories
 (best-effort, network-tolerant) → seeded index series present → anomaly alert exists → ack/snooze →
 observations sync (upsert, pull-since, LWW) → photo upload → **uploads auth: bare fetch 401, media
 token 200, session-JWT-in-query rejected** → season report HTML 200 → CSV/GeoJSON export →
-**cross-tenant isolation: second org gets 404 on first org's parcel** → audit rows exist.
+**cross-tenant isolation: second org gets 404 on first org's parcel** → audit rows exist →
+cadastre bbox validation (400s + 401) → live cadastre detect (network-tolerant: 200 FC or
+502/upstream) → create with cadastral_ref → cover photo upload/sniff/read/**cross-tenant 404**/delete.
 
 ## 9. Runbook
 

@@ -59,6 +59,7 @@ Read `docs/PHASE0.md` (scope) and `docs/API.md` (REST contract) first. Spec: `ag
 |-------|--------------------|
 | be-auth | `modules/auth.rs`, `modules/orgs.rs` |
 | be-parcels | `modules/farms.rs`, `modules/parcels.rs` |
+| be-cadastre | `modules/cadastre.rs` |
 | be-weather | `modules/weather.rs`, `core/src/agro.rs` |
 | be-imagery | `modules/scenes.rs`, `modules/indices.rs`, `imagery/stac.rs`, `imagery/worker.rs`, `imagery/synth.rs`, `imagery/mod.rs`, `core/src/indices.rs` |
 | be-alerts | `modules/alerts.rs`, `jobs/detect.rs`, `jobs/mod.rs`, `core/src/anomaly.rs` |
