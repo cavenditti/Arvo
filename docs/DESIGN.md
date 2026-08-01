@@ -172,3 +172,61 @@ is decision support — suggest, don't prescribe. Italian-first copy, English pa
 - ✗ Glyphs above content, glyphs in tables/forms, more than one glyph per card.
 - ✗ Left-border accent stripes (replaced by gradient surfaces — never bring back).
 - ✗ Recolored or dark-tile logo.
+
+## 10. Type scale & Dynamic Type
+
+Sizes come from the `type` tokens in theme.ts — pick a step, don't invent one:
+
+| Token | Size | Use |
+|---|---|---|
+| `type.caption` | 12 | data labels, chips, meta rows — the floor |
+| `type.body` | 14 | secondary prose, toast messages |
+| `type.bodyLg` | 16 | primary prose, inputs, buttons |
+| `type.title` | 18 | card headings |
+| `type.titleLg` | 22 | section headings, priming cards |
+| `type.hero` | 34 | hero numbers and screen-level display |
+
+Rules:
+- **Never disable font scaling.** Every `Text` gets `maxFontSizeMultiplier={type.maxMult}`
+  (1.4) instead — layouts must survive text 40% larger. The primitives in `ui.tsx`
+  already do this; screens do it for their own text.
+- **12 pt is the floor for data labels.** `MonoLabel` defaults to `type.caption`; nothing
+  the farmer must read in sunlight goes below it. (Supersedes the 10–11 micro-label
+  sizing in §3.)
+
+## 11. Touch targets
+
+Gloved thumbs on a bright screen: primary actions and form controls are at least
+**44 pt** tall (`touch.min`); chips and secondary tap targets at least **40 pt**
+(`touch.chip`). Visual size may stay smaller — reach the minimum with padding,
+`minHeight`, or `hitSlop`, never by inflating the artwork. `StatusChip`/`Pill` are
+labels, not buttons; anything tappable that looks like a chip still owes the 40 pt.
+
+## 12. Permission priming
+
+Never let iOS ask first. Before any system permission dialog (location, camera,
+photos, notifications), show a `PrimeCard`: one icon in a soft tinted circle, a plain
+Italian sentence saying **why Arvo asks and what the farmer gets**, a forest-gradient
+CTA that triggers the real system prompt, and an honest "Non ora" link. One card per
+permission, shown at the moment the feature needs it — never a wall of requests at
+first launch. If the user declines, respect it: no nagging, just a quiet path back
+from the place the feature lives.
+
+## 13. Toasts
+
+Confirmations are quiet. After a save, a sync, a small failure: a single bottom pill
+(`showToast` / `useToast`, host mounted once in the root layout), auto-dismissed in
+~2.5 s, never blocking, never stacked. Success wears the primary green tint, errors
+the clay tint — same chip palette as everywhere else, no new colors. A toast states
+what happened ("Salvato. Si sincronizzerà da solo."), not what the system did.
+Anything that needs a decision is not a toast — use a dialog or an inline banner.
+
+## 14. Plain language first
+
+The farmer's words lead; the agronomist's follow. Acronyms and indices (NDVI, ET₀,
+GDD, p10) **never open a sentence, a title, or a chip** — the plain phrase comes
+first, the technical term trails in parentheses or waits behind a "Dettagli tecnici"
+disclosure: "Acqua richiesta dalle piante (ET₀)", never "ET₀". Numbers and dates are
+always localized (`lib/format.ts`): "12,5 ha", "lunedì 4 agosto" — never raw ISO
+dates or dot decimals in Italian copy. Plant IDs, index values and thresholds live in
+the technical detail layer, not in the headline.

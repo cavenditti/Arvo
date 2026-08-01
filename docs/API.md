@@ -35,6 +35,15 @@ keep working on these endpoints for API clients.
 - `POST /api/v1/auth/accept-invite` `{token, email, password?, full_name?}` (no auth; registers the
   user if new, then adds membership) → `{token, user, org}`
 - `GET /api/v1/orgs/members` → `[{user_id, email, full_name, role}]`
+- `POST /api/v1/auth/password-reset/request` `{email}` → **always 204** (no auth, no user
+  enumeration — unknown emails answer identically and burn the same argon2 time). For a real
+  account: a one-time token (32 random bytes hex, argon2-hashed at rest, 30 min expiry, one
+  outstanding per user — a new request replaces the previous link) is created and the deep link
+  `arvo:///forgot-password?token=…` is logged at info level. No SMTP in the stack: the server
+  log is the delivery channel for now (email delivery is a documented TODO).
+- `POST /api/v1/auth/password-reset/confirm` `{token, new_password (8..512)}` (no auth) → 204.
+  Tokens are single-use; any token problem (unknown/expired/used) → 400 with message
+  `invalid_token`; a too-short password gets its own 400 message.
 
 `User = {id, email, full_name, locale}` · `Org = {id, name}`
 
@@ -139,6 +148,24 @@ Kinds: `index_drop`, `frost_risk`, `heat_stress` (extensible).
   clamped 1–500; `snoozed` with elapsed `snoozed_until` are reported as `open`)
 - `POST /api/v1/alerts/{id}/ack` · `/dismiss` · `/snooze` `{until}` · `/assign` `{user_id}` → `Alert`
 - `POST /api/v1/alerts/detect` [agronomist+] → `{created}` — runs the anomaly detector over all org parcels now.
+
+## Devices & push notifications
+One row per Expo push token; registration is self-service for every role (`[viewer+]`, a
+device belongs to whoever is logged in on it).
+
+- `POST /api/v1/devices` `{platform: "ios"|"android"|"web", token (≤512)}` → 204. Upsert by
+  token: a device that logs into another user or org is re-bound (org, user, platform and
+  `last_seen_at` refreshed), never duplicated.
+- `DELETE /api/v1/devices/{token}` → 204 — idempotent and scoped to the caller's org (a token
+  held by another org is a silent no-op, not an existence oracle).
+
+**Push send** — after the anomaly detector inserts alerts it sends ONE Expo push per
+(parcel, kind) per run to every device of the org: title = the parcel name, body = the app's
+grouped copy ("Calo di vigore su N piante" for `index_drop`, else "N nuovi segnali"),
+`data = {parcel_id, kind}`. Delivery is best-effort via `https://exp.host/--/api/v2/push/send`
+(shared client, chunks of 100, 10 s timeout): failures are logged and never fail the job.
+Kill switch: `ARVO_PUSH_DISABLED=1`; endpoint override: `PUSH_ENDPOINT` (tests). Per-user
+locale and weather-advisory push are TODO (code comments in `jobs/detect.rs`).
 
 ## Observations (scouting) — offline sync protocol
 `Observation = {id (client-generated uuid), parcel_id?, note, tags: [string], photos: [{path, taken_at?}],

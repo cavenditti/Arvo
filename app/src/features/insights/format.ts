@@ -1,4 +1,6 @@
-// OWNER: fe-dashboard — pure display helpers shared by dashboard/insights UI (no React).
+// OWNER: status-pipeline — pure display helpers shared by dashboard/insights UI (no React).
+// Status/trend/headline semantics live in ./status.ts (single source of truth) — screens must
+// not derive status locally from these helpers.
 import { enUS, it } from 'date-fns/locale';
 
 import i18n from '@/i18n';
@@ -73,6 +75,23 @@ export function arvoScore(latest: LatestIndices | null | undefined): ArvoScore |
   };
 }
 
+/**
+ * Score + coverage in the exact shape `deriveFieldStatus` (./status.ts) consumes.
+ * `coverage` is the NUMBER OF SIGNALS USED (0–5) — not `ArvoScore.coverage`, which is the
+ * 0–1 weight share. Kept as a parallel export so `arvoScore`'s signature stays stable.
+ */
+export function arvoScoreDetail(
+  latest: LatestIndices | null | undefined,
+): { score: number | null; coverage: number } {
+  const s = arvoScore(latest);
+  return { score: s?.value ?? null, coverage: s?.signalCount ?? 0 };
+}
+
+/**
+ * @deprecated Headline/status copy must come from `deriveFieldStatus` in ./status.ts
+ * (bands here differ: 75/55/35 vs the canonical 75/50). Kept only for legacy call sites
+ * until wave-2 screens migrate.
+ */
 export function scoreBand(score: number): ScoreBand {
   if (score >= 75) return 'strong';
   if (score >= 55) return 'good';
@@ -85,7 +104,12 @@ export function scoreColor(score: number | null | undefined): string {
   return indexColor('ndvi', Math.max(0, Math.min(100, score)) / 100);
 }
 
-/** Human-readable movement from NDVI; raw values stay available in advanced detail. */
+/**
+ * Human-readable movement from NDVI; raw values stay available in advanced detail.
+ * @deprecated Trend must come from `trendFromSeries` in ./status.ts (same ±0.025 threshold,
+ * but one canonical 7-day baseline instead of per-screen deltas). Kept only for legacy call
+ * sites until wave-2 screens migrate.
+ */
 export function trendBand(delta: number | null | undefined): TrendBand {
   if (delta == null || Number.isNaN(delta)) return 'unknown';
   if (delta > 0.025) return 'improving';
@@ -141,10 +165,17 @@ const CROP_LABELS: Record<string, { it: string; en: string }> = {
   other: { it: 'Altro', en: 'Other' },
 };
 
-/** Friendly crop label (crop is a free string; known crops are localised). */
+/**
+ * Friendly crop label (crop is a free string; known crops are localised via the `crop.*`
+ * i18n keys, same ones `cropLabelKey` in features/parcels/crops.ts points at).
+ * The legacy map above is only the `defaultValue` safety net for a missing key; unknown
+ * crops pass through as-is. Looked up lazily inside the function body (like `dfLocale`)
+ * so importing this module never races i18n init nor creates an import cycle — `@/i18n`
+ * imports nothing from features/.
+ */
 export function cropLabel(crop: string | null | undefined): string {
   if (!crop) return '';
   const e = CROP_LABELS[crop];
-  if (!e) return crop;
-  return i18n.language?.startsWith('it') ? e.it : e.en;
+  const fallback = e ? (i18n.language?.startsWith('it') ? e.it : e.en) : crop;
+  return i18n.t(`crop.${crop}`, { defaultValue: fallback });
 }

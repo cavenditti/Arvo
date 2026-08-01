@@ -55,6 +55,7 @@ import { confirmDestructive, notify } from '@/features/parcels/dialog';
 import { useParcelObservations } from '@/features/scouting/byParcel';
 import { arvoScore, dfLocale, scoreBand, scoreColor, trendBand } from '@/features/insights/format';
 import { worstOpenAlert } from '@/features/insights/alerts';
+import { setSnoozeDays } from '@/features/insights/snooze';
 import { useAlertActions } from '@/features/insights/useAlertActions';
 import { mediaUri, useMediaToken } from '@/features/media';
 import { colors, fonts, gradients, radius, spacing, statusColors, statusForSeverity } from '@/theme';
@@ -491,10 +492,20 @@ export default function ParcelDetailScreen() {
           ) : (alertsQ.data?.length ?? 0) === 0 ? (
             <Text style={styles.muted}>{t('parcel.no_alerts')}</Text>
           ) : (
+            // ux-revamp: minimal adaptation, parcel-detail agent will rework
             <AlertList
               alerts={alertsQ.data ?? []}
-              parcelNames={{ [parcel.id]: parcel.name }}
-              onAction={(alertId, action) => alertAction.mutate({ id: alertId, action })}
+              parcelName={() => parcel.name}
+              onConfirm={(ids) =>
+                ids.forEach((alertId) => alertAction.mutate({ id: alertId, action: 'ack' }))
+              }
+              onSnooze={(ids, days) => {
+                setSnoozeDays(days);
+                ids.forEach((alertId) => alertAction.mutate({ id: alertId, action: 'snooze' }));
+              }}
+              onDismiss={(ids) =>
+                ids.forEach((alertId) => alertAction.mutate({ id: alertId, action: 'dismiss' }))
+              }
             />
           )}
         </View>

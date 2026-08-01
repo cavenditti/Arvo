@@ -3,6 +3,7 @@ pub mod alerts;
 pub mod auth;
 pub mod cadastre;
 pub mod captures;
+pub mod devices;
 pub mod farms;
 pub mod indices;
 pub mod observations;
@@ -23,3 +24,9 @@ pub mod weather;
 // `crate::modules::storage::{Store, LocalStore}`.
 #[path = "../storage/mod.rs"]
 pub mod storage;
+
+// Not a feature module either: best-effort Expo push delivery (UX revamp). Same situation
+// as `storage` — the file lives at the contract path `crates/api/src/push.rs` and is
+// declared from here because `main.rs` is frozen. Callers use `crate::modules::push`.
+#[path = "../push.rs"]
+pub mod push;

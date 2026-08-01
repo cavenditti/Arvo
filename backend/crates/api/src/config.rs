@@ -19,6 +19,11 @@ pub struct Config {
     /// INSPIRE WFS endpoint for cadastral parcels (FR-0-010b). Defaults to the Agenzia
     /// delle Entrate open-data service; overridable for tests and other countries.
     pub cadastre_wfs_url: String,
+    /// Expo push API endpoint (`push.rs`). Overridable for tests; delivery is best-effort.
+    pub push_endpoint: String,
+    /// Kill switch for all outbound push (`ARVO_PUSH_DISABLED=1`): dev environments and
+    /// CI must never notify real phones.
+    pub push_disabled: bool,
 }
 
 impl Config {
@@ -66,6 +71,11 @@ impl Config {
         let cadastre_wfs_url = std::env::var("CADASTRE_WFS_URL").unwrap_or_else(|_| {
             "https://wfs.cartografia.agenziaentrate.gov.it/inspire/wfs/owfs01.php".into()
         });
+        let push_endpoint = std::env::var("PUSH_ENDPOINT")
+            .unwrap_or_else(|_| "https://exp.host/--/api/v2/push/send".into());
+        let push_disabled = std::env::var("ARVO_PUSH_DISABLED")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         Ok(Self {
             database_url,
             jwt_secret,
@@ -76,6 +86,8 @@ impl Config {
             allowed_origins,
             db_max_connections,
             cadastre_wfs_url,
+            push_endpoint,
+            push_disabled,
         })
     }
 }

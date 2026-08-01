@@ -1,4 +1,5 @@
-// OWNER: fe-shell — locale persistence + device detection. Others only add keys to it.json/en.json.
+// OWNER: copy-i18n — locale persistence + device detection. Others add keys via i18n/pending/*.json.
+import { getLocales } from 'expo-localization';
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import { Platform } from 'react-native';
@@ -14,13 +15,21 @@ i18n.use(initReactI18next).init({
   interpolation: { escapeValue: false },
 });
 
-// Boot resolution: a saved choice wins; otherwise honor an English browser on web.
-// Italian stays the default everywhere else (Italian-first product).
+// Boot resolution: a saved choice wins; otherwise honor an English device (native) or
+// browser (web). Anything that isn't English falls back to Italian (Italian-first product).
 function detectLang(): 'it' | 'en' {
-  if (Platform.OS === 'web' && typeof navigator !== 'undefined') {
-    return navigator.language?.toLowerCase().startsWith('en') ? 'en' : 'it';
+  if (Platform.OS === 'web') {
+    if (typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('en')) {
+      return 'en';
+    }
+    return 'it';
   }
-  return 'it';
+  try {
+    return getLocales()[0]?.languageCode === 'en' ? 'en' : 'it';
+  } catch {
+    // expo-localization unavailable (e.g. bare test env) — keep the Italian default.
+    return 'it';
+  }
 }
 
 void getLang()

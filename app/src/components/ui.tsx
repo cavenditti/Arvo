@@ -17,7 +17,8 @@ import {
 import type { IndexName } from '@/api/types';
 import Glyph, { type GlyphName } from '@/components/glyphs';
 import { indexColor } from '@/features/insights/format';
-import { colors, fonts, motion, radius, spacing, statusColors, type Status } from '@/theme';
+import * as haptics from '@/lib/haptics';
+import { colors, fonts, motion, radius, spacing, statusColors, type as typeScale, type Status } from '@/theme';
 
 type InteractiveState = { hovered?: boolean; focused?: boolean; pressed: boolean };
 
@@ -26,6 +27,8 @@ type InteractivePressableProps = Omit<PressableProps, 'style'> & {
   hoverStyle?: StyleProp<ViewStyle>;
   focusStyle?: StyleProp<ViewStyle>;
   pressedStyle?: StyleProp<ViewStyle>;
+  /** Fire a selection haptic tick on press-in (native only — silent no-op on web). */
+  haptic?: boolean;
 };
 
 /**
@@ -38,6 +41,8 @@ export function InteractivePressable({
   focusStyle,
   pressedStyle,
   disabled,
+  haptic,
+  onPressIn,
   accessibilityRole = 'button',
   ...props
 }: InteractivePressableProps) {
@@ -46,6 +51,10 @@ export function InteractivePressable({
       {...props}
       disabled={disabled}
       accessibilityRole={accessibilityRole}
+      onPressIn={(e) => {
+        if (haptic && !disabled && Platform.OS !== 'web') haptics.selection();
+        onPressIn?.(e);
+      }}
       style={(rawState) => {
         const state = rawState as InteractiveState;
         const base = typeof style === 'function' ? style(state) : style;
@@ -73,11 +82,12 @@ export function initials(name?: string | null): string {
   return (a + b).toUpperCase() || '—';
 }
 
-/** Uppercase monospace micro-label ("5 PARCELS · 14 JUL PASS", table headers, meta rows). */
+/** Uppercase monospace micro-label ("5 PARCELS · 14 JUL PASS", table headers, meta rows).
+ * Default size = type.caption (12) — the readable floor for data labels in the field. */
 export function MonoLabel({
   children,
   color = colors.textFaint,
-  size = 10,
+  size = typeScale.caption,
   style,
 }: {
   children: ReactNode;
@@ -86,7 +96,11 @@ export function MonoLabel({
   style?: StyleProp<TextStyle>;
 }) {
   return (
-    <Text style={[styles.mono, { color, fontSize: size }, style]} numberOfLines={1}>
+    <Text
+      style={[styles.mono, { color, fontSize: size }, style]}
+      numberOfLines={1}
+      maxFontSizeMultiplier={typeScale.maxMult}
+    >
       {children}
     </Text>
   );
@@ -109,7 +123,12 @@ export function MonoValue({
 }) {
   const family = Number(weight) >= 600 ? fonts.monoSemiBold : fonts.mono;
   return (
-    <Text style={[{ fontFamily: family, color, fontSize: size }, style]}>{children}</Text>
+    <Text
+      style={[{ fontFamily: family, color, fontSize: size }, style]}
+      maxFontSizeMultiplier={typeScale.maxMult}
+    >
+      {children}
+    </Text>
   );
 }
 
@@ -118,7 +137,9 @@ export function StatusChip({ status, label }: { status: Status; label: string })
   const c = statusColors[status];
   return (
     <View style={[styles.chip, { backgroundColor: c.bg }]}>
-      <Text style={[styles.chipText, { color: c.fg }]}>{label}</Text>
+      <Text style={[styles.chipText, { color: c.fg }]} maxFontSizeMultiplier={typeScale.maxMult}>
+        {label}
+      </Text>
     </View>
   );
 }
@@ -127,7 +148,9 @@ export function StatusChip({ status, label }: { status: Status; label: string })
 export function Pill({ label, fg, bg }: { label: string; fg: string; bg: string }) {
   return (
     <View style={[styles.chip, { backgroundColor: bg }]}>
-      <Text style={[styles.chipText, { color: fg }]}>{label}</Text>
+      <Text style={[styles.chipText, { color: fg }]} maxFontSizeMultiplier={typeScale.maxMult}>
+        {label}
+      </Text>
     </View>
   );
 }
@@ -171,6 +194,7 @@ export function NdviSwatch({
           { fontSize: Math.round(size * 0.3) },
           value == null && { color: colors.textFaint },
         ]}
+        maxFontSizeMultiplier={typeScale.maxMult}
       >
         {value == null ? '—' : value.toFixed(2)}
       </Text>
@@ -313,9 +337,11 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     paddingHorizontal: 10,
     paddingVertical: 3,
+    minHeight: 28,
+    justifyContent: 'center',
     alignSelf: 'flex-start',
   },
-  chipText: { fontSize: 11, fontFamily: fonts.bodyBold },
+  chipText: { fontSize: typeScale.caption, fontFamily: fonts.bodyBold },
   swatch: { alignItems: 'center', justifyContent: 'center' },
   swatchText: { fontFamily: fonts.monoSemiBold, color: '#FFFFFF' },
   card: {

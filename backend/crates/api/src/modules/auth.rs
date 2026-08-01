@@ -1,5 +1,6 @@
 //! OWNER: be-auth — authentication per docs/API.md §Auth.
-//! register / login / switch-org / me / accept-invite. Invites + members live in orgs.rs.
+//! register / login / switch-org / me / accept-invite / password-reset. Invites + members
+//! live in orgs.rs.
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use axum::extract::State;
@@ -28,6 +29,8 @@ pub fn router() -> Router<AppState> {
         .route("/auth/me", get(me))
         .route("/auth/accept-invite", post(accept_invite))
         .route("/auth/media-token", post(media_token))
+        .route("/auth/password-reset/request", post(password_reset_request))
+        .route("/auth/password-reset/confirm", post(password_reset_confirm))
 }
 
 // ---- shared shapes -------------------------------------------------------
@@ -402,6 +405,165 @@ async fn media_token(
         "token": token,
         "expires_at": DateTime::from_timestamp(exp, 0).unwrap_or_else(Utc::now),
     })))
+}
+
+// ---- password reset ------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ResetRequestReq {
+    email: String,
+}
+
+/// POST /auth/password-reset/request — ALWAYS 204: the response must not reveal whether an
+/// account exists (no user enumeration; unknown emails burn the same argon2 time). For a
+/// real account a one-time token (32 random bytes, hex) is stored argon2-hashed with a
+/// 30-minute expiry and the app deep link is logged at info level — there is no SMTP in the
+/// stack, so the operator log IS the delivery channel for now.
+/// TODO: deliver the link by email once a provider lands (docs/API.md §Auth).
+/// Rate limiting: rides the per-IP auth limiter this router is mounted with (routes.rs).
+async fn password_reset_request(
+    State(state): State<AppState>,
+    Json(req): Json<ResetRequestReq>,
+) -> ApiResult<StatusCode> {
+    // Malformed input answers 204 too — anything else would leak information.
+    let Ok(email) = normalize_email(&req.email) else {
+        return Ok(StatusCode::NO_CONTENT);
+    };
+    let user_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE lower(email) = $1")
+        .bind(&email)
+        .fetch_optional(&state.pool)
+        .await?;
+    let Some(user_id) = user_id else {
+        // Keep timing roughly uniform with the known-email path (same argon2 work).
+        let _ = hash_password_blocking("arvo-uniform-timing-guard".into()).await;
+        return Ok(StatusCode::NO_CONTENT);
+    };
+
+    let mut token_bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut token_bytes);
+    let token: String = token_bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let token_hash = hash_password_blocking(token.clone()).await?;
+
+    let mut tx = state.pool.begin().await?;
+    // One outstanding link per user: a new request invalidates the previous one. This also
+    // keeps the confirm-side candidate scan small.
+    sqlx::query("DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO password_resets (user_id, token_hash, expires_at)
+         VALUES ($1, $2, now() + interval '30 minutes')",
+    )
+    .bind(user_id)
+    .bind(&token_hash)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    // The raw token exists only in this log line and in the user's hands.
+    tracing::info!(
+        email = %email,
+        link = %format!("arvo:///forgot-password?token={token}"),
+        "password reset link (no SMTP configured — deliver manually)"
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ResetConfirmReq {
+    token: String,
+    new_password: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct ResetRow {
+    id: Uuid,
+    user_id: Uuid,
+    token_hash: String,
+}
+
+/// How many outstanding reset rows the confirm endpoint is willing to argon2-verify per
+/// call. Hashed random tokens cannot be looked up directly by design; recency covers the
+/// real flow (the newest link is the one being clicked) while bounding CPU, and the per-IP
+/// auth rate limiter caps how often anyone can make us do this.
+const RESET_VERIFY_CANDIDATES: i64 = 20;
+
+/// POST /auth/password-reset/confirm — one-shot: verifies the token against recent
+/// unexpired unused rows, sets the new password, marks the row used. Every token problem is
+/// the same opaque 400 `invalid_token` so the endpoint is not a guessing oracle; only a
+/// too-short password gets its own message (client-side validation mirrors it).
+async fn password_reset_confirm(
+    State(state): State<AppState>,
+    Json(req): Json<ResetConfirmReq>,
+) -> ApiResult<StatusCode> {
+    let invalid = || ApiError::BadRequest("invalid_token".into());
+    let token = req.token.trim().to_string();
+    if token.is_empty() || token.len() > 128 {
+        return Err(invalid());
+    }
+    validate_password(&req.new_password)?;
+
+    let rows: Vec<ResetRow> = sqlx::query_as(
+        "SELECT id, user_id, token_hash FROM password_resets
+         WHERE used_at IS NULL AND expires_at > now()
+         ORDER BY created_at DESC LIMIT $1",
+    )
+    .bind(RESET_VERIFY_CANDIDATES)
+    .fetch_all(&state.pool)
+    .await?;
+    let mut matched: Option<(Uuid, Uuid)> = None;
+    for row in rows {
+        if verify_password_blocking(token.clone(), row.token_hash.clone()).await {
+            matched = Some((row.id, row.user_id));
+            break;
+        }
+    }
+    let Some((reset_id, user_id)) = matched else {
+        return Err(invalid());
+    };
+
+    let hash = hash_password_blocking(req.new_password).await?;
+    let mut tx = state.pool.begin().await?;
+    // Claim the row first (only if still unused) so two concurrent confirms cannot both win.
+    let claimed =
+        sqlx::query("UPDATE password_resets SET used_at = now() WHERE id = $1 AND used_at IS NULL")
+            .bind(reset_id)
+            .execute(&mut *tx)
+            .await?;
+    if claimed.rows_affected() == 0 {
+        return Err(invalid());
+    }
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&hash)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    // Password reset is user-scoped; audit under the user's first org. Best-effort — the
+    // reset already succeeded, so a lookup hiccup must not turn it into an error response.
+    let org_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT org_id FROM memberships WHERE user_id = $1 ORDER BY created_at LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+    if let Some(org_id) = org_id {
+        audit::record(
+            &state.pool,
+            org_id,
+            Some(user_id),
+            "user.password_reset",
+            "user",
+            user_id,
+            json!({}),
+        )
+        .await;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---- helpers -------------------------------------------------------------

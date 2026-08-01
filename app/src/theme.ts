@@ -25,6 +25,21 @@ export const colors = {
 export const spacing = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32 };
 export const radius = { sm: 8, md: 12, lg: 16, xl: 20, pill: 999 };
 
+// Frozen type scale (docs/UX-REVAMP.md §Frozen module contracts). `caption` (12) is the floor
+// for data labels; `maxMult` caps Dynamic Type via maxFontSizeMultiplier — never disable scaling.
+export const type = {
+  caption: 12,
+  body: 14,
+  bodyLg: 16,
+  title: 18,
+  titleLg: 22,
+  hero: 34,
+  maxMult: 1.4,
+} as const;
+
+// Minimum touch targets (pt): primary actions ≥ min, chips ≥ chip (docs/DESIGN.md §Touch targets).
+export const touch = { min: 44, chip: 40 } as const;
+
 // Interaction timing shared by web controls. React Native ignores these web-only declarations;
 // the actual states are applied by InteractivePressable in components/ui.tsx.
 export const motion = { fast: '120ms', normal: '180ms' } as const;

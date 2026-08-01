@@ -33,6 +33,7 @@ pub fn app(state: AppState) -> Router {
         .merge(modules::scenes::router())
         .merge(modules::indices::router())
         .merge(modules::alerts::router())
+        .merge(modules::devices::router())
         .merge(modules::observations::router())
         .merge(modules::reports::router())
         // Phase P — per-plant tier (docs/API-PLANT.md). Plant MVT tiles are NOT feature-gated:

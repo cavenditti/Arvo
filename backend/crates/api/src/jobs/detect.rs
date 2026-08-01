@@ -1,10 +1,13 @@
 //! OWNER: be-alerts — anomaly detection job. Loads each non-archived parcel's NDVI series
 //! (quality-filtered), scans it with `arvo_core::anomaly`, and upserts an `index_drop`
 //! alert per recent event with a per-day dedupe key so re-running is idempotent.
+use std::collections::HashMap;
+
 use arvo_core::anomaly::{self, SeriesPoint, BASELINE_WINDOW_DAYS};
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
+use crate::modules::push;
 use crate::state::AppState;
 
 /// The index the detector watches. NDVI is the canonical vigor proxy for Tier 0.
@@ -64,6 +67,8 @@ pub async fn detect_for_org(state: &AppState, org_id: Uuid) -> anyhow::Result<u3
     .await?;
 
     let mut created = 0u32;
+    // Alerts created THIS run, grouped by (parcel, kind) for the push fan-out below.
+    let mut push_groups: HashMap<(Uuid, &'static str), (String, u32)> = HashMap::new();
     for parcel in parcels {
         // Quality gate: scene-wide cloud filters happen at STAC search time, but per-parcel
         // cloud can still be ~100% — those observations must not feed the detector.
@@ -104,10 +109,40 @@ pub async fn detect_for_org(state: &AppState, org_id: Uuid) -> anyhow::Result<u3
             }
             if upsert_alert(state, org_id, &parcel, &event).await? {
                 created += 1;
+                push_groups
+                    .entry((parcel.id, "index_drop"))
+                    .and_modify(|(_, n)| *n += 1)
+                    .or_insert_with(|| (parcel.name.clone(), 1));
             }
         }
     }
+
+    // ONE push per (parcel, kind) group, spawned AFTER every DB write above has committed
+    // (plain autocommit statements). Detached and best-effort by contract: a slow or
+    // failing Expo call must never delay or fail the detection job — send_to_org logs and
+    // swallows every error itself.
+    // TODO: per-user locale for the copy (Italian-only today) and a weather-advisory push
+    // when modules/weather.rs upserts frost/heat advisories.
+    for ((parcel_id, kind), (parcel_name, count)) in push_groups {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let body = push_body(kind, count);
+            let data = serde_json::json!({ "parcel_id": parcel_id, "kind": kind });
+            push::send_to_org(&state, org_id, &parcel_name, &body, data).await;
+        });
+    }
     Ok(created)
+}
+
+/// Grouped Italian push copy — the same voice as the app's alert grouping
+/// (`alerts_group.*` keys): plain words first, one line, count-aware.
+fn push_body(kind: &str, n: u32) -> String {
+    match (kind, n) {
+        ("index_drop", 1) => "Calo di vigore su una pianta".into(),
+        ("index_drop", n) => format!("Calo di vigore su {n} piante"),
+        (_, 1) => "1 nuovo segnale".into(),
+        (_, n) => format!("{n} nuovi segnali"),
+    }
 }
 
 /// Loop over every org and run detection. KEEP this signature — main.rs CLI
@@ -193,6 +228,16 @@ mod tests {
     fn the_scan_reads_exactly_one_source() {
         assert_eq!(SERIES_SQL.matches("AND source = (SELECT CASE").count(), 1);
         assert!(!SERIES_SQL.contains("source IN ("));
+    }
+
+    /// The push body is the app's grouped-alert voice: vigor phrasing for `index_drop`
+    /// with a correct singular, generic "segnali" for any future kind.
+    #[test]
+    fn push_body_matches_grouped_copy() {
+        assert_eq!(push_body("index_drop", 1), "Calo di vigore su una pianta");
+        assert_eq!(push_body("index_drop", 12), "Calo di vigore su 12 piante");
+        assert_eq!(push_body("frost_risk", 1), "1 nuovo segnale");
+        assert_eq!(push_body("frost_risk", 3), "3 nuovi segnali");
     }
 
     /// Drone rows carry a plant count in `pixel_count`, so the satellite clear-pixel floor
