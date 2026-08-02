@@ -3,203 +3,221 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Arvo — Il campo, più chiaro</title>
+    <title>Arvo — Intelligenza agronomica per la salute delle colture</title>
     <meta
       name="description"
-      content="Arvo riunisce campi, meteo, vigore, sopralluoghi e piante in un quaderno agricolo semplice, costruito per decidere con più contesto."
+      content="Arvo analizza dati satellitari, meteo e rilievi per monitorare la salute delle colture ed evidenziare cambiamenti e anomalie."
     />
-    <meta name="theme-color" content="#173d2b" />
+    <meta name="theme-color" content="#f2f1ec" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://arvo.farm/" />
-    <meta property="og:title" content="Arvo — Il campo, più chiaro" />
+    <meta property="og:title" content="Arvo — Intelligenza agronomica per la salute delle colture" />
     <meta
       property="og:description"
-      content="Osservazioni, meteo e vigore del campo in un unico spazio, anche quando la rete non c'è."
+      content="Dati satellitari, meteo e rilievi per monitorare vigore, disponibilità idrica e anomalie delle colture."
     />
     <link rel="canonical" href="https://arvo.farm/" />
-    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css" />
-    <script src="/script.js" defer></script>
+    <link rel="icon" href="./logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./script.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#contenuto">Vai al contenuto</a>
 
     <header class="site-header" data-header>
-      <a class="brand" href="/" aria-label="Arvo, pagina iniziale">
-        <img src="/logo.svg" alt="" width="38" height="38" />
+      <a class="brand" href="./" aria-label="Arvo, pagina iniziale">
+        <img src="./logo.svg" alt="" width="34" height="34" />
         <span>Arvo</span>
       </a>
       <nav aria-label="Navigazione principale">
-        <a href="#come-funziona">Come funziona</a>
-        <a href="#perche-arvo">Perché Arvo</a>
-        <a class="nav-cta" href="https://app.arvo.farm/register">Inizia</a>
+        <a href="#metodo">Metodo</a>
+        <a href="#prodotto">Prodotto</a>
+        <a href="#dati">Dati</a>
+        <a class="nav-login" href="https://app.arvo.farm/login">Accedi</a>
+        <a class="nav-cta" href="https://app.arvo.farm/register">Crea account</a>
       </nav>
     </header>
 
     <main id="contenuto">
       <section class="hero" aria-labelledby="hero-title">
-        <div class="hero-copy reveal">
-          <p class="eyebrow"><span></span> Il quaderno di campo che guarda avanti</p>
-          <h1 id="hero-title">Il campo,<br /><em>più chiaro.</em></h1>
+        <div class="hero-copy">
+          <p class="kicker">Intelligenza agronomica</p>
+          <h1 id="hero-title">Monitora la salute delle colture con dati satellitari, meteo e rilievi.</h1>
           <p class="hero-lead">
-            Arvo mette insieme ciò che osservi a terra, ciò che vede il satellite e ciò che
-            cambia nel meteo. Così ogni sopralluogo parte con il contesto giusto.
+            Arvo analizza vigore, condizioni meteo e bilancio idrico per evidenziare cambiamenti
+            e anomalie. Ogni segnale resta collegato ai dati che lo hanno prodotto.
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="https://app.arvo.farm/register">
-              Crea il tuo spazio
-              <span aria-hidden="true">↗</span>
+              Crea un account <span aria-hidden="true">↗</span>
             </a>
-            <a class="button button-secondary" href="#come-funziona">Scopri Arvo</a>
+            <a class="text-link" href="#metodo">Vedi come funziona</a>
           </div>
-          <p class="hero-note">Nessuna carta richiesta · Italiano e inglese · Web e iPhone</p>
-        </div>
-
-        <div class="field-frame reveal reveal-late" role="img" aria-label="Anteprima astratta di un campo monitorato">
-          <div class="field-topline">
-            <span>Vigneto Nord</span>
-            <span class="live-pill"><i></i> Aggiornato</span>
-          </div>
-          <div class="field-map" aria-hidden="true">
-            <div class="parcel parcel-a"><span>NDVI<br /><b>0,74</b></span></div>
-            <div class="parcel parcel-b"></div>
-            <div class="parcel parcel-c"></div>
-            <div class="map-rings"></div>
-          </div>
-          <div class="field-readings">
-            <div><small>PIOGGIA 7 GG</small><strong>18,4 mm</strong></div>
-            <div><small>VIGORE</small><strong>Stabile</strong></div>
-            <div><small>PROSSIMO PASSO</small><strong>Sopralluogo</strong></div>
-          </div>
+          <p class="hero-note">Piano gratuito senza scadenza · Nessuna carta di credito</p>
         </div>
       </section>
 
-      <section class="proof-strip" aria-label="Principi del prodotto">
-        <p>Costruito per il campo</p>
-        <span aria-hidden="true">✦</span>
-        <p>Funziona anche offline</p>
-        <span aria-hidden="true">✦</span>
-        <p>I tuoi dati restano tuoi</p>
+      <section class="source-strip" aria-label="Fonti e caratteristiche principali">
+        <ul>
+          <li>Sentinel-2</li>
+          <li>Dati meteo</li>
+          <li>Rilievi offline</li>
+          <li>Dati ospitati nell’Unione Europea</li>
+        </ul>
       </section>
 
-      <section class="steps section" id="come-funziona" aria-labelledby="steps-title">
-        <div class="section-heading reveal">
-          <p class="eyebrow"><span></span> Dal segnale alla decisione</p>
-          <h2 id="steps-title">Meno cruscotto.<br />Più campo.</h2>
+      <section class="method section" id="metodo" aria-labelledby="method-title">
+        <div class="section-heading">
+          <p class="section-index">01 / Metodo</p>
+          <h2 id="method-title">Come funziona l’analisi.</h2>
           <p>
-            Arvo non sostituisce l’esperienza di chi coltiva. La organizza, la collega ai dati e
-            aiuta a capire dove guardare prima.
+            Fonti con frequenze e risoluzioni diverse vengono riunite in una cronologia per
+            coltura e stagione.
           </p>
         </div>
+
         <ol class="step-list">
-          <li class="reveal">
+          <li>
             <span class="step-number">01</span>
             <div>
-              <h3>Disegna i tuoi appezzamenti</h3>
-              <p>Importa o traccia i confini e aggiungi coltura, varietà e stagione.</p>
+              <h3>Raccoglie le fonti</h3>
+              <p>
+                Immagini Sentinel-2, dati meteo, confini, note e fotografie.
+              </p>
             </div>
           </li>
-          <li class="reveal">
+          <li>
             <span class="step-number">02</span>
             <div>
-              <h3>Leggi cosa sta cambiando</h3>
-              <p>Meteo, vigore e anomalie diventano segnali leggibili, non rumore tecnico.</p>
+              <h3>Confronta andamento e storico</h3>
+              <p>
+                Vigore, variabilità interna, bilancio idrico e rischi meteo vengono letti insieme.
+              </p>
             </div>
           </li>
-          <li class="reveal">
+          <li>
             <span class="step-number">03</span>
             <div>
-              <h3>Porta il sopralluogo con te</h3>
-              <p>Note, foto e posizione funzionano offline e si sincronizzano appena torni online.</p>
+              <h3>Evidenzia ciò che cambia</h3>
+              <p>
+                Anomalie e avvisi riportano zona, periodo, origine e qualità del dato.
+              </p>
             </div>
           </li>
         </ol>
       </section>
 
-      <section class="features section" id="perche-arvo" aria-labelledby="features-title">
-        <div class="features-intro reveal">
-          <p class="eyebrow eyebrow-light"><span></span> Un’unica memoria operativa</p>
-          <h2 id="features-title">Tutto ciò che serve.<br />Niente che distragga.</h2>
+      <section class="product section" id="prodotto" aria-labelledby="product-title">
+        <div class="product-intro">
+          <p class="section-index section-index-light">02 / Prodotto</p>
+          <h2 id="product-title">Cosa puoi monitorare.</h2>
+          <p>
+            Una sintesi operativa, con il dettaglio tecnico sempre disponibile.
+          </p>
         </div>
-        <div class="feature-grid">
-          <article class="feature-card feature-wide reveal">
-            <div class="feature-icon" aria-hidden="true">⌁</div>
-            <div>
-              <p class="feature-label">VIGORE & SATELLITE</p>
-              <h3>Vedi le differenze prima che diventino problemi.</h3>
-              <p>Serie storiche e mappe di vigore aiutano a scegliere dove verificare sul campo.</p>
+
+        <div class="feature-ledger">
+          <article class="feature-row">
+            <span class="feature-number">01</span>
+            <div class="feature-copy">
+              <p class="feature-label">Vegetazione</p>
+              <h3>Vigore e sviluppo della coltura.</h3>
             </div>
-            <div class="mini-chart" aria-hidden="true">
-              <svg viewBox="0 0 440 120" preserveAspectRatio="none">
-                <path class="chart-area" d="M0,96 C55,88 70,48 126,58 S210,90 260,48 S355,22 440,34 L440,120 L0,120Z" />
-                <path class="chart-line" d="M0,96 C55,88 70,48 126,58 S210,90 260,48 S355,22 440,34" />
-              </svg>
+            <p class="feature-detail">
+              Serie storiche, mappe di variabilità e indici satellitari, con qualità
+              dell’immagine e copertura nuvolosa.
+            </p>
+          </article>
+
+          <article class="feature-row">
+            <span class="feature-number">02</span>
+            <div class="feature-copy">
+              <p class="feature-label">Meteo e acqua</p>
+              <h3>Pioggia, domanda d’acqua e rischio meteo.</h3>
             </div>
+            <p class="feature-detail">
+              Previsioni, evapotraspirazione, bilancio idrico, rischio gelo e caldo per posizione.
+            </p>
           </article>
 
-          <article class="feature-card reveal">
-            <div class="feature-icon" aria-hidden="true">☂</div>
-            <p class="feature-label">METEO AGRONOMICO</p>
-            <h3>Previsioni con memoria.</h3>
-            <p>Pioggia, gradi giorno, evapotraspirazione e bilancio idrico nello stesso contesto.</p>
+          <article class="feature-row">
+            <span class="feature-number">03</span>
+            <div class="feature-copy">
+              <p class="feature-label">Osservazioni</p>
+              <h3>Rilievi, foto e note geolocalizzate.</h3>
+            </div>
+            <p class="feature-detail">
+              La raccolta funziona offline e si sincronizza automaticamente al ritorno della rete.
+            </p>
           </article>
 
-          <article class="feature-card reveal">
-            <div class="feature-icon" aria-hidden="true">◎</div>
-            <p class="feature-label">SCOUTING OFFLINE</p>
-            <h3>Il quaderno viene con te.</h3>
-            <p>Registra osservazioni e foto anche senza segnale. Arvo sincronizza in seguito.</p>
-          </article>
-
-          <article class="feature-card reveal">
-            <div class="feature-icon" aria-hidden="true">♧</div>
-            <p class="feature-label">PIANTA PER PIANTA</p>
-            <h3>Dalla parcella alla singola pianta.</h3>
-            <p>Quando hai rilievi drone, segui vigore, fallanze e priorità con maggiore precisione.</p>
+          <article class="feature-row">
+            <span class="feature-number">04</span>
+            <div class="feature-copy">
+              <p class="feature-label">Alta risoluzione</p>
+              <h3>Analisi della singola pianta da drone.</h3>
+            </div>
+            <p class="feature-detail">
+              Vigore, fallanze e priorità dove la risoluzione del rilievo lo consente.
+            </p>
           </article>
         </div>
       </section>
 
-      <section class="trust section" aria-labelledby="trust-title">
-        <div class="trust-mark reveal" aria-hidden="true">
-          <span>ARVO</span>
-          <i></i>
-          <small>EUROPEAN DATA</small>
-        </div>
-        <div class="trust-copy reveal">
-          <p class="eyebrow"><span></span> Tecnologia sobria</p>
-          <h2 id="trust-title">Il dato serve la tua azienda. Non il contrario.</h2>
+      <section class="data section" id="dati" aria-labelledby="data-title">
+        <div class="data-copy">
+          <p class="section-index">03 / Dati e responsabilità</p>
+          <h2 id="data-title">Dati aziendali protetti. Analisi verificabili.</h2>
           <p>
-            Hosting europeo, spazi separati per ogni azienda e nessuna vendita dei dati agricoli.
-            Le indicazioni restano supporto alla decisione: l’ultima parola è sempre tua.
+            Arvo non vende dati e non ospita pubblicità. Valori, fonti e qualità delle analisi
+            restano consultabili.
           </p>
-          <ul>
-            <li>Dati isolati per azienda</li>
-            <li>Esportazioni leggibili e portabili</li>
-            <li>Controlli chiari per ruoli e collaboratori</li>
-          </ul>
+          <a class="text-link" href="https://app.arvo.farm/legal/privacy">
+            Leggi l’informativa privacy <span aria-hidden="true">↗</span>
+          </a>
         </div>
+        <dl class="data-list">
+          <div>
+            <dt>01</dt>
+            <dd><strong>Server nell’Unione Europea</strong><span>Infrastrutture e trattamento dei dati in UE.</span></dd>
+          </div>
+          <div>
+            <dt>02</dt>
+            <dd><strong>Accessi controllati</strong><span>Ruoli espliciti e revocabili.</span></dd>
+          </div>
+          <div>
+            <dt>03</dt>
+            <dd><strong>Esportazione disponibile</strong><span>Formati leggibili e aperti.</span></dd>
+          </div>
+          <div>
+            <dt>04</dt>
+            <dd><strong>Supporto alla decisione</strong><span>Analisi e avvisi, non prescrizioni.</span></dd>
+          </div>
+        </dl>
       </section>
 
       <section class="closing section" aria-labelledby="closing-title">
-        <div class="closing-inner reveal">
-          <img src="/logo.svg" alt="" width="72" height="72" />
-          <p class="eyebrow eyebrow-light"><span></span> Inizia dal prossimo campo</p>
-          <h2 id="closing-title">Coltiva con più contesto.</h2>
-          <p>Crea il tuo spazio Arvo e porta il primo appezzamento online in pochi minuti.</p>
-          <a class="button button-paper" href="https://app.arvo.farm/register">
-            Inizia con Arvo <span aria-hidden="true">↗</span>
+        <div>
+          <p class="section-index section-index-light">Primo passo</p>
+          <h2 id="closing-title">Inizia con Arvo.</h2>
+        </div>
+        <div class="closing-action">
+          <p>
+            Crea un account gratuito e configura la tua azienda agricola.
+          </p>
+          <a class="button button-light" href="https://app.arvo.farm/register">
+            Crea un account <span aria-hidden="true">↗</span>
           </a>
         </div>
       </section>
     </main>
 
     <footer>
-      <a class="brand brand-footer" href="/">
-        <img src="/logo.svg" alt="" width="32" height="32" />
+      <a class="brand brand-footer" href="./">
+        <img src="./logo.svg" alt="" width="30" height="30" />
         <span>Arvo</span>
       </a>
-      <p>Un prodotto agricolo digitale, fatto in Italia.</p>
+      <p>Intelligenza agronomica costruita in Italia.</p>
       <div>
         <a href="https://app.arvo.farm/legal/privacy">Privacy</a>
         <a href="https://app.arvo.farm/legal/terms">Termini</a>
