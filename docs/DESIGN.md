@@ -111,9 +111,9 @@ Hard rules:
 ### iOS Liquid Glass
 
 On iOS 26 and later, Arvo layers the field-notebook palette behind the system's native
-Liquid Glass material. The material is implemented only through `GlassSurface` in
-`components/ui.tsx`, which checks the runtime API first and retains the paper treatment on
-older iOS, Android, and web.
+Liquid Glass material. Floating controls use `GlassSurface` in `components/ui.tsx`, which
+checks the runtime API first and retains the paper treatment on older iOS, Android, and web.
+Primary navigation uses Expo Router's `NativeTabs`, leaving tab shape and interaction to UIKit.
 
 - Use glass for floating app chrome (tab bar, circular toolbar controls) and neutral content
   cards. Let the system draw the highlight, border, and refraction; only pass a very restrained
