@@ -65,7 +65,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "typecheck": "tsc --noEmit",
+    "testflight": "./scripts/testflight.sh"
   },
   "private": true
 }

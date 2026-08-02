@@ -14,4 +14,9 @@ The API base URL defaults to `http://localhost:8787`. Testing on a phone, point 
 your machine: set `EXPO_PUBLIC_API_URL=http://<your-LAN-IP>:8787` in `app/.env`.
 
 - `npm run lint` — ESLint (expo config)
-- `npx tsc --noEmit` — typecheck
+- `npm run typecheck` — TypeScript typecheck
+- `npm run testflight` — validate, build the production iOS app, and submit it to TestFlight
+
+The TestFlight command uses the existing remote Apple signing credentials and increments
+the iOS build number automatically. See [TESTFLIGHT.md](./TESTFLIGHT.md) for the persistent
+release configuration, status commands, and known production API caveat.
