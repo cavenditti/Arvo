@@ -33,6 +33,9 @@ export default function AddActionsScreen() {
 
   return (
     <View style={styles.screen}>
+      <Text style={styles.title} maxFontSizeMultiplier={typeScale.maxMult}>
+        {t('menu.add')}
+      </Text>
       {actions.map((action) => (
         <InteractivePressable
           key={action.key}
@@ -57,10 +60,17 @@ export default function AddActionsScreen() {
 
 const styles = StyleSheet.create({
   screen: {
-    flex: 1,
     backgroundColor: colors.bg,
     padding: spacing.md,
     gap: spacing.sm,
+  },
+  title: {
+    color: colors.text,
+    fontFamily: fonts.display,
+    fontSize: typeScale.title,
+    textAlign: 'center',
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
   },
   row: {
     minHeight: 64,

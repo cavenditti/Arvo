@@ -1,6 +1,6 @@
 # Arvo monorepo tasks. Prereqs: docker, rust, node 20+.
 
-.PHONY: db-up db-down migrate api api-imagery ingest seed smoke app app-web \
+.PHONY: db-up db-down migrate api api-lite api-imagery ingest seed smoke app app-web \
         check check-api check-app fmt fmt-check lint test \
         worker worker-once worker-imagery seed-plants odm-pull \
         detect-up detect-build detect-down detect-logs
@@ -20,11 +20,16 @@ migrate: db-up
 	cd backend && cargo run -p arvo-api -- migrate
 
 api: db-up
-	cd backend && cargo run -p arvo-api -- serve
+	$(DOTENV); cd backend && cargo run -p arvo-api --features imagery -- serve
 
-# Serve with real satellite pixel compute + raster tiles/GeoTIFF (needs system GDAL).
+# Lightweight fallback for machines without GDAL. It catalogs satellite scenes but cannot
+# compute vegetation indices, so it is intentionally not the default developer server.
+api-lite: db-up
+	$(DOTENV); cd backend && cargo run -p arvo-api -- serve
+
+# Explicit alias retained for scripts and documentation.
 api-imagery: db-up
-	cd backend && cargo run -p arvo-api --features imagery -- serve
+	$(DOTENV); cd backend && cargo run -p arvo-api --features imagery -- serve
 
 # Refresh STAC scenes and compute NDVI & co. from Sentinel-2 COGs (needs system GDAL).
 ingest: db-up

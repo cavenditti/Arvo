@@ -19,6 +19,7 @@ import type {
   ParcelGeometry,
   WeatherDaily,
 } from '@/api/types';
+import type { CropKey } from '@/features/parcels/crops';
 
 const PARCELS_CACHE_KEY = 'arvo.cache.parcels';
 
@@ -73,6 +74,17 @@ export function useLatestIndices(parcelIds: string[]) {
     queryKey: ['indices', 'latest', ids],
     queryFn: () => api.get<Record<string, LatestIndices>>(`/indices/latest?parcel_ids=${ids}`),
     enabled: parcelIds.length > 0,
+    // A newly-created field starts its first satellite pass in the background. Keep the
+    // dashboard fresh without asking the farmer to repeatedly pull-to-refresh.
+    refetchInterval: (query) => {
+      const latest = query.state.data;
+      if (!latest) return 15_000;
+      const waiting = parcelIds.some((parcelId) => {
+        const indices = latest[parcelId];
+        return !indices || !Object.values(indices).some((point) => point != null);
+      });
+      return waiting ? 15_000 : false;
+    },
   });
 }
 
@@ -83,6 +95,8 @@ export function useIndexSeries(id: string, index: IndexName) {
       `/parcels/${id}/indices?index=${index}`,
     ),
     enabled: !!id,
+    refetchInterval: (query) =>
+      query.state.data?.series.length ? false : 15_000,
   });
 }
 
@@ -264,6 +278,56 @@ export interface ParcelPhotoInput {
   mime: string;
 }
 
+export interface CropDetectionInput {
+  /** local asset from expo-image-picker */
+  uri: string;
+  name: string;
+  mime: string;
+  lang?: string;
+}
+
+export interface CropDetectionResult {
+  crop: CropKey;
+  confidence: number;
+  reason: string;
+}
+
+/** Analyze a local photo without persisting it. The backend holds the AI credential and returns
+ * a constrained crop suggestion; the farmer still confirms or overrides it in the form. */
+async function detectCropFromPhoto(input: CropDetectionInput): Promise<CropDetectionResult> {
+  const form = new FormData();
+  if (Platform.OS === 'web') {
+    const resp = await fetch(input.uri);
+    form.append('file', await resp.blob(), input.name);
+  } else {
+    form.append('file', {
+      uri: input.uri,
+      name: input.name,
+      type: input.mime,
+    } as unknown as Blob);
+  }
+  const token = getAuthToken();
+  const lang = input.lang ? `?lang=${encodeURIComponent(input.lang)}` : '';
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 28_000);
+  try {
+    const res = await fetch(`${API_URL}/api/v1/parcels/crop-detect${lang}`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: form,
+      signal: ctrl.signal,
+    });
+    if (!res.ok) throw new Error(`crop_detect_${res.status}`);
+    return (await res.json()) as CropDetectionResult;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function useDetectCrop() {
+  return useMutation({ mutationFn: detectCropFromPhoto });
+}
+
 /** Upload/replace a parcel cover photo (multipart, like scouting photos). */
 async function uploadParcelPhoto(input: ParcelPhotoInput): Promise<{ path: string }> {
   const form = new FormData();
@@ -311,6 +375,7 @@ export function useRemoveParcelPhoto() {
 }
 
 export interface RefreshImageryResult {
+  started?: boolean;
   scenes_found: number;
   scenes_new: number;
   computed: number;
@@ -319,12 +384,21 @@ export interface RefreshImageryResult {
 export function useRefreshImagery(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.post<RefreshImageryResult>(`/parcels/${id}/imagery/refresh`, {}),
+    mutationFn: () =>
+      api.post<RefreshImageryResult>(`/parcels/${id}/imagery/refresh`, { background: true }),
     // A successful refresh may have computed new observations — the chart, sparkline and
     // latest-stats caches for this parcel are all stale now.
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['indices'] });
       void qc.invalidateQueries({ queryKey: ['scenes', id] });
+      // Background imagery can take longer than the HTTP request budget. Re-check a few times
+      // so fields with existing readings also pick up a fresher pass without manual refreshing.
+      for (const delay of [15_000, 45_000, 90_000]) {
+        setTimeout(() => {
+          void qc.invalidateQueries({ queryKey: ['indices'] });
+          void qc.invalidateQueries({ queryKey: ['scenes', id] });
+        }, delay);
+      }
     },
   });
 }

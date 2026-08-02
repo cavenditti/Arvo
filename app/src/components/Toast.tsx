@@ -6,7 +6,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { colors, fonts, radius, severityTint, spacing, type as typeScale } from '@/theme';
+import {
+  colors,
+  fonts,
+  navigationMetrics,
+  radius,
+  severityTint,
+  spacing,
+  type as typeScale,
+} from '@/theme';
 
 export type ToastKind = 'success' | 'info' | 'error';
 
@@ -39,7 +47,7 @@ const KIND_TINT: Record<ToastKind, { fg: string; bg: string }> = {
 const SHOW_MS = 2500;
 const FADE_MS = 180;
 // Clearance for the tab bar (~56pt) plus a breathing margin, added to the safe-area inset.
-const TAB_BAR_CLEARANCE = 72;
+const TAB_BAR_CLEARANCE = navigationMetrics.barHeight + navigationMetrics.controlGap;
 
 /** Mounted once (root layout). Renders nothing while no toast is active. */
 export function ToastHost(): JSX.Element {

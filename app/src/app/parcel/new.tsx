@@ -2,8 +2,8 @@
 //   1 «Confini»: boundaries via cadastre tap-to-select (FR-0-010b, default), hand drawing,
 //     or GeoJSON file import. Location priming (PrimeCard, never a cold system dialog) plus
 //     an address-search fallback keep the map from dead-ending at zoom-5 Italy.
-//   2 «Informazioni»: name + crop; variety/date/season/photo wait behind an optional-details
-//     disclosure. The farm concept disappears for the common case — with no farm yet, one is
+//   2 «Informazioni»: name + crop + optional AI photo suggestion; variety/date/season wait
+//     behind an optional-details disclosure. The farm concept disappears for the common case — with no farm yet, one is
 //     created silently on save (auto-named after the user).
 // Cadastre multi-select and FeatureCollections bulk-import via POST /parcels/import.
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -42,6 +42,7 @@ import { InteractivePressable, TintCard } from '@/components/ui';
 import {
   CROP_OPTIONS,
   type CropKey,
+  cropLabelKey,
   currentSeasonYear,
   draftParcel,
   isValidDate,
@@ -51,12 +52,14 @@ import {
   useCadastralParcels,
   useCreateFarm,
   useCreateParcelAutoFarm,
+  useDetectCrop,
   useFarms,
   useImportParcelsAutoFarm,
   useParcels,
   useSetParcelPhoto,
 } from '@/features/parcels/hooks';
 import { isAbortError, searchPlaces, type GeocodeResult } from '@/lib/geocode';
+import { cadastralParcelInDirection } from '@/lib/geo';
 import * as haptics from '@/lib/haptics';
 import { colors, fonts, gradients, radius, spacing, touch, type as typeScale } from '@/theme';
 
@@ -101,7 +104,7 @@ function cadastreName(f: CadastralParcel, t: TFn): string {
 }
 
 export default function NewParcelScreen() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const router = useRouter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -114,6 +117,7 @@ export default function NewParcelScreen() {
   const importParcels = useImportParcelsAutoFarm();
   const createFarm = useCreateFarm();
   const setParcelPhoto = useSetParcelPhoto();
+  const detectCrop = useDetectCrop();
 
   const [step, setStep] = useState<Step>('boundary');
   const [source, setSource] = useState<SourceMode>('cadastre');
@@ -128,8 +132,12 @@ export default function NewParcelScreen() {
   } | null>(null);
   const [selectedCad, setSelectedCad] = useState<Record<string, CadastralParcel>>({});
   const [gps, setGps] = useState<[number, number] | null>(null);
+  const [heading, setHeading] = useState<number | null>(null);
+  const [headingAccuracy, setHeadingAccuracy] = useState(0);
+  const [locating, setLocating] = useState(false);
+  const [autoDetectedRef, setAutoDetectedRef] = useState<string | null>(null);
 
-  // Location priming + manual fallback (first field only).
+  // Location priming + manual fallback.
   const [locPrime, setLocPrime] = useState<LocPrime>('unknown');
   const [searchQ, setSearchQ] = useState('');
   const [searchBusy, setSearchBusy] = useState(false);
@@ -145,6 +153,11 @@ export default function NewParcelScreen() {
   const [plantingDate, setPlantingDate] = useState<string | null>(null);
   const [seasonYear, setSeasonYear] = useState(String(currentSeasonYear()));
   const [photo, setPhoto] = useState<LocalPhoto | null>(null);
+  const [cropDetection, setCropDetection] = useState<{
+    crop: CropKey;
+    confidence: number;
+    reason: string;
+  } | null>(null);
 
   const [creatingFarm, setCreatingFarm] = useState(false);
   const [newFarmName, setNewFarmName] = useState('');
@@ -157,6 +170,9 @@ export default function NewParcelScreen() {
   const scrollRef = useRef<ScrollView>(null);
   /** y-offsets of scroll-to targets in the step-2 ScrollView (scroll-to-first-error). */
   const anchors = useRef<Record<string, number>>({});
+  const autoDetectionLocked = useRef(false);
+  const cropDetectionAsset = useRef<string | null>(null);
+  const cropManuallyChosen = useRef(false);
 
   const orgParcels = useMemo(() => parcelsQ.data ?? [], [parcelsQ.data]);
   const farms = farmsQ.data ?? [];
@@ -204,21 +220,45 @@ export default function NewParcelScreen() {
     });
   }, [navigation, t]);
 
-  // --- location priming (first field only) ----------------------------------------------
+  // --- location priming -----------------------------------------------------------------
   // Never fire the cold system dialog on mount: check the current permission silently, show
   // the PrimeCard once, and request only after «Attiva». Denied/unavailable → manual fallback.
 
-  const needsLocation =
-    cadastreActive && parcelsQ.isSuccess && orgParcels.length === 0 && !gps;
+  const needsLocation = cadastreActive && parcelsQ.isSuccess && !gps;
+
+  const applyHeading = useCallback((value: Location.LocationHeadingObject) => {
+    const degrees = value.trueHeading >= 0 ? value.trueHeading : value.magHeading;
+    if (Number.isFinite(degrees)) setHeading(degrees);
+    setHeadingAccuracy(value.accuracy);
+  }, []);
+
+  const readHeading = useCallback(async () => {
+    if (Platform.OS === 'web') return;
+    try {
+      applyHeading(await Location.getHeadingAsync());
+    } catch {
+      setHeading(null);
+      setHeadingAccuracy(0);
+    }
+  }, [applyHeading]);
 
   const locate = useCallback(async () => {
+    setLocating(true);
     try {
-      const pos = await Location.getCurrentPositionAsync({});
+      const quick = await Location.getLastKnownPositionAsync({
+        maxAge: 30_000,
+        requiredAccuracy: 100,
+      });
+      if (quick) setGps([quick.coords.longitude, quick.coords.latitude]);
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       setGps([pos.coords.longitude, pos.coords.latitude]);
+      void readHeading();
     } catch {
       setLocPrime('fallback'); // position unavailable — offer the address search
+    } finally {
+      setLocating(false);
     }
-  }, []);
+  }, [readHeading]);
 
   useEffect(() => {
     if (!needsLocation || locPrime !== 'unknown') return;
@@ -244,6 +284,24 @@ export default function NewParcelScreen() {
       cancelled = true;
     };
   }, [needsLocation, locPrime, locate]);
+
+  // Keep the direction live while the boundary picker is visible. This is foreground-only and
+  // is removed as soon as the screen advances, so the compass is not left running unnecessarily.
+  useEffect(() => {
+    if (!cadastreActive || !gps || Platform.OS === 'web') return;
+    let active = true;
+    let subscription: Location.LocationSubscription | null = null;
+    void Location.watchHeadingAsync(applyHeading)
+      .then((sub) => {
+        if (active) subscription = sub;
+        else sub.remove();
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      subscription?.remove();
+    };
+  }, [applyHeading, cadastreActive, gps]);
 
   async function onAcceptLocation() {
     try {
@@ -303,7 +361,7 @@ export default function NewParcelScreen() {
 
   const mapFocus: [number, number, number] | undefined = searchFocus
     ? [searchFocus[0], searchFocus[1], CADASTRE_MIN_ZOOM + 1]
-    : gps && orgParcels.length === 0
+    : gps
       ? [gps[0], gps[1], CADASTRE_MIN_ZOOM + 1]
       : undefined;
 
@@ -339,6 +397,8 @@ export default function NewParcelScreen() {
 
   const toggleCadastre = useCallback(
     (ref: string) => {
+      autoDetectionLocked.current = true;
+      setAutoDetectedRef(null);
       if (selectedCad[ref]) {
         haptics.selection();
         setSelectedCad((prev) => {
@@ -357,6 +417,42 @@ export default function NewParcelScreen() {
   );
 
   const selectedList = Object.values(selectedCad);
+
+  // Once candidates arrive around the live GPS fix, select the outline under the user or along
+  // the direction the phone is facing. We highlight only: the farmer still confirms the border.
+  useEffect(() => {
+    if (
+      !cadastreActive ||
+      !gps ||
+      !cadQ.data ||
+      Object.keys(selectedCad).length > 0 ||
+      autoDetectionLocked.current
+    ) {
+      return;
+    }
+    const match = cadastralParcelInDirection(
+      cadQ.data.features,
+      gps[0],
+      gps[1],
+      headingAccuracy > 0 ? heading : null,
+    );
+    const ref = match?.properties.cadastral_ref;
+    if (!match || !ref) return;
+    const timer = setTimeout(() => {
+      autoDetectionLocked.current = true;
+      setSelectedCad({ [ref]: match });
+      setAutoDetectedRef(ref);
+      haptics.selection();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [cadQ.data, cadastreActive, gps, heading, headingAccuracy, selectedCad]);
+
+  const retryFacingDetection = useCallback(() => {
+    autoDetectionLocked.current = false;
+    setAutoDetectedRef(null);
+    setSelectedCad({});
+    void readHeading();
+  }, [readHeading]);
 
   /** Turn the current cadastre selection into step 2 (1 parcel) or a bulk import (n). */
   function confirmCadastre() {
@@ -445,12 +541,40 @@ export default function NewParcelScreen() {
 
   // --- cover photo (single, optional) ----------------------------------------------------
 
-  const addPhotoAsset = (a: ImagePicker.ImagePickerAsset) =>
-    setPhoto({
+  const addPhotoAsset = (a: ImagePicker.ImagePickerAsset) => {
+    const asset: LocalPhoto = {
       uri: a.uri,
       name: a.fileName ?? `field_${Date.now()}.jpg`,
       mime: a.mimeType ?? 'image/jpeg',
-    });
+    };
+    setPhoto(asset);
+    setCropDetection(null);
+    cropDetectionAsset.current = asset.uri;
+    detectCrop.mutate(
+      { ...asset, lang: i18n.language },
+      {
+        onSuccess: (result) => {
+          if (cropDetectionAsset.current !== asset.uri) return;
+          setCropDetection(result);
+          if (
+            !cropManuallyChosen.current &&
+            result.crop !== 'other' &&
+            result.confidence >= 0.55
+          ) {
+            setCrop(result.crop);
+            haptics.success();
+          } else {
+            haptics.warning();
+          }
+        },
+        onError: () => {
+          if (cropDetectionAsset.current !== asset.uri) return;
+          setCropDetection(null);
+          showToast({ message: t('parcel.crop_detect_unavailable'), kind: 'info' });
+        },
+      },
+    );
+  };
 
   const photoDeniedToast = () =>
     showToast({
@@ -623,7 +747,11 @@ export default function NewParcelScreen() {
     );
   }
 
-  const busy = createParcel.isPending || importParcels.isPending || setParcelPhoto.isPending;
+  const busy =
+    createParcel.isPending ||
+    importParcels.isPending ||
+    setParcelPhoto.isPending ||
+    detectCrop.isPending;
 
   // One status line drives the whole cadastre panel.
   const cadStatus: { key: string; tone: 'hint' | 'error' } | null = !cadastreActive
@@ -789,6 +917,18 @@ export default function NewParcelScreen() {
             mode="view"
             height={mapH}
             focus={mapFocus}
+            markers={
+              gps
+                ? [
+                    {
+                      id: '__user_location__',
+                      lon: gps[0],
+                      lat: gps[1],
+                      label: t('parcel.current_position'),
+                    },
+                  ]
+                : undefined
+            }
             cadastre={{ features: cadFeatures, selected: Object.keys(selectedCad) }}
             onCadastreTap={toggleCadastre}
             onViewportChange={setViewport}
@@ -810,6 +950,42 @@ export default function NewParcelScreen() {
       {/* one-line cadastre status machine + selection actions */}
       {cadastreActive ? (
         <View style={styles.cadPanel}>
+          {locating ? (
+            <View style={styles.locationAssist}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={styles.locationAssistText} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('parcel.location_finding')}
+              </Text>
+            </View>
+          ) : autoDetectedRef ? (
+            <View style={styles.locationAssist}>
+              <Ionicons name="compass" size={20} color={colors.primary} />
+              <Text style={styles.locationAssistText} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('parcel.facing_detected')}
+              </Text>
+              <InteractivePressable
+                style={styles.locationRetry}
+                accessibilityLabel={t('parcel.facing_retry')}
+                onPress={retryFacingDetection}
+              >
+                <Ionicons name="refresh" size={17} color={colors.primary} />
+              </InteractivePressable>
+            </View>
+          ) : gps && selectedList.length === 0 ? (
+            <View style={styles.locationAssist}>
+              <Ionicons name="navigate" size={20} color={colors.primary} />
+              <Text style={styles.locationAssistText} maxFontSizeMultiplier={typeScale.maxMult}>
+                {headingAccuracy > 0 ? t('parcel.facing_hint') : t('parcel.facing_ready')}
+              </Text>
+              <InteractivePressable
+                style={styles.locationRetry}
+                accessibilityLabel={t('parcel.facing_retry')}
+                onPress={retryFacingDetection}
+              >
+                <Ionicons name="refresh" size={17} color={colors.primary} />
+              </InteractivePressable>
+            </View>
+          ) : null}
           {cadStatus ? (
             <View style={styles.cadStatusRow}>
               {cadQ.isLoading && zoomedEnough ? (
@@ -1064,7 +1240,11 @@ export default function NewParcelScreen() {
                   style={[styles.chip, active && styles.chipActive]}
                   accessibilityLabel={t(c.labelKey)}
                   accessibilityState={{ selected: active }}
-                  onPress={() => setCrop(active ? null : c.value)}
+                  onPress={() => {
+                    cropManuallyChosen.current = true;
+                    setCrop(active ? null : c.value);
+                    setCropDetection(null);
+                  }}
                 >
                   <Ionicons name={c.icon} size={15} color={active ? colors.onPrimary : colors.textMuted} />
                   <Text
@@ -1077,6 +1257,96 @@ export default function NewParcelScreen() {
               );
             })}
           </View>
+        </Field>
+
+        <Field label={t('parcel.crop_photo_title')}>
+          <Text style={styles.hint} maxFontSizeMultiplier={typeScale.maxMult}>
+            {t('parcel.crop_photo_hint')}
+          </Text>
+          {photo ? (
+            <View style={styles.photoRow}>
+              <Image source={{ uri: photo.uri }} style={styles.photoThumb} contentFit="cover" />
+              <View style={styles.photoActions}>
+                {detectCrop.isPending ? (
+                  <View style={styles.detectionRow}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                    <Text style={styles.detectionText} maxFontSizeMultiplier={typeScale.maxMult}>
+                      {t('parcel.crop_detecting')}
+                    </Text>
+                  </View>
+                ) : cropDetection ? (
+                  <View style={styles.detectionResult}>
+                    <View style={styles.detectionRow}>
+                      <Ionicons name="sparkles" size={17} color={colors.primary} />
+                      <Text style={styles.detectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+                        {cropDetection.crop !== 'other' && cropDetection.confidence >= 0.55
+                          ? t('parcel.crop_detected', {
+                              crop: t(cropLabelKey(cropDetection.crop)),
+                            })
+                          : t('parcel.crop_uncertain')}
+                      </Text>
+                    </View>
+                    <Text
+                      style={styles.detectionReason}
+                      maxFontSizeMultiplier={typeScale.maxMult}
+                      numberOfLines={3}
+                    >
+                      {cropDetection.reason}
+                    </Text>
+                  </View>
+                ) : null}
+                <View style={styles.photoButtonRow}>
+                  <InteractivePressable
+                    style={styles.secondaryBtn}
+                    accessibilityLabel={t('parcel.photo_change')}
+                    onPress={() => void pickPhotoFromLibrary()}
+                  >
+                    <Ionicons name="images" size={16} color={colors.primary} />
+                    <Text style={styles.secondaryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                      {t('parcel.photo_change')}
+                    </Text>
+                  </InteractivePressable>
+                  <InteractivePressable
+                    style={styles.iconSecondaryBtn}
+                    accessibilityLabel={t('parcel.photo_remove')}
+                    onPress={() => {
+                      cropDetectionAsset.current = null;
+                      setPhoto(null);
+                      setCropDetection(null);
+                      detectCrop.reset();
+                    }}
+                  >
+                    <Ionicons name="trash" size={17} color={colors.primary} />
+                  </InteractivePressable>
+                </View>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.chips}>
+              {Platform.OS !== 'web' ? (
+                <InteractivePressable
+                  style={[styles.secondaryBtn, styles.photoPrimaryBtn]}
+                  accessibilityLabel={t('parcel.photo_take')}
+                  onPress={() => void pickPhotoFromCamera()}
+                >
+                  <Ionicons name="camera" size={17} color={colors.onPrimary} />
+                  <Text style={styles.photoPrimaryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                    {t('parcel.photo_take')}
+                  </Text>
+                </InteractivePressable>
+              ) : null}
+              <InteractivePressable
+                style={styles.secondaryBtn}
+                accessibilityLabel={t('parcel.photo_pick')}
+                onPress={() => void pickPhotoFromLibrary()}
+              >
+                <Ionicons name="images" size={16} color={colors.primary} />
+                <Text style={styles.secondaryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('parcel.photo_pick')}
+                </Text>
+              </InteractivePressable>
+            </View>
+          )}
         </Field>
 
         {/* everything non-essential waits behind one honest disclosure */}
@@ -1142,60 +1412,6 @@ export default function NewParcelScreen() {
               />
             </Field>
 
-            <Field label={t('parcel.photo')}>
-              {photo ? (
-                <View style={styles.photoRow}>
-                  <Image source={{ uri: photo.uri }} style={styles.photoThumb} contentFit="cover" />
-                  <View style={styles.photoActions}>
-                    <InteractivePressable
-                      style={styles.secondaryBtn}
-                      accessibilityLabel={t('parcel.photo_change')}
-                      onPress={() => void pickPhotoFromLibrary()}
-                    >
-                      <Ionicons name="images" size={16} color={colors.primary} />
-                      <Text style={styles.secondaryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                        {t('parcel.photo_change')}
-                      </Text>
-                    </InteractivePressable>
-                    <InteractivePressable
-                      style={styles.secondaryBtn}
-                      accessibilityLabel={t('parcel.photo_remove')}
-                      onPress={() => setPhoto(null)}
-                    >
-                      <Ionicons name="trash" size={16} color={colors.primary} />
-                      <Text style={styles.secondaryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                        {t('parcel.photo_remove')}
-                      </Text>
-                    </InteractivePressable>
-                  </View>
-                </View>
-              ) : (
-                <View style={styles.chips}>
-                  {Platform.OS !== 'web' ? (
-                    <InteractivePressable
-                      style={styles.secondaryBtn}
-                      accessibilityLabel={t('parcel.photo_take')}
-                      onPress={() => void pickPhotoFromCamera()}
-                    >
-                      <Ionicons name="camera" size={16} color={colors.primary} />
-                      <Text style={styles.secondaryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                        {t('parcel.photo_take')}
-                      </Text>
-                    </InteractivePressable>
-                  ) : null}
-                  <InteractivePressable
-                    style={styles.secondaryBtn}
-                    accessibilityLabel={t('parcel.photo_pick')}
-                    onPress={() => void pickPhotoFromLibrary()}
-                  >
-                    <Ionicons name="images" size={16} color={colors.primary} />
-                    <Text style={styles.secondaryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                      {t('parcel.photo_pick')}
-                    </Text>
-                  </InteractivePressable>
-                </View>
-              )}
-            </Field>
           </View>
         ) : null}
       </ScrollView>
@@ -1412,6 +1628,30 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
   cadPanel: { gap: spacing.sm },
+  locationAssist: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    minHeight: touch.min,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+  },
+  locationAssistText: {
+    flex: 1,
+    color: colors.primary,
+    fontSize: typeScale.body,
+    fontFamily: fonts.bodySemiBold,
+  },
+  locationRetry: {
+    width: touch.min,
+    height: touch.min,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: -spacing.sm,
+    marginRight: -spacing.sm,
+  },
   cadStatusRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   cadCount: { fontSize: typeScale.body, fontFamily: fonts.bodySemiBold, color: colors.text },
   hint: { color: colors.textMuted, fontSize: 13, fontFamily: fonts.body, flexShrink: 1 },
@@ -1483,7 +1723,18 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.card,
   },
-  photoActions: { gap: spacing.sm },
+  photoActions: { flex: 1, gap: spacing.sm },
+  photoButtonRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
+  detectionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  detectionResult: { gap: 3 },
+  detectionTitle: {
+    flex: 1,
+    color: colors.primary,
+    fontSize: typeScale.body,
+    fontFamily: fonts.bodySemiBold,
+  },
+  detectionText: { color: colors.textMuted, fontSize: typeScale.caption, fontFamily: fonts.body },
+  detectionReason: { color: colors.textMuted, fontSize: typeScale.caption, fontFamily: fonts.body },
   primaryBtn: { borderRadius: radius.lg },
   primaryInner: {
     paddingVertical: spacing.md,
@@ -1515,6 +1766,17 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   secondaryTxt: { color: colors.primary, fontFamily: fonts.bodySemiBold, fontSize: typeScale.body },
+  iconSecondaryBtn: {
+    width: touch.min,
+    height: touch.min,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoPrimaryBtn: { backgroundColor: colors.primary },
+  photoPrimaryTxt: { color: colors.onPrimary, fontFamily: fonts.bodySemiBold, fontSize: typeScale.body },
   linkBtn: { alignItems: 'center', justifyContent: 'center', minHeight: touch.min },
   linkTxt: { color: colors.textMuted, fontSize: typeScale.body, fontFamily: fonts.body },
   disabled: { opacity: 0.5 },

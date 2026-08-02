@@ -27,6 +27,6 @@ module.exports = (config) => ({
   // this app group, the widget only reads it. The SAME group must be listed
   // under ios.entitlements in app.json (see docs/IOS-WIDGET.md).
   entitlements: {
-    'com.apple.security.application-groups': ['group.com.arvo.app'],
+    'com.apple.security.application-groups': ['group.farm.arvo.app'],
   },
 });

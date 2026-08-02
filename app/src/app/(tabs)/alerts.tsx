@@ -15,7 +15,15 @@ import type { Alert, AlertState, Parcel } from '@/api/types';
 import AlertList from '@/components/AlertList';
 import { InteractivePressable } from '@/components/ui';
 import { countAlertEvents } from '@/features/insights/grouping';
-import { colors, fonts, radius, spacing, touch, type as typeScale } from '@/theme';
+import {
+  colors,
+  fonts,
+  navigationMetrics,
+  radius,
+  spacing,
+  touch,
+  type as typeScale,
+} from '@/theme';
 
 type Filter = 'open' | 'all';
 type BulkAction = 'ack' | 'snooze' | 'dismiss';
@@ -227,7 +235,12 @@ const styles = StyleSheet.create({
   segHover: { backgroundColor: colors.card },
   segText: { fontFamily: fonts.bodySemiBold, fontSize: typeScale.body, color: colors.textMuted },
   segTextActive: { color: colors.text },
-  content: { padding: spacing.md, paddingTop: 0, gap: spacing.sm },
+  content: {
+    padding: spacing.md,
+    paddingTop: 0,
+    paddingBottom: navigationMetrics.contentBottomInset,
+    gap: spacing.sm,
+  },
   footerNote: {
     fontFamily: fonts.body,
     fontSize: typeScale.caption,

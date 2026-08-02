@@ -37,7 +37,16 @@ import {
   weakestN,
 } from '@/features/plants/ranking';
 import { formatNumber } from '@/lib/format';
-import { colors, fonts, radius, severityTint, spacing, touch, type as typeScale } from '@/theme';
+import {
+  colors,
+  fonts,
+  navigationMetrics,
+  radius,
+  severityTint,
+  spacing,
+  touch,
+  type as typeScale,
+} from '@/theme';
 
 // Rows kept in each floating panel — the full lists live in the parcel/plant screens.
 const PANEL_LIMIT = 8;
@@ -157,7 +166,8 @@ export default function PlantsScreen() {
   // Only claim "no plants" once the summary actually came back — a failed request must not read
   // as an empty planting.
   const noPlants = summaryQ.isSuccess && summary?.total === 0;
-  const panelBottom = insets.bottom + spacing.md;
+  const panelBottom =
+    insets.bottom + navigationMetrics.barHeight + navigationMetrics.controlGap + spacing.md;
   const fabBottom = panelBottom + (panelHeight || PANEL_HEIGHT_ESTIMATE) + spacing.sm;
 
   if (parcelsQ.isLoading) {

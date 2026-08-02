@@ -34,7 +34,15 @@ import {
   usePushRegistration,
 } from '@/notifications/push';
 import { usePushPrefs } from '@/notifications/prefs';
-import { colors, fonts, radius, spacing, touch, type as typeScale } from '@/theme';
+import {
+  colors,
+  fonts,
+  navigationMetrics,
+  radius,
+  spacing,
+  touch,
+  type as typeScale,
+} from '@/theme';
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -452,7 +460,11 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: spacing.md, gap: spacing.md },
+  content: {
+    padding: spacing.md,
+    paddingBottom: navigationMetrics.contentBottomInset,
+    gap: spacing.md,
+  },
   pageTitle: {
     color: colors.text,
     fontFamily: fonts.display,

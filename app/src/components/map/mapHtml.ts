@@ -249,8 +249,13 @@ export const mapHtml = `<!DOCTYPE html>
       } catch (err) {}
     });
     (p.markers || []).forEach(function(m){
+      var isUserLocation = m.id === '__user_location__';
       var cm = L.circleMarker([m.lat, m.lon], {
-        radius: 6, color: '#FBFAF7', weight: 2, fillColor: '#A5432B', fillOpacity: 1
+        radius: isUserLocation ? 7 : 6,
+        color: '#FBFAF7',
+        weight: isUserLocation ? 3 : 2,
+        fillColor: isUserLocation ? '#0A84FF' : '#A5432B',
+        fillOpacity: 1
       });
       if (m.label) cm.bindTooltip(esc(m.label));
       cm.addTo(markerLayer);

@@ -20,7 +20,7 @@ Status of this scaffold (UX-revamp run, 2026-08-01):
 
 The app writes; the widget only reads.
 
-- Store: `UserDefaults(suiteName: "group.com.arvo.app")`
+- Store: `UserDefaults(suiteName: "group.farm.arvo.app")`
 - Key: `widget.snapshot`
 - Value: JSON **string**:
 
@@ -76,7 +76,7 @@ Add to the existing `expo.ios` object:
 
 ```json
 "entitlements": {
-  "com.apple.security.application-groups": ["group.com.arvo.app"]
+  "com.apple.security.application-groups": ["group.farm.arvo.app"]
 }
 ```
 
@@ -86,7 +86,7 @@ Notes:
   `app/targets/widget/expo-target.config.js` — already committed, nothing to add there.
 - Newer Expo SDKs also accept `"appleTeamId"` directly under `expo.ios`; the plugin reads
   either. Pick one place.
-- The widget's bundle id is derived: `com.arvo.app.ArvoWidget`.
+- The widget's bundle id is derived: `farm.arvo.app.ArvoWidget`.
 
 ## 3. Prebuild & run locally
 
@@ -116,10 +116,10 @@ placeholder state — that is expected.
 - EAS CNG runs `prebuild` server-side; `app/targets/` is committed, so nothing extra to
   upload.
 - Credentials: recent `eas-cli` detects the extra target and provisions
-  `com.arvo.app.ArvoWidget` alongside `com.arvo.app`, including the app-group capability
+  `farm.arvo.app.ArvoWidget` alongside `farm.arvo.app`, including the app-group capability
   (it reads both entitlement sets). When prompted about a second target, accept. If you
   manage credentials manually instead, both App IDs need the App Groups capability with
-  `group.com.arvo.app` enabled in the Apple Developer portal.
+  `group.farm.arvo.app` enabled in the Apple Developer portal.
 - First store build: verify `PrivacyInfo.xcprivacy` is included as a resource of the
   ArvoWidget target (the plugin links files in the target directory; double-check
   membership in Xcode once, see §6).
@@ -164,7 +164,7 @@ public class WidgetBridgeModule: Module {
     // Stores the snapshot JSON string in the shared app group and asks
     // WidgetKit to re-render. Fire-and-forget from JS.
     Function("setSnapshot") { (json: String) in
-      guard let defaults = UserDefaults(suiteName: "group.com.arvo.app") else { return }
+      guard let defaults = UserDefaults(suiteName: "group.farm.arvo.app") else { return }
       defaults.set(json, forKey: "widget.snapshot")
       WidgetCenter.shared.reloadAllTimelines()
     }
@@ -235,7 +235,7 @@ Swift, but (a) it needs a `package.json` change, (b) it does not call
    regenerates `ios/`.
 
    ```swift
-   if let defaults = UserDefaults(suiteName: "group.com.arvo.app") {
+   if let defaults = UserDefaults(suiteName: "group.farm.arvo.app") {
      defaults.set(
        #"{"updatedAt":"2026-08-01T12:30:00Z","fields":[{"name":"Vigneto Nord","score":48,"level":"attention"},{"name":"Uliveto Vecchio","score":71,"level":"watch"},{"name":"Orto 3","score":86,"level":"ok"}]}"#,
        forKey: "widget.snapshot")

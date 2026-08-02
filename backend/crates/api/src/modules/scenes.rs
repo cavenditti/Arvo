@@ -1,6 +1,7 @@
 //! Satellite scene catalog endpoints (docs/API.md §Imagery — scenes):
 //! POST /parcels/{id}/imagery/refresh, GET /parcels/{id}/scenes.
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
@@ -22,6 +23,8 @@ pub fn router() -> Router<AppState> {
 #[derive(Deserialize, Default)]
 struct RefreshBody {
     days: Option<i64>,
+    #[serde(default)]
+    background: bool,
 }
 
 /// POST /parcels/{id}/imagery/refresh — search STAC, upsert scenes, (feature) compute indices.
@@ -30,7 +33,7 @@ async fn refresh(
     user: AuthUser,
     Path(id): Path<Uuid>,
     body: Option<Json<RefreshBody>>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require(Role::Operator)?;
     // Parcel must belong to the caller's org (cross-tenant → 404). Also yields the geometry.
     let geometry: String = sqlx::query_scalar(
@@ -45,10 +48,57 @@ async fn refresh(
 
     // Clamp: chrono::Duration::days panics far out of range, huge windows are pointless
     // (STAC pagination caps out anyway), and negative values are meaningless.
+    let body = body.map(|body| body.0).unwrap_or_default();
     let days = body
-        .and_then(|b| b.0.days)
+        .days
         .unwrap_or(imagery::DEFAULT_REFRESH_DAYS)
         .clamp(1, 366);
+    if body.background {
+        let org_id = user.org_id;
+        let user_id = user.user_id;
+        tokio::spawn(async move {
+            match imagery::refresh_scenes(&state, id, &geometry, days).await {
+                Ok(outcome) => {
+                    audit::record(
+                        &state.pool,
+                        org_id,
+                        Some(user_id),
+                        "imagery.refresh",
+                        "parcel",
+                        id,
+                        json!({
+                            "found": outcome.found,
+                            "new": outcome.new,
+                            "computed": outcome.computed,
+                            "background": true,
+                        }),
+                    )
+                    .await;
+                    tracing::info!(
+                        parcel = %id,
+                        found = outcome.found,
+                        new = outcome.new,
+                        computed = outcome.computed,
+                        "background imagery refresh complete"
+                    );
+                }
+                Err(error) => tracing::warn!(
+                    parcel = %id,
+                    error = ?error,
+                    "background imagery refresh failed"
+                ),
+            }
+        });
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(json!({
+                "started": true,
+                "scenes_found": 0,
+                "scenes_new": 0,
+                "computed": 0,
+            })),
+        ));
+    }
     let outcome = imagery::refresh_scenes(&state, id, &geometry, days)
         .await
         .map_err(|e| {
@@ -70,11 +120,14 @@ async fn refresh(
     )
     .await;
 
-    Ok(Json(json!({
-        "scenes_found": outcome.found,
-        "scenes_new": outcome.new,
-        "computed": outcome.computed,
-    })))
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "scenes_found": outcome.found,
+            "scenes_new": outcome.new,
+            "computed": outcome.computed,
+        })),
+    ))
 }
 
 #[derive(Deserialize)]

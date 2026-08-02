@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, NaiveDate, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -18,10 +18,20 @@ use crate::state::AppState;
 use crate::util::{read_image_field, require_len};
 
 const MAX_IMPORT_FEATURES: usize = 1000;
+const OPENROUTER_CHAT_COMPLETIONS_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_DEFAULT_MODEL: &str = "openai/gpt-5.6-sol";
+const OPENROUTER_TIMEOUT_SECS: u64 = 25;
+const CROP_KEYS: [&str; 6] = ["vine", "olive", "tomato", "wheat", "maize", "other"];
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/parcels", get(list).post(create))
+        .route(
+            "/parcels/crop-detect",
+            post(detect_crop)
+                .layer(DefaultBodyLimit::max(12 * 1024 * 1024))
+                .layer(axum::middleware::from_fn(crate::ratelimit::auth_rate_limit)),
+        )
         .route("/parcels/import", post(import))
         .route("/parcels/export.geojson", get(export))
         .route("/parcels/{id}", get(get_one).patch(update).delete(archive))
@@ -312,7 +322,195 @@ async fn create(
         json!({ "name": row.name, "farm_id": row.farm_id, "area_ha": row.area_ha }),
     )
     .await;
+    start_first_imagery_refresh(st.clone(), row.id, row.geometry_json.clone());
     Ok((StatusCode::CREATED, Json(row.to_json()?)))
+}
+
+/// Start the first satellite pass as soon as a field exists. On a lightweight build this still
+/// catalogs scenes; the normal local server is an imagery build and also computes the indices.
+/// Onboarding must never fail because an external imagery provider is slow or unavailable.
+fn start_first_imagery_refresh(st: AppState, parcel_id: Uuid, geometry_json: String) {
+    tokio::spawn(async move {
+        match crate::imagery::refresh_scenes(
+            &st,
+            parcel_id,
+            &geometry_json,
+            crate::imagery::DEFAULT_REFRESH_DAYS,
+        )
+        .await
+        {
+            Ok(outcome) => tracing::info!(
+                parcel = %parcel_id,
+                found = outcome.found,
+                new = outcome.new,
+                computed = outcome.computed,
+                "initial parcel imagery refresh complete"
+            ),
+            Err(error) => tracing::warn!(
+                parcel = %parcel_id,
+                error = ?error,
+                "initial parcel imagery refresh failed; manual retry remains available"
+            ),
+        }
+    });
+}
+
+#[derive(Deserialize, Default)]
+struct DetectCropQuery {
+    lang: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct CropDetection {
+    crop: String,
+    confidence: f64,
+    reason: String,
+}
+
+/// POST /parcels/crop-detect?lang=it|en — analyze one field photo without persisting it.
+/// The API key remains server-side. The caller treats the answer as a suggestion and the farmer
+/// always confirms or overrides it before the parcel is created.
+async fn detect_crop(
+    State(st): State<AppState>,
+    user: AuthUser,
+    Query(q): Query<DetectCropQuery>,
+    mut multipart: Multipart,
+) -> ApiResult<Json<CropDetection>> {
+    user.require(Role::Operator)?;
+    let api_key = std::env::var("OPENROUTER_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| {
+            ApiError::Upstream("crop recognition is not configured on this server".into())
+        })?;
+    let model = std::env::var("OPENROUTER_MODEL")
+        .ok()
+        .filter(|model| !model.trim().is_empty())
+        .unwrap_or_else(|| OPENROUTER_DEFAULT_MODEL.into());
+    let lang = crate::util::resolve_lang(&st, user.user_id, q.lang).await;
+    let answer_language = match lang {
+        crate::util::Lang::It => "Italian",
+        crate::util::Lang::En => "English",
+    };
+    let (bytes, ext) = read_image_field(&mut multipart).await?;
+    let mime = if ext == "png" {
+        "image/png"
+    } else {
+        "image/jpeg"
+    };
+    let image_url = format!("data:{mime};base64,{}", encode_base64(&bytes));
+
+    let prompt = format!(
+        "Identify the main cultivated crop visible in this agricultural field photo. \
+         Choose exactly one crop key from vine, olive, tomato, wheat, maize, other. \
+         Use other when the photo is unclear, contains no crop, or shows a crop outside the list. \
+         Confidence must reflect visual certainty, not plausibility. Give one short reason in \
+         {answer_language}. This is only a suggestion for the farmer to confirm."
+    );
+    let payload = json!({
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": prompt },
+                { "type": "image_url", "image_url": { "url": image_url } }
+            ]
+        }],
+        // Do not silently route to a provider that ignores the schema: a failed suggestion is
+        // safer than presenting an unconstrained crop classification to the farmer.
+        "provider": { "require_parameters": true },
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "crop_detection",
+                "strict": true,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "crop": { "type": "string", "enum": CROP_KEYS },
+                        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+                        "reason": { "type": "string" }
+                    },
+                    "required": ["crop", "confidence", "reason"],
+                    "additionalProperties": false
+                }
+            }
+        }
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(OPENROUTER_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| ApiError::Internal(e.into()))?;
+    let response = client
+        .post(OPENROUTER_CHAT_COMPLETIONS_URL)
+        .bearer_auth(api_key)
+        .header("HTTP-Referer", "https://arvo.local")
+        .header("X-OpenRouter-Title", "Arvo")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = ?error, "crop recognition request failed");
+            ApiError::Upstream("crop recognition is temporarily unavailable".into())
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        tracing::warn!(%status, "crop recognition provider rejected the request");
+        return Err(ApiError::Upstream(
+            "crop recognition is temporarily unavailable".into(),
+        ));
+    }
+    let response_json: Value = response.json().await.map_err(|error| {
+        tracing::warn!(error = ?error, "crop recognition response was not JSON");
+        ApiError::Upstream("crop recognition returned an invalid response".into())
+    })?;
+    let output_text = response_output_text(&response_json)
+        .ok_or_else(|| ApiError::Upstream("crop recognition returned no classification".into()))?;
+    let mut detection: CropDetection = serde_json::from_str(output_text).map_err(|error| {
+        tracing::warn!(error = ?error, "crop recognition output did not match its schema");
+        ApiError::Upstream("crop recognition returned an invalid classification".into())
+    })?;
+    if !CROP_KEYS.contains(&detection.crop.as_str()) {
+        detection.crop = "other".into();
+        detection.confidence = 0.0;
+    }
+    detection.confidence = detection.confidence.clamp(0.0, 1.0);
+    Ok(Json(detection))
+}
+
+fn response_output_text(response: &Value) -> Option<&str> {
+    response
+        .get("choices")?
+        .as_array()?
+        .first()?
+        .get("message")?
+        .get("content")?
+        .as_str()
+}
+
+/// Small local encoder avoids introducing a crate solely for one authenticated upstream call.
+fn encode_base64(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let a = chunk[0];
+        let b = *chunk.get(1).unwrap_or(&0);
+        let c = *chunk.get(2).unwrap_or(&0);
+        out.push(TABLE[(a >> 2) as usize] as char);
+        out.push(TABLE[(((a & 0x03) << 4) | (b >> 4)) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[(((b & 0x0f) << 2) | (c >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[(c & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 async fn get_one(
@@ -485,7 +683,7 @@ async fn import(
     // All-or-nothing: a DB failure mid-import must not leave a partial batch behind
     // (a client retry would then duplicate the committed half).
     let mut created: Vec<Value> = Vec::new();
-    let mut created_meta: Vec<(Uuid, String)> = Vec::new();
+    let mut created_meta: Vec<(Uuid, String, String)> = Vec::new();
     let mut skipped: usize = 0;
     let mut tx = st.pool.begin().await?;
     for (i, feature) in features.iter().enumerate() {
@@ -542,11 +740,11 @@ async fn import(
             cadastral_ref,
         )
         .await?;
-        created_meta.push((row.id, row.name.clone()));
+        created_meta.push((row.id, row.name.clone(), row.geometry_json.clone()));
         created.push(row.to_json()?);
     }
     tx.commit().await?;
-    for (id, name) in created_meta {
+    for (id, name, geometry_json) in created_meta {
         audit::record(
             &st.pool,
             user.org_id,
@@ -557,6 +755,7 @@ async fn import(
             json!({ "name": name, "farm_id": body.farm_id, "source": "import" }),
         )
         .await;
+        start_first_imagery_refresh(st.clone(), id, geometry_json);
     }
     Ok((
         StatusCode::CREATED,
@@ -722,4 +921,34 @@ async fn export(
     Ok(Json(
         json!({ "type": "FeatureCollection", "features": features }),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_encoder_handles_padding() {
+        assert_eq!(encode_base64(b""), "");
+        assert_eq!(encode_base64(b"f"), "Zg==");
+        assert_eq!(encode_base64(b"fo"), "Zm8=");
+        assert_eq!(encode_base64(b"foo"), "Zm9v");
+        assert_eq!(encode_base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn extracts_structured_response_text() {
+        let response = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "{\"crop\":\"olive\",\"confidence\":0.91,\"reason\":\"Rows of olive trees\"}"
+                }
+            }]
+        });
+        assert_eq!(
+            response_output_text(&response),
+            Some("{\"crop\":\"olive\",\"confidence\":0.91,\"reason\":\"Rows of olive trees\"}")
+        );
+    }
 }

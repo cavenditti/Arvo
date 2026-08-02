@@ -6,7 +6,7 @@ import SwiftUI
 // The host app writes a JSON snapshot to the shared app group; the widget only
 // reads it. Contract (see docs/IOS-WIDGET.md):
 //
-//   UserDefaults(suiteName: "group.com.arvo.app"), key "widget.snapshot"
+//   UserDefaults(suiteName: "group.farm.arvo.app"), key "widget.snapshot"
 //   {
 //     "updatedAt": "2026-08-01T12:30:00.000Z",
 //     "fields": [
@@ -101,7 +101,7 @@ struct WidgetSnapshot: Decodable {
 }
 
 enum SnapshotStore {
-    static let appGroup = "group.com.arvo.app"
+    static let appGroup = "group.farm.arvo.app"
     static let key = "widget.snapshot"
 
     /// Reads the snapshot from the shared app group. Tolerates the value being

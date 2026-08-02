@@ -24,6 +24,7 @@ import {
   colors,
   fonts,
   gradients,
+  navigationMetrics,
   radius,
   severityGradient,
   spacing,
@@ -669,7 +670,11 @@ const styles = StyleSheet.create({
 
   // body
   body: { flex: 1, zIndex: 0 },
-  content: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xl },
+  content: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: navigationMetrics.contentBottomInset,
+  },
   cardRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
 
   // forecast strip

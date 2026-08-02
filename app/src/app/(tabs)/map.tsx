@@ -1,7 +1,7 @@
 // OWNER: map-native — Mappa tab: every field on Leaflet (OSM or satellite base), colored by the
 // Arvo score or one chosen index, floating search with an explicit results list, bottom selection
 // card driven by the shared status pipeline, labeled "Nuovo campo" pill.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -13,6 +13,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
+import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,6 +23,7 @@ import { INDEX_NAMES, type Alert, type IndexName } from '@/api/types';
 import MapView from '@/components/MapView';
 import NativeSheet from '@/components/NativeSheet';
 import { StaleBanner, useOnlineStatus } from '@/components/StaleBanner';
+import { showToast } from '@/components/Toast';
 import type { ParcelFeature } from '@/components/types';
 import { GlassSurface, InteractivePressable, MonoLabel, MonoValue, StatusChip, TintCard } from '@/components/ui';
 import {
@@ -40,6 +42,7 @@ import {
   colors,
   fonts,
   gradients,
+  navigationMetrics,
   radius,
   spacing,
   touch,
@@ -55,9 +58,6 @@ const LEGEND: { color: string; label: string | null }[] = [
   { color: ndviColor(0.8), label: '≥ 0.65' },
   { color: NEUTRAL_FILL, label: null },
 ];
-
-// Absolute map controls do not receive NativeTabs' automatic scroll insets.
-const TAB_BAR_CLEARANCE = 72;
 
 // What paints the fields: the Arvo score (default), nothing (boundaries only — the natural
 // companion of the satellite basemap), or one of the five indices.
@@ -79,6 +79,10 @@ export default function MapScreen() {
   const [basemap, setBasemap] = useState<'map' | 'sat'>('map');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focus, setFocus] = useState<[number, number, number?] | undefined>(undefined);
+  const [userLocation, setUserLocation] = useState<{ lon: number; lat: number } | null>(null);
+  const [locating, setLocating] = useState(false);
+  // Make repeated taps issue a new camera command even if GPS returns identical coordinates.
+  const locationFocusVariant = useRef(false);
   // Quiet "map unavailable offline" pill: set on the doc's debounced tileerror while offline,
   // hidden by the render condition (`&& !online`) as soon as the connection returns.
   const [tilesOffline, setTilesOffline] = useState(false);
@@ -140,6 +144,41 @@ export default function MapScreen() {
     setFocus([lon, lat, 15]);
   };
 
+  const recenterToUser = async () => {
+    if (locating) return;
+    setLocating(true);
+    try {
+      let permission = await Location.getForegroundPermissionsAsync();
+      if (!permission.granted && permission.canAskAgain) {
+        permission = await Location.requestForegroundPermissionsAsync();
+      }
+      if (!permission.granted) {
+        showToast({ kind: 'error', message: t('map.location_denied') });
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const next = {
+        lon: position.coords.longitude,
+        lat: position.coords.latitude,
+      };
+      locationFocusVariant.current = !locationFocusVariant.current;
+      setUserLocation(next);
+      setSelectedId(null);
+      setFocus([
+        next.lon,
+        next.lat,
+        locationFocusVariant.current ? 16 : 16.001,
+      ]);
+    } catch {
+      showToast({ kind: 'error', message: t('map.location_unavailable') });
+    } finally {
+      setLocating(false);
+    }
+  };
+
   const selected = selectedId ? (parcels.find((p) => p.id === selectedId) ?? null) : null;
 
   // Selection-card verdict comes from the shared status pipeline ONLY (status.ts): score and
@@ -177,6 +216,7 @@ export default function MapScreen() {
       : (selectedDetail?.score ?? null)
     : null;
   const selectedIsIndex = choropleth !== 'score' && choropleth !== 'none';
+  const selectedDataPending = selected != null && selectedDetail?.score == null;
 
   const viewOptions: { key: MapChoropleth; label: string }[] = useMemo(
     () => [
@@ -205,6 +245,10 @@ export default function MapScreen() {
   const mapReady = !parcelsQ.isLoading && !parcelsQ.isError;
   const showResults = query.trim().length > 0;
   const newFieldLabel = t('map.new_field', { defaultValue: 'Nuovo campo' });
+  const bottomOverlayOffset =
+    Math.max(insets.bottom, spacing.sm) +
+    navigationMetrics.barHeight +
+    navigationMetrics.controlGap;
 
   return (
     <View style={styles.root}>
@@ -228,6 +272,18 @@ export default function MapScreen() {
           parcels={features}
           mode="view"
           focus={focus}
+          markers={
+            userLocation
+              ? [
+                  {
+                    id: '__user_location__',
+                    lon: userLocation.lon,
+                    lat: userLocation.lat,
+                    label: t('map.my_position'),
+                  },
+                ]
+              : undefined
+          }
           basemap={basemap}
           onSelectParcel={(id) => setSelectedId(id)}
           onTileError={() => {
@@ -259,8 +315,8 @@ export default function MapScreen() {
 
       {parcels.length > 0 && choropleth !== 'none' && !selected ? (
         <GlassSurface
-          style={[styles.legend, { bottom: insets.bottom + TAB_BAR_CLEARANCE }]}
-          fallbackStyle={[styles.legend, { bottom: insets.bottom + TAB_BAR_CLEARANCE }]}
+          style={[styles.legend, { bottom: bottomOverlayOffset }]}
+          fallbackStyle={[styles.legend, { bottom: bottomOverlayOffset }]}
           pointerEvents="none"
         >
           <Text style={styles.legendTitle} maxFontSizeMultiplier={typeScale.maxMult}>
@@ -324,8 +380,8 @@ export default function MapScreen() {
 
       {selected ? (
         <GlassSurface
-          style={[styles.selCard, { bottom: insets.bottom + TAB_BAR_CLEARANCE }]}
-          fallbackStyle={[styles.selCard, { bottom: insets.bottom + TAB_BAR_CLEARANCE }]}
+          style={[styles.selCard, { bottom: bottomOverlayOffset }]}
+          fallbackStyle={[styles.selCard, { bottom: bottomOverlayOffset }]}
         >
           <View style={styles.selRow}>
             <View
@@ -339,28 +395,37 @@ export default function MapScreen() {
               ]}
             >
               <Text style={styles.scoreBadgeValue} maxFontSizeMultiplier={typeScale.maxMult}>
-                {selectedMean == null
-                  ? '—'
-                  : selectedIsIndex
-                  ? selectedMean.toFixed(2)
-                  : Math.round(selectedMean)}
+                {selectedDataPending
+                  ? ''
+                  : selectedMean == null
+                    ? '—'
+                    : selectedIsIndex
+                      ? selectedMean.toFixed(2)
+                      : Math.round(selectedMean)}
               </Text>
+              {selectedDataPending ? (
+                <ActivityIndicator size="small" color={colors.onPrimary} />
+              ) : null}
             </View>
             <View style={styles.selInfo}>
               <Text style={styles.selName} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
                 {selected.name}
               </Text>
               <Text style={styles.selMeta} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
-                {[
-                  cropLabel(selected.crop),
-                  selected.area_ha != null ? formatHectares(selected.area_ha) : null,
-                  fieldStatus?.partial ? t('status.partial') : null,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
+                {selectedDataPending
+                  ? t('parcel.data_processing_short')
+                  : [
+                      cropLabel(selected.crop),
+                      selected.area_ha != null ? formatHectares(selected.area_ha) : null,
+                      fieldStatus?.partial ? t('status.partial') : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
               </Text>
             </View>
-            {fieldStatus ? <StatusChip status={chipStatus} label={t(fieldStatus.chipKey)} /> : null}
+            {fieldStatus && !selectedDataPending ? (
+              <StatusChip status={chipStatus} label={t(fieldStatus.chipKey)} />
+            ) : null}
             <InteractivePressable
               onPress={() => setSelectedId(null)}
               hitSlop={10}
@@ -473,6 +538,33 @@ export default function MapScreen() {
             ) : null}
           </View>
         </View>
+      ) : null}
+
+      {mapReady && !showResults ? (
+        <GlassSurface
+          style={[
+            styles.locationSurface,
+            { top: insets.top + spacing.sm + touch.min + spacing.sm },
+          ]}
+          fallbackStyle={styles.locationSurfaceFallback}
+          isInteractive
+        >
+          <InteractivePressable
+            haptic
+            disabled={locating}
+            onPress={() => void recenterToUser()}
+            accessibilityLabel={t('map.my_position')}
+            accessibilityState={{ busy: locating }}
+            style={styles.locationButton}
+            pressedStyle={styles.locationButtonPressed}
+          >
+            {locating ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Ionicons name="locate" size={22} color={colors.primary} />
+            )}
+          </InteractivePressable>
+        </GlassSurface>
       ) : null}
 
       <NativeSheet
@@ -616,6 +708,32 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   topChipHover: { backgroundColor: colors.cardAlt, borderColor: colors.primary },
+  locationSurface: {
+    position: 'absolute',
+    right: spacing.md,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    overflow: 'hidden',
+  },
+  locationSurfaceFallback: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  locationButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  locationButtonPressed: { transform: [{ scale: 0.92 }] },
   results: {
     backgroundColor: colors.card,
     borderRadius: radius.md,

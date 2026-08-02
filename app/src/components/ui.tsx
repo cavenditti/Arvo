@@ -2,6 +2,7 @@
 // screens. Theme tokens only; no fontWeight next to Terra families — weights are families.
 import { LinearGradient } from 'expo-linear-gradient';
 import {
+  GlassContainer,
   GlassView,
   isGlassEffectAPIAvailable,
   isLiquidGlassAvailable,
@@ -55,6 +56,20 @@ const nativeLiquidGlass = (() => {
 
 export function hasNativeLiquidGlass(): boolean {
   return nativeLiquidGlass;
+}
+
+type GlassGroupProps = ViewProps & {
+  /** Distance at which sibling glass shapes begin to influence and merge with each other. */
+  glassSpacing?: number;
+};
+
+/**
+ * Coordinates adjacent native glass shapes so refraction and shape interaction are computed as
+ * one system effect. Unsupported platforms receive an ordinary layout View.
+ */
+export function GlassGroup({ glassSpacing, ...props }: GlassGroupProps) {
+  if (!nativeLiquidGlass) return <View {...props} />;
+  return <GlassContainer {...props} spacing={glassSpacing} />;
 }
 
 type GlassSurfaceProps = Omit<ViewProps, 'children' | 'style'> & {

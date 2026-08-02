@@ -7,7 +7,15 @@ import { differenceInCalendarDays, isToday, isValid, isYesterday, parseISO } fro
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { api } from '@/api/client';
@@ -32,6 +40,7 @@ import {
   touch,
   type as typeScale,
   type Status,
+  navigationMetrics,
 } from '@/theme';
 
 type Me = { user: User; org: Org; role: Role };
@@ -157,11 +166,14 @@ export default function Dashboard() {
 
       {allPending ? (
         <TintCard gradient={gradients.eucalyptus} style={styles.firstValue}>
-          <Text style={styles.firstValueTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('onboarding.first_value_title')}
-          </Text>
+          <View style={styles.processingTitleRow}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={styles.firstValueTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('parcel.data_processing_title')}
+            </Text>
+          </View>
           <Text style={styles.firstValueBody} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('onboarding.first_value_body')}
+            {t('parcel.data_processing_body')}
           </Text>
         </TintCard>
       ) : null}
@@ -309,6 +321,7 @@ function ParcelRow({
     (data?.series ?? []).map((p) => ({ date: p.observed_at, value: p.mean })),
   );
   const { score, coverage } = arvoScoreDetail(latest);
+  const dataPending = score == null;
   const fs = deriveFieldStatus({ score, trend, openAlertEvents, coverage });
   const chipStatus: Status = fs.level === 'ok' ? 'healthy' : fs.level;
   const chipLabel = t(fs.chipKey);
@@ -350,9 +363,13 @@ function ParcelRow({
     >
       <Card style={styles.row}>
         <View style={[styles.scoreBadge, { backgroundColor: scoreColor(score) }]}>
-          <Text style={styles.scoreValue} maxFontSizeMultiplier={typeScale.maxMult}>
-            {score ?? '—'}
-          </Text>
+          {dataPending ? (
+            <Ionicons name="cloud-download-outline" size={20} color={colors.onPrimary} />
+          ) : (
+            <Text style={styles.scoreValue} maxFontSizeMultiplier={typeScale.maxMult}>
+              {score}
+            </Text>
+          )}
         </View>
         <View style={styles.rowInfo}>
           <Text style={styles.rowName} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
@@ -361,17 +378,38 @@ function ParcelRow({
           <Text style={styles.rowMeta} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
             {[crop, formatHectares(parcel.area_ha)].filter(Boolean).join(' · ')}
           </Text>
-          {fs.partial && score != null ? (
+          {dataPending ? (
+            <View style={styles.processingLine}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text
+                style={styles.processingText}
+                maxFontSizeMultiplier={typeScale.maxMult}
+                numberOfLines={2}
+              >
+                {t('parcel.data_processing_short')}
+              </Text>
+            </View>
+          ) : fs.partial ? (
             <Text style={styles.partialText} maxFontSizeMultiplier={typeScale.maxMult}>
               {t('status.partial')}
             </Text>
           ) : null}
         </View>
         <View style={styles.rowRight}>
-          <StatusChip status={chipStatus} label={chipLabel} />
-          <View style={styles.trendRow}>
-            <Ionicons name={trendIcon} size={16} color={trendColor} />
-          </View>
+          {dataPending ? (
+            <View style={styles.processingChip}>
+              <Text style={styles.processingChipText} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('parcel.data_processing_chip')}
+              </Text>
+            </View>
+          ) : (
+            <>
+              <StatusChip status={chipStatus} label={chipLabel} />
+              <View style={styles.trendRow}>
+                <Ionicons name={trendIcon} size={16} color={trendColor} />
+              </View>
+            </>
+          )}
         </View>
       </Card>
     </InteractivePressable>
@@ -401,7 +439,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     gap: spacing.md,
   },
-  content: { padding: spacing.md, gap: spacing.sm, flexGrow: 1 },
+  content: {
+    padding: spacing.md,
+    paddingBottom: navigationMetrics.contentBottomInset,
+    gap: spacing.sm,
+    flexGrow: 1,
+  },
   flex1: { flex: 1 },
   header: { marginBottom: spacing.xs, gap: spacing.md },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
@@ -423,6 +466,7 @@ const styles = StyleSheet.create({
   firstValue: { padding: spacing.md, gap: 2 },
   firstValueTitle: { fontFamily: fonts.bodyBold, fontSize: typeScale.body, color: colors.text },
   firstValueBody: { fontFamily: fonts.body, fontSize: typeScale.caption, color: colors.textMuted },
+  processingTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   listMeta: {
     fontFamily: fonts.bodyMedium,
     fontSize: typeScale.caption,
@@ -449,6 +493,29 @@ const styles = StyleSheet.create({
     fontSize: typeScale.caption,
     color: colors.textFaint,
     marginTop: 2,
+  },
+  processingLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: 4,
+  },
+  processingText: {
+    flex: 1,
+    fontFamily: fonts.bodyMedium,
+    fontSize: typeScale.caption,
+    color: colors.primary,
+  },
+  processingChip: {
+    borderRadius: radius.pill,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  processingChipText: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: typeScale.caption,
+    color: colors.primary,
   },
   rowRight: { alignItems: 'flex-end', gap: 6 },
   scoreBadge: {

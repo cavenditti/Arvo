@@ -176,7 +176,13 @@ export default function ParcelDetailWeb() {
       onSuccess: (r) =>
         notify(
           t('parcel.imagery_title'),
-          t('parcel.imagery_result', { found: r.scenes_found, added: r.scenes_new, computed: r.computed }),
+          r.started
+            ? t('parcel.imagery_started')
+            : t('parcel.imagery_result', {
+                found: r.scenes_found,
+                added: r.scenes_new,
+                computed: r.computed,
+              }),
         ),
       onError: (e) => notify(t('parcel.imagery_title'), errMsg(e)),
     });

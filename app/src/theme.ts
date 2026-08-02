@@ -29,7 +29,15 @@ export const colors = {
 export const glass = {
   tint: '#F8F8F4',
   actionTint: '#234B34',
+  selectionTint: 'rgba(35, 75, 52, 0.12)',
 };
+
+/** Floating bottom-navigation geometry shared by content, overlays and transient UI. */
+export const navigationMetrics = {
+  barHeight: 64,
+  controlGap: 8,
+  contentBottomInset: 96,
+} as const;
 
 export const spacing = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32 };
 export const radius = { sm: 8, md: 12, lg: 16, xl: 20, pill: 999 };

@@ -16,7 +16,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AuthProvider, useAuth } from '@/auth/AuthContext';
 import Logo from '@/components/Logo';
@@ -88,6 +88,25 @@ function RootNavigator() {
 
   if (status === 'restoring') return <BootScreen />;
 
+  const closeCreationModal = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/');
+  };
+
+  const creationModalHeaderLeft = () => (
+    <Pressable
+      onPress={closeCreationModal}
+      accessibilityRole="button"
+      accessibilityLabel={t('common.cancel')}
+      hitSlop={8}
+      style={styles.modalCancel}
+    >
+      <Text style={styles.modalCancelText} maxFontSizeMultiplier={typeScale.maxMult}>
+        {t('common.cancel')}
+      </Text>
+    </Pressable>
+  );
+
   return (
     <Stack
       screenOptions={{
@@ -125,9 +144,9 @@ function RootNavigator() {
       <Stack.Screen
         name="add-actions"
         options={{
-          title: t('menu.add'),
+          headerShown: false,
           presentation: 'formSheet',
-          sheetAllowedDetents: [0.42],
+          sheetAllowedDetents: 'fitToContents',
           sheetGrabberVisible: true,
         }}
       />
@@ -137,15 +156,27 @@ function RootNavigator() {
       {/* Creation flows present as iOS sheets; each screen refines its own title. */}
       <Stack.Screen
         name="parcel/new"
-        options={{ presentation: 'modal', title: t('parcel.new_title') }}
+        options={{
+          presentation: 'modal',
+          title: t('parcel.new_title'),
+          headerLeft: creationModalHeaderLeft,
+        }}
       />
       <Stack.Screen
         name="observation/new"
-        options={{ presentation: 'modal', title: t('observation.new_title') }}
+        options={{
+          presentation: 'modal',
+          title: t('observation.new_title'),
+          headerLeft: creationModalHeaderLeft,
+        }}
       />
       <Stack.Screen
         name="capture/new"
-        options={{ presentation: 'modal', title: t('capture.new_title') }}
+        options={{
+          presentation: 'modal',
+          title: t('capture.new_title'),
+          headerLeft: creationModalHeaderLeft,
+        }}
       />
     </Stack>
   );
@@ -191,5 +222,15 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: typeScale.titleLg,
     color: colors.text,
+  },
+  modalCancel: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingRight: spacing.sm,
+  },
+  modalCancelText: {
+    color: colors.primary,
+    fontFamily: fonts.bodySemiBold,
+    fontSize: typeScale.body,
   },
 });

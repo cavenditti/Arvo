@@ -250,6 +250,7 @@ export default function ParcelDetailScreen() {
   // theme Status uses 'healthy' where status.ts says 'ok'
   const chipStatus: Status = fieldStatus.level === 'ok' ? 'healthy' : fieldStatus.level;
   const score = arvoScore(latestQ.data?.[id]);
+  const dataPending = score == null && metaQ.data?.features.imagery !== false;
 
   // Drone capture (13-field EASA form) is a professional flow — agronomist/admin only.
   const canCapture = role === 'agronomist' || role === 'admin';
@@ -309,16 +310,26 @@ export default function ParcelDetailScreen() {
   }
 
   function onRefreshImagery() {
+    if (metaQ.data?.features.imagery === false) {
+      notify(t('parcel.imagery_title'), t('parcel.imagery_disabled'));
+      return;
+    }
     refresh.mutate(undefined, {
-      onSuccess: (r) =>
+      onSuccess: (r) => {
+        const hasData = (ndviQ.data?.series.length ?? 0) > 0;
         notify(
           t('parcel.imagery_title'),
-          t('parcel.imagery_result', {
-            found: r.scenes_found,
-            added: r.scenes_new,
-            computed: r.computed,
-          }),
-        ),
+          r.started
+            ? t('parcel.imagery_started')
+            : r.computed === 0 && !hasData
+            ? t('parcel.imagery_no_data')
+            : t('parcel.imagery_result', {
+                found: r.scenes_found,
+                added: r.scenes_new,
+                computed: r.computed,
+              }),
+        );
+      },
       onError: () => notify(t('parcel.imagery_title'), t('toast.error_retry')),
     });
   }
@@ -521,6 +532,20 @@ export default function ParcelDetailScreen() {
             />
           </View>
 
+          {dataPending ? (
+            <View style={[styles.section, styles.processingSection]} accessibilityLiveRegion="polite">
+              <View style={styles.processingTitleRow}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={styles.processingTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('parcel.data_processing_title')}
+                </Text>
+              </View>
+              <Text style={styles.processingBody} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('parcel.data_processing_body')}
+              </Text>
+            </View>
+          ) : null}
+
           {/* Plain-language summary — chip, headline and trend all speak with the one
               status voice (status.ts). Raw satellite numbers live in advanced details. */}
           {score ? (
@@ -666,9 +691,18 @@ export default function ParcelDetailScreen() {
               {seriesQ.isLoading ? (
                 <ActivityIndicator color={colors.primary} style={styles.pad} />
               ) : (seriesQ.data?.series.length ?? 0) === 0 ? (
-                <Text style={styles.muted} maxFontSizeMultiplier={typeScale.maxMult}>
-                  {t('parcel.no_series')}
-                </Text>
+                dataPending ? (
+                  <View style={styles.processingInline}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                    <Text style={styles.muted} maxFontSizeMultiplier={typeScale.maxMult}>
+                      {t('parcel.data_processing_short')}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.muted} maxFontSizeMultiplier={typeScale.maxMult}>
+                    {t('parcel.no_series')}
+                  </Text>
+                )
               ) : (
                 <>
                   <IndexChart series={seriesQ.data?.series ?? []} index={index} />
@@ -948,6 +982,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  processingSection: { backgroundColor: colors.primarySoft, borderColor: colors.primarySoft },
+  processingTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  processingTitle: { flex: 1, fontFamily: fonts.bodyBold, fontSize: typeScale.body, color: colors.primary },
+  processingBody: { fontFamily: fonts.body, fontSize: typeScale.caption, lineHeight: 18, color: colors.textMuted },
+  processingInline: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   sectionHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionTitle: { fontSize: 17, fontFamily: fonts.display, color: colors.text },
   advancedHint: { fontFamily: fonts.body, fontSize: 11.5, lineHeight: 16, color: colors.textMuted, marginTop: 2 },
