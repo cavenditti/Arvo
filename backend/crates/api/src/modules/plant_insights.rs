@@ -828,7 +828,7 @@ async fn replant_csv(
     Path(id): Path<Uuid>,
     Query(q): Query<ReplantQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    let user = authenticate_bearer_or_media(&state.cfg.jwt_secret, &headers, q.token.as_deref())?;
+    let user = authenticate_bearer_or_media(&state, &headers, q.token.as_deref()).await?;
     assert_owned(&state.pool, user.org_id, id).await?;
     let rows = replant_entries(&state, user.org_id, id, q.block_id).await?;
 
@@ -872,7 +872,7 @@ async fn replant_geojson(
     Path(id): Path<Uuid>,
     Query(q): Query<ReplantQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    let user = authenticate_bearer_or_media(&state.cfg.jwt_secret, &headers, q.token.as_deref())?;
+    let user = authenticate_bearer_or_media(&state, &headers, q.token.as_deref()).await?;
     assert_owned(&state.pool, user.org_id, id).await?;
     let rows = replant_entries(&state, user.org_id, id, q.block_id).await?;
 

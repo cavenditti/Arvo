@@ -76,7 +76,7 @@ async fn tile(
     Path((parcel_id, index, z, x, y_ext)): Path<(Uuid, String, u32, u32, String)>,
     Query(q): Query<RasterQuery>,
 ) -> ApiResult<Response> {
-    let auth = authenticate(&state, &headers, q.token.as_deref())?;
+    let auth = authenticate(&state, &headers, q.token.as_deref()).await?;
     let index = normalize_index(Some(&index))?;
     if z > 18 {
         return Err(ApiError::BadRequest("zoom out of range (0..=18)".into()));
@@ -131,7 +131,7 @@ async fn geotiff(
     let Some(index_raw) = index_ext.strip_suffix(".tif") else {
         return Err(ApiError::NotFound);
     };
-    let auth = authenticate(&state, &headers, q.token.as_deref())?;
+    let auth = authenticate(&state, &headers, q.token.as_deref()).await?;
     let index = normalize_index(Some(index_raw))?;
 
     // Org scope + parcel bbox (lon/lat) in one query.
@@ -178,12 +178,12 @@ async fn geotiff(
 /// Bearer header carries a full session token; `?token=` accepts ONLY short-lived media
 /// tokens (docs/API.md §"Media tokens") so long-lived credentials never ride in query
 /// strings where access logs and referrers can capture them.
-fn authenticate(
+async fn authenticate(
     state: &AppState,
     headers: &HeaderMap,
     query_token: Option<&str>,
 ) -> ApiResult<AuthUser> {
-    security::authenticate_bearer_or_media(&state.cfg.jwt_secret, headers, query_token)
+    security::authenticate_bearer_or_media(state, headers, query_token).await
 }
 
 struct ResolvedScene {

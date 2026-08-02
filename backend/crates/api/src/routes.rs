@@ -155,7 +155,7 @@ async fn serve_photo(
     Query(q): Query<MediaTokenQuery>,
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Response> {
-    let user = authenticate_bearer_or_media(&state.cfg.jwt_secret, &headers, q.token.as_deref())?;
+    let user = authenticate_bearer_or_media(&state, &headers, q.token.as_deref()).await?;
     let content_type = photo_content_type(&file_name)?;
 
     // Org check: the photo is only served to members of the observation's org.
@@ -185,7 +185,7 @@ async fn serve_parcel_photo(
     Query(q): Query<MediaTokenQuery>,
     headers: axum::http::HeaderMap,
 ) -> ApiResult<Response> {
-    let user = authenticate_bearer_or_media(&state.cfg.jwt_secret, &headers, q.token.as_deref())?;
+    let user = authenticate_bearer_or_media(&state, &headers, q.token.as_deref()).await?;
     let content_type = photo_content_type(&file_name)?;
 
     let owned: Option<(Uuid,)> =

@@ -2016,7 +2016,7 @@ async fn export_rows(
     headers: &HeaderMap,
     q: &ExportQuery,
 ) -> ApiResult<(Uuid, Vec<PlantExportRow>)> {
-    let user = authenticate_bearer_or_media(&st.cfg.jwt_secret, headers, q.token.as_deref())?;
+    let user = authenticate_bearer_or_media(st, headers, q.token.as_deref()).await?;
     // Same no-unbounded-scan rule as the list endpoint.
     let parcel_id = match (q.parcel_id, q.block_id) {
         (Some(p), _) => {

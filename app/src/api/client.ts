@@ -8,6 +8,7 @@ export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8787
 
 let authToken: string | null = null;
 let onUnauthorized: (() => void) | null = null;
+let authTokenProvider: ((forceRefresh: boolean) => Promise<string | null>) | null = null;
 
 export function setAuthToken(token: string | null) {
   authToken = token;
@@ -17,6 +18,11 @@ export function getAuthToken() {
 }
 export function setOnUnauthorized(handler: (() => void) | null) {
   onUnauthorized = handler;
+}
+export function setAuthTokenProvider(
+  provider: ((forceRefresh: boolean) => Promise<string | null>) | null,
+) {
+  authTokenProvider = provider;
 }
 
 export class ApiError extends Error {
@@ -52,19 +58,29 @@ function networkError(): ApiError {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}/api/v1${path}`, {
+  async function send(token: string | null): Promise<Response> {
+    return fetch(`${API_URL}/api/v1${path}`, {
       method,
       headers: {
         'Content-Type': 'application/json',
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: ctrl.signal,
     });
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await send(authToken);
+    // Better Auth resource JWTs are deliberately short-lived. The canonical session cookie
+    // remains in SecureStore; refresh once and replay the request before treating a 401 as logout.
+    if (res.status === 401 && authTokenProvider) {
+      const refreshed = await authTokenProvider(true);
+      if (refreshed) res = await send(refreshed);
+    }
   } catch (e) {
     // Offline / timed out: one plain-language message instead of a raw TypeError.
     // status 0 + code 'network' keep it machine-readable (offline/queue.ts branches on it).

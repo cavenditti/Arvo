@@ -1,0 +1,27 @@
+{
+  "name": "@arvo/auth-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@better-auth/expo": "^1.6.23",
+    "@node-rs/argon2": "^2.0.2",
+    "better-auth": "^1.6.23",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.1.0",
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.20.3",
+    "typescript": "^6.0.0"
+  }
+}

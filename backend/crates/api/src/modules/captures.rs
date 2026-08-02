@@ -943,8 +943,7 @@ async fn download_asset(
     Path((id, kind)): Path<(Uuid, String)>,
     Query(q): Query<AssetQuery>,
 ) -> ApiResult<Response> {
-    let user =
-        security::authenticate_bearer_or_media(&st.cfg.jwt_secret, &headers, q.token.as_deref())?;
+    let user = security::authenticate_bearer_or_media(&st, &headers, q.token.as_deref()).await?;
     let kind = normalize_kind(&kind)?;
 
     // Org scope goes through the parcel (contract); cross-tenant is a 404, never a 403.

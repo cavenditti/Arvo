@@ -10,8 +10,13 @@ npm install
 npx expo start        # press `w` for the web portal, or scan the QR in Expo Go
 ```
 
-The API base URL defaults to `http://localhost:8787`. Testing on a phone, point it at
-your machine: set `EXPO_PUBLIC_API_URL=http://<your-LAN-IP>:8787` in `app/.env`.
+The API and Better Auth base URLs default to `http://localhost:8787` and
+`http://localhost:3000`. Testing on a phone, point both at your machine in `app/.env`:
+
+```dotenv
+EXPO_PUBLIC_API_URL=http://<your-LAN-IP>:8787
+EXPO_PUBLIC_AUTH_URL=http://<your-LAN-IP>:3000
+```
 
 - `npm run lint` — ESLint (expo config)
 - `npm run typecheck` — TypeScript typecheck

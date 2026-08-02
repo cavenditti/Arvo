@@ -1,13 +1,17 @@
 # Arvo REST API contract — v1
 
-Base URL: `http://localhost:8787`. All endpoints under `/api/v1` unless noted.
-Auth: `Authorization: Bearer <jwt>`. JWT claims: `{sub: user_id, org: org_id, role, exp}` (7 days).
+Resource API base URL: `http://localhost:8787`. All endpoints under `/api/v1` unless noted.
+Better Auth base URL: `http://localhost:3000` (`https://app.arvo.farm` in production).
+Auth: `Authorization: Bearer <jwt>`. Better Auth issues a 15-minute EdDSA resource JWT with
+claims `{sub: user_id, org: org_id, role, iss, aud, exp}`; the API verifies it against the
+rotating `/api/auth/jwks` key set. The canonical login is an HttpOnly Better Auth session cookie.
 All timestamps RFC3339 UTC. All IDs are UUIDs. Geometry is GeoJSON (EPSG:4326).
 
 **Errors** — every non-2xx returns `{"error": {"code": "<snake_case>", "message": "<human text>"}}`.
 Codes: `unauthorized` 401, `forbidden` 403, `not_found` 404, `bad_request` 400, `conflict` 409,
 `rate_limited` 429, `internal` 500. Cross-tenant access = `not_found` (do not leak existence).
-Auth endpoints are rate-limited per IP (30/min).
+Rust auth bridge endpoints are rate-limited per IP (30/min). Better Auth applies its own auth
+endpoint protections.
 
 **Media tokens** — session JWTs are never accepted in query strings. Endpoints that plain
 `<img>`/tile/browser clients open directly (photos, tiles, GeoTIFF, the season report) accept
@@ -22,28 +26,26 @@ keep working on these endpoints for API clients.
 - `GET /api/v1/meta` → `{"version": "0.1.0", "features": {"imagery": false}}`
 
 ## Auth
-- `POST /api/v1/auth/register` `{email, password (8..512), full_name (≤200), org_name (≤200), locale?("it")}`
-  → `201 {token, user: User, org: Org}` — creates org + owner membership. 409 if email taken.
-- `POST /api/v1/auth/login` `{email, password, org_id?}` → `{token, user: User, orgs: [{id, name, role}]}`
-  Token is scoped to `org_id` or the user's first org. 401 on bad credentials; 404 when `org_id`
-  isn't one of the user's memberships (same semantics as switch-org).
-- `POST /api/v1/auth/switch-org` `{org_id}` [auth] → `{token}` (must be a member).
-- `GET /api/v1/auth/me` → `{user: User, org: Org, role}`
-- `POST /api/v1/auth/media-token` [auth] → `{token, expires_at}` — short-lived media token (see top).
-- `POST /api/v1/orgs/invites` `{email, role}` [admin+] → `201 {id, token, email, role, expires_at}`
-  The raw token is returned only here; the server stores a hash.
-- `POST /api/v1/auth/accept-invite` `{token, email, password?, full_name?}` (no auth; registers the
-  user if new, then adds membership) → `{token, user, org}`
-- `GET /api/v1/orgs/members` → `[{user_id, email, full_name, role}]`
-- `POST /api/v1/auth/password-reset/request` `{email}` → **always 204** (no auth, no user
-  enumeration — unknown emails answer identically and burn the same argon2 time). For a real
-  account: a one-time token (32 random bytes hex, argon2-hashed at rest, 30 min expiry, one
-  outstanding per user — a new request replaces the previous link) is created and the deep link
-  `arvo:///forgot-password?token=…` is logged at info level. No SMTP in the stack: the server
-  log is the delivery channel for now (email delivery is a documented TODO).
-- `POST /api/v1/auth/password-reset/confirm` `{token, new_password (8..512)}` (no auth) → 204.
-  Tokens are single-use; any token problem (unknown/expired/used) → 400 with message
-  `invalid_token`; a too-short password gets its own 400 message.
+
+Better Auth endpoints live at the auth base URL:
+
+- `POST /api/auth/sign-up/email` `{email, password, name, locale?}` — create an account and session.
+- `POST /api/auth/sign-in/email` `{email, password}` — create the canonical session.
+- `POST /api/auth/sign-out` — revoke the current session.
+- `GET /api/auth/get-session` — Better Auth session and user.
+- `GET /api/auth/token` — mint the active organization's 15-minute API JWT.
+- `POST /api/auth/organization/create` `{name, slug}` — create an organization as owner.
+- `POST /api/auth/organization/set-active` `{organizationId}` — switch active organization.
+- `POST /api/auth/request-password-reset` `{email, redirectTo}` and
+  `POST /api/auth/reset-password` `{token, newPassword}` — password reset flow.
+- Better Auth's organization invitation/member endpoints own membership mutations.
+
+Arvo-specific bridges:
+
+- `GET /api/arvo/session` (auth base URL) → `{user, org, orgs, role}` — stable app session shape.
+- `GET /api/v1/auth/me` → `{user: User, org: Org, role}` — verified resource-server identity.
+- `POST /api/v1/auth/media-token` → `{token, expires_at}` — short-lived media token (see top).
+- `GET /api/v1/orgs/members` → `[{user_id, email, full_name, role}]` — read-only projection.
 
 `User = {id, email, full_name, locale}` · `Org = {id, name}`
 

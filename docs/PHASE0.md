@@ -93,13 +93,12 @@ Deferred: FR-0-013/014/025/026/043/054/062, GraphQL (REST-only v1), OGC WMTS cap
    an org check, and query-string auth everywhere (tiles, GeoTIFF, photos, report) uses
    short-lived (15 min) `aud:"media"` tokens from `POST /auth/media-token` — session JWTs in
    query strings are rejected outright (docs/API.md §"Media tokens").
-8. **Remaining hardening backlog (P1):** per-membership token versioning (role changes don't
-   revoke live 7-day JWTs); EXIF stripping on photo upload; initial-sync paging for very large
+8. **Remaining hardening backlog (P1):** EXIF stripping on photo upload; initial-sync paging for very large
    orgs; rate limiting beyond the auth endpoints; a guard on farm hard-delete (cascades a whole
    season of derived data); STAC pagination past the 100-item page (currently clamped `days` +
    a page-full warning). Added 2026-08-01 (UX revamp): push delivery honouring per-user locale +
-   server-side severe-only/digest scheduling; SMTP email delivery for password-reset links
-   (currently logged server-side only); EAS `projectId` + Sign in with Apple (pre-App-Store
+   server-side severe-only/digest scheduling; production email delivery for Better Auth reset
+   and invitation links; Sign in with Apple (pre-App-Store
    requirements); offline basemap strategy for the field map; iOS widget app-group data bridge;
    Nominatim → self-hosted geocoder for address search; batched dashboard series endpoint (one
    request instead of N per-parcel fetches); Quaderno di Campagna (see docs/BUSINESS.md — the
@@ -126,7 +125,7 @@ note, tags[], photos jsonb, taken_at, updated_at, deleted)`, `audit_log(append-o
 
 | Agent | Scope | Owns |
 |-------|-------|------|
-| be-auth | register/login/me/switch-org, invites, members | `modules/auth.rs`, `modules/orgs.rs` |
+| be-auth | Better Auth JWT bridge, media tokens, read-only member projection | `modules/auth.rs`, `modules/orgs.rs`, `auth-server/` |
 | be-parcels | farms + parcels CRUD, GeoJSON import/export, PostGIS ops | `modules/farms.rs`, `modules/parcels.rs` |
 | be-cadastre | cadastral parcel detection for onboarding (AdE INSPIRE WFS proxy) | `modules/cadastre.rs` |
 | be-weather | Open-Meteo ingest+cache, agro models, advisories | `modules/weather.rs`, `core/src/agro.rs` |

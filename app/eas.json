@@ -16,7 +16,11 @@
     },
     "production": {
       "environment": "production",
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.arvo.farm",
+        "EXPO_PUBLIC_AUTH_URL": "https://app.arvo.farm"
+      }
     }
   },
   "submit": {

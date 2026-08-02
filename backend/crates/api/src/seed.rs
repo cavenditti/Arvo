@@ -165,19 +165,40 @@ pub async fn run(state: &AppState, demo: bool) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn get_or_create_org(pool: &sqlx::PgPool, name: &str) -> anyhow::Result<Uuid> {
-    if let Some((id,)) = sqlx::query_as::<_, (Uuid,)>(
+    let id = if let Some((id,)) = sqlx::query_as::<_, (Uuid,)>(
         "SELECT id FROM orgs WHERE name = $1 ORDER BY created_at LIMIT 1",
     )
     .bind(name)
     .fetch_optional(pool)
     .await?
     {
-        return Ok(id);
-    }
-    let (id,) = sqlx::query_as::<_, (Uuid,)>("INSERT INTO orgs (name) VALUES ($1) RETURNING id")
-        .bind(name)
-        .fetch_one(pool)
-        .await?;
+        id
+    } else {
+        sqlx::query_as::<_, (Uuid,)>("INSERT INTO orgs (name) VALUES ($1) RETURNING id")
+            .bind(name)
+            .fetch_one(pool)
+            .await?
+            .0
+    };
+    let slug = format!(
+        "{}-{}",
+        name.to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+            .trim_matches('-'),
+        &id.simple().to_string()[..8]
+    );
+    sqlx::query(
+        "INSERT INTO \"organization\" (\"id\", \"name\", \"slug\", \"createdAt\")
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (\"id\") DO UPDATE SET \"name\" = EXCLUDED.\"name\"",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(slug)
+    .execute(pool)
+    .await?;
     Ok(id)
 }
 
@@ -188,24 +209,51 @@ async fn get_or_create_user(
     full_name: &str,
     locale: &str,
 ) -> anyhow::Result<Uuid> {
-    if let Some((id,)) =
-        sqlx::query_as::<_, (Uuid,)>("SELECT id FROM users WHERE lower(email) = lower($1)")
-            .bind(email)
-            .fetch_optional(pool)
-            .await?
-    {
-        return Ok(id);
-    }
-    let hash = hash_password(password)?;
-    let (id,) = sqlx::query_as::<_, (Uuid,)>(
-        "INSERT INTO users (email, password_hash, full_name, locale)
-         VALUES ($1, $2, $3, $4) RETURNING id",
+    let existing = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT id, password_hash FROM users WHERE lower(email) = lower($1)",
     )
     .bind(email)
-    .bind(&hash)
+    .fetch_optional(pool)
+    .await?;
+    let (id, password_hash) = if let Some(existing) = existing {
+        existing
+    } else {
+        let password_hash = hash_password(password)?;
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO users (email, password_hash, full_name, locale)
+             VALUES ($1, $2, $3, $4) RETURNING id",
+        )
+        .bind(email)
+        .bind(&password_hash)
+        .bind(full_name)
+        .bind(locale)
+        .fetch_one(pool)
+        .await?;
+        (id, password_hash)
+    };
+    sqlx::query(
+        "INSERT INTO \"user\" (
+            \"id\", \"name\", \"email\", \"emailVerified\", \"createdAt\", \"updatedAt\", \"locale\"
+         ) VALUES ($1, $2, $3, true, now(), now(), $4)
+         ON CONFLICT (\"id\") DO UPDATE SET
+            \"name\" = EXCLUDED.\"name\", \"email\" = EXCLUDED.\"email\", \"locale\" = EXCLUDED.\"locale\"",
+    )
+    .bind(id)
     .bind(full_name)
+    .bind(email)
     .bind(locale)
-    .fetch_one(pool)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO \"account\" (
+            \"accountId\", \"providerId\", \"userId\", \"password\", \"createdAt\", \"updatedAt\"
+         ) VALUES ($1, 'credential', $2, $3, now(), now())
+         ON CONFLICT (\"providerId\", \"accountId\") DO NOTHING",
+    )
+    .bind(id.to_string())
+    .bind(id)
+    .bind(password_hash)
+    .execute(pool)
     .await?;
     Ok(id)
 }
@@ -223,6 +271,16 @@ async fn ensure_membership(
     )
     .bind(user_id)
     .bind(org_id)
+    .bind(role)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO \"member\" (\"organizationId\", \"userId\", \"role\", \"createdAt\")
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (\"userId\", \"organizationId\") DO UPDATE SET \"role\" = EXCLUDED.\"role\"",
+    )
+    .bind(org_id)
+    .bind(user_id)
     .bind(role)
     .execute(pool)
     .await?;

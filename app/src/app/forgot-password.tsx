@@ -1,9 +1,5 @@
-// OWNER: auth-flow — account recovery in one screen, two modes:
-//  (a) request: email → POST /auth/password-reset/request (server always 204, no
-//      account enumeration; the link is only LOGGED server-side for now — the copy
-//      promises nothing more than "se l'email esiste, ricevi le istruzioni").
-//  (b) confirm: token (deep link arvo:///forgot-password?token=… or pasted via
-//      "Ho già un codice") + new password → POST /auth/password-reset/confirm.
+// Better Auth account recovery in one screen: request the reset, then accept the token from the
+// arvo:///forgot-password deep link (or a pasted development token) and set a new password.
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -16,7 +12,8 @@ import {
   View,
 } from 'react-native';
 
-import { api, ApiError } from '../api/client';
+import { ApiError } from '../api/client';
+import { authClient, toAuthError } from '../auth/client';
 import { ErrorBanner, Field, LinkButton, PasswordField, PrimaryButton } from '../auth/ui';
 import Logo from '../components/Logo';
 import { showToast } from '../components/Toast';
@@ -61,8 +58,15 @@ export default function ForgotPasswordScreen() {
     setBusy(true);
     setError(null);
     try {
-      // Always 204 — the server never reveals whether the email exists.
-      await api.post('/auth/password-reset/request', { email: email.trim() });
+      const redirectTo =
+        Platform.OS === 'web' && typeof globalThis.location !== 'undefined'
+          ? `${globalThis.location.origin}/forgot-password`
+          : 'arvo:///forgot-password';
+      const { error: requestError } = await authClient.requestPasswordReset({
+        email: email.trim(),
+        redirectTo,
+      });
+      if (requestError) throw toAuthError(requestError);
       setMode('sent');
     } catch (e) {
       // Only connectivity/server errors land here, never "email not found".
@@ -84,10 +88,11 @@ export default function ForgotPasswordScreen() {
     setBusy(true);
     setError(null);
     try {
-      await api.post('/auth/password-reset/confirm', {
+      const { error: resetError } = await authClient.resetPassword({
         token: token.trim(),
-        new_password: password,
+        newPassword: password,
       });
+      if (resetError) throw toAuthError(resetError);
       haptics.success();
       showToast({ message: t('auth.reset_done'), kind: 'success' });
       goToLogin();

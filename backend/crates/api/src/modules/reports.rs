@@ -78,7 +78,7 @@ async fn season_report(
     Path(id): Path<Uuid>,
     Query(q): Query<ReportQuery>,
 ) -> ApiResult<Html<String>> {
-    let user = authenticate_bearer_or_media(&state.cfg.jwt_secret, &headers, q.token.as_deref())?;
+    let user = authenticate_bearer_or_media(&state, &headers, q.token.as_deref()).await?;
     let lang = match util::resolve_lang(&state, user.user_id, q.lang).await {
         util::Lang::En => "en",
         util::Lang::It => "it",

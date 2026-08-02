@@ -4,7 +4,12 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
+    /// HMAC secret used only for short-lived media tokens minted by this resource server.
     pub jwt_secret: String,
+    /// Better Auth's public JWKS endpoint. The API fetches and caches rotating verification keys.
+    pub better_auth_jwks_url: String,
+    pub better_auth_issuer: String,
+    pub better_auth_audience: String,
     pub port: u16,
     pub upload_dir: PathBuf,
     /// Raster tile cache (imagery builds). Kept here so all env reads live in one place.
@@ -43,9 +48,15 @@ impl Config {
                 "dev-secret-change-me".into()
             }
             _ => anyhow::bail!(
-                "JWT_SECRET must be set to at least 32 chars in release builds (openssl rand -hex 32)"
+                "JWT_SECRET must be set to at least 32 chars in release builds (media-token signing)"
             ),
         };
+        let better_auth_issuer =
+            std::env::var("BETTER_AUTH_ISSUER").unwrap_or_else(|_| "http://localhost:3000".into());
+        let better_auth_jwks_url = std::env::var("BETTER_AUTH_JWKS_URL")
+            .unwrap_or_else(|_| format!("{better_auth_issuer}/api/auth/jwks"));
+        let better_auth_audience = std::env::var("BETTER_AUTH_AUDIENCE")
+            .unwrap_or_else(|_| "http://localhost:8787".into());
         let port = std::env::var("PORT")
             .ok()
             .and_then(|p| p.parse().ok())
@@ -79,6 +90,9 @@ impl Config {
         Ok(Self {
             database_url,
             jwt_secret,
+            better_auth_jwks_url,
+            better_auth_issuer,
+            better_auth_audience,
             port,
             upload_dir,
             tile_cache_dir,

@@ -1,7 +1,7 @@
-# Arvo monorepo tasks. Prereqs: docker, rust, node 20+.
+# Arvo monorepo tasks. Prereqs: docker, rust, Node 22.13+ (Expo SDK 57).
 
-.PHONY: db-up db-down migrate api api-lite api-imagery ingest seed smoke app app-web \
-        check check-api check-app fmt fmt-check lint test \
+.PHONY: db-up db-down migrate auth api api-lite api-imagery ingest seed smoke app app-web \
+        check check-api check-auth check-app fmt fmt-check lint test \
         worker worker-once worker-imagery seed-plants odm-pull \
         detect-up detect-build detect-down detect-logs
 
@@ -18,6 +18,9 @@ db-down:
 
 migrate: db-up
 	cd backend && cargo run -p arvo-api -- migrate
+
+auth: db-up
+	$(DOTENV); cd auth-server && npm run dev
 
 api: db-up
 	$(DOTENV); cd backend && cargo run -p arvo-api --features imagery -- serve
@@ -86,10 +89,13 @@ detect-logs:
 odm-pull:
 	$(DOTENV); docker compose -f infra/docker-compose.yml --profile odm pull odm
 
-check: check-api check-app
+check: check-api check-auth check-app
 
 check-api:
 	cd backend && cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
+
+check-auth:
+	cd auth-server && npm run typecheck && npm run build
 
 check-app:
 	cd app && npx tsc --noEmit && npm run --silent lint

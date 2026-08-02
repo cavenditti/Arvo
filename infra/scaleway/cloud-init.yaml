@@ -1,0 +1,31 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - docker.io
+  - docker-compose-v2
+  - fail2ban
+  - unattended-upgrades
+
+ssh_pwauth: false
+disable_root: false
+
+write_files:
+  - path: /etc/sysctl.d/60-arvo.conf
+    permissions: "0644"
+    content: |
+      net.ipv4.conf.all.rp_filter = 1
+      net.ipv4.conf.default.rp_filter = 1
+      net.ipv4.tcp_syncookies = 1
+
+runcmd:
+  - [systemctl, enable, --now, docker]
+  - [systemctl, enable, --now, fail2ban]
+  - [fallocate, -l, 2G, /swapfile]
+  - [chmod, "0600", /swapfile]
+  - [mkswap, /swapfile]
+  - [swapon, /swapfile]
+  - [sh, -c, "echo '/swapfile none swap sw 0 0' >> /etc/fstab"]
+  - [sysctl, --system]

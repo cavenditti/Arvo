@@ -1,0 +1,18 @@
+FROM node:24-bookworm-slim AS app-build
+WORKDIR /app
+
+ARG EXPO_PUBLIC_API_URL=https://api.arvo.farm
+ARG EXPO_PUBLIC_AUTH_URL=https://app.arvo.farm
+ENV EXPO_PUBLIC_API_URL=${EXPO_PUBLIC_API_URL}
+ENV EXPO_PUBLIC_AUTH_URL=${EXPO_PUBLIC_AUTH_URL}
+ENV CI=1
+
+COPY app/package.json app/package-lock.json ./
+RUN npm ci
+COPY app/ ./
+RUN npx expo export --platform web --output-dir dist
+
+FROM caddy:2.10-alpine
+COPY infra/Caddyfile /etc/caddy/Caddyfile
+COPY landing/ /srv/landing/
+COPY --from=app-build /app/dist/ /srv/app/

@@ -178,10 +178,8 @@ Route strings (cross-agent, referenced by literal — do NOT import peer files):
 - `POST /api/v1/devices` `{ platform: "ios"|"android"|"web", token: string }` → 204. Upsert by
   token; row = org_id, user_id, platform, token, last_seen_at.
 - `DELETE /api/v1/devices/{token}` → 204.
-- `POST /api/v1/auth/password-reset/request` `{ email }` → **always 204** (no enumeration).
-  Generates token (argon2-hashed at rest, 30 min expiry) and logs the reset link at info level
-  (no SMTP in stack — email delivery is a documented TODO; do NOT add deps).
-- `POST /api/v1/auth/password-reset/confirm` `{ token, new_password }` → 204 | 400 `invalid_token`.
+- Better Auth owns password reset through `POST /api/auth/request-password-reset` and
+  `POST /api/auth/reset-password`; responses do not reveal whether an email is registered.
 - Push send: after the detect job inserts alerts, send **one Expo push per (parcel, kind) per run**
   — aggregated title like the app's grouped copy ("Uliveto Vecchio: calo di vigore su 12 piante"),
   to every device of the org. Endpoint `https://exp.host/--/api/v2/push/send` via reqwest,

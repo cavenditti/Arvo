@@ -194,11 +194,7 @@ async fn tile(
 ) -> ApiResult<Response> {
     // Bearer header OR a short-lived media token in `?token=`; a session JWT in the query string
     // is rejected (401) so long-lived credentials never ride in access logs or referrers.
-    let user = security::authenticate_bearer_or_media(
-        &state.cfg.jwt_secret,
-        &headers,
-        q.token.as_deref(),
-    )?;
+    let user = security::authenticate_bearer_or_media(&state, &headers, q.token.as_deref()).await?;
     let metric = normalize_metric(q.metric.as_deref())?;
     let capture = parse_capture(q.capture.as_deref())?;
 

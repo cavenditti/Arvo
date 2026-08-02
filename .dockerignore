@@ -1,0 +1,13 @@
+.git
+.DS_Store
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.production.example
+**/node_modules
+**/target
+backend/var
+app/.expo
+app/dist
+app/ios
+*.log

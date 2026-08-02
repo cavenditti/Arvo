@@ -7,4 +7,5 @@ use crate::config::Config;
 pub struct AppState {
     pub pool: sqlx::PgPool,
     pub cfg: Arc<Config>,
+    pub jwks: Arc<tokio::sync::RwLock<crate::security::JwksCache>>,
 }

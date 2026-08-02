@@ -1,0 +1,50 @@
+{
+	admin off
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(self)"
+		-Server
+	}
+}
+
+www.arvo.farm {
+	redir https://arvo.farm{uri} permanent
+}
+
+arvo.farm {
+	import security_headers
+	encode zstd gzip
+	root * /srv/landing
+	file_server
+}
+
+app.arvo.farm {
+	import security_headers
+	encode zstd gzip
+
+	handle /api/auth/* {
+		reverse_proxy auth:3000
+	}
+
+	handle /api/arvo/* {
+		reverse_proxy auth:3000
+	}
+
+	handle {
+		root * /srv/app
+		try_files {path} {path}.html /index.html
+		file_server
+	}
+}
+
+api.arvo.farm {
+	import security_headers
+	encode zstd gzip
+	reverse_proxy api:8787
+}

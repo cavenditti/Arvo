@@ -69,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
     let state = state::AppState {
         pool: pool.clone(),
         cfg: Arc::new(cfg),
+        jwks: Arc::new(tokio::sync::RwLock::new(security::JwksCache::default())),
     };
 
     match Cli::parse().cmd.unwrap_or(Cmd::Serve) {

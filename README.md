@@ -6,18 +6,22 @@ satellite index time series, weather + agronomic models, offline-first scouting,
 season reports — multi-tenant, decision-support only (no actuation).
 
 - **backend/** — Rust (axum + sqlx + PostGIS). Single binary: HTTP API + CLI (`migrate`, `seed`, `ingest-imagery`, `detect-anomalies`).
+- **auth-server/** — Better Auth (TypeScript + PostgreSQL): sessions, organizations and rotating
+  Ed25519 JWKS for the Rust resource server.
 - **app/** — Expo (React Native, TypeScript). One codebase → iOS, Android **and web portal**. Italian-first i18n.
+- **landing/** — public, Italian-first `arvo.farm` marketing site.
 - **docs/** — [PHASE0.md](docs/PHASE0.md) (scope & traceability) · [API.md](docs/API.md) (REST contract) · [DESIGN.md](docs/DESIGN.md) (Terra design language) · [AGENTS.md](docs/AGENTS.md) (conventions) · [BUSINESS.md](docs/BUSINESS.md) (business model).
 
 ## Quickstart
 
-Prereqs: Docker, Rust, Node 20+.
+Prereqs: Docker, Rust, Node 22.13+.
 
 ```bash
 cp .env.example .env
 make db-up        # PostGIS on :5439 (docker)
 make migrate      # apply schema
 make seed         # demo tenant: demo@arvo.local / demo1234
+make auth         # Better Auth on http://localhost:3000
 make api          # backend on http://localhost:8787
 make app          # Expo dev server — press `w` for the web portal
 make smoke        # end-to-end API acceptance
@@ -25,7 +29,14 @@ make smoke        # end-to-end API acceptance
 
 Demo logins: `demo@arvo.local` / `demo1234` (owner) · `agro@arvo.local` / `demo1234` (agronomist).
 
-Testing on a phone (Expo Go): set `EXPO_PUBLIC_API_URL=http://<your-LAN-IP>:8787` in `app/.env`.
+Testing on a phone (Expo Go): set `EXPO_PUBLIC_API_URL=http://<your-LAN-IP>:8787` and
+`EXPO_PUBLIC_AUTH_URL=http://<your-LAN-IP>:3000` in `app/.env`.
+
+## Production
+
+The production Compose stack serves the public landing page at `arvo.farm`, the Expo web app
+and Better Auth at `app.arvo.farm`, and the Rust API at `api.arvo.farm`. Deployment details and
+current Scaleway resource IDs are in [infra/scaleway/README.md](infra/scaleway/README.md).
 
 ## Satellite imagery
 

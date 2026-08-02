@@ -15,6 +15,7 @@ cd "$(dirname "$0")/.."
 
 PORT="${PORT:-8787}"
 BASE="http://localhost:${PORT}"
+AUTH_BASE="${AUTH_BASE:-http://localhost:3000}"
 COMPOSE="docker compose -f infra/docker-compose.yml"
 
 # Temp files are registered here and removed on any exit (incl. fail()).
@@ -32,6 +33,8 @@ warn() { echo "WARN — $1" >&2; }
 # Preflight: fail with a friendly message when the API isn't up at all.
 curl -fsS -o /dev/null --max-time 5 "${BASE}/healthz" \
   || fail "API not reachable at ${BASE} — start it with \`make api\` (or \`make api-imagery\`) first"
+curl -fsS -o /dev/null --max-time 5 "${AUTH_BASE}/healthz" \
+  || fail "Better Auth not reachable at ${AUTH_BASE} — start it with \`make auth\` first"
 
 # jq_get <json> <filter> : extract a value, failing loudly if absent/null.
 jq_get() { echo "$1" | jq -er "$2" 2>/dev/null || fail "missing $2 in response: $1"; }
@@ -47,6 +50,39 @@ api() {
 body_of() { echo "$1" | sed '$d'; }
 code_of() { echo "$1" | tail -n1; }
 
+# Better Auth uses an HttpOnly session cookie as the canonical login and issues a short-lived
+# JWKS resource JWT for the Rust API. Cookie jars are temp files managed by the caller.
+auth_api() {
+  local method="$1" path="$2" cookie="$3" body="${4:-}"
+  local args=(-sS -X "$method" -w $'\n%{http_code}' -H 'Content-Type: application/json' \
+    -H 'Origin: http://localhost:8081' -b "$cookie" -c "$cookie")
+  [ -n "$body" ] && args+=(--data "$body")
+  curl "${args[@]}" "${AUTH_BASE}${path}"
+}
+better_token() {
+  local cookie="$1" r
+  r=$(auth_api GET /api/auth/token "$cookie")
+  [ "$(code_of "$r")" = "200" ] || fail "Better Auth resource token ($(code_of "$r"))"
+  jq_get "$(body_of "$r")" '.token'
+}
+better_login() {
+  local cookie="$1" email="$2" password="$3" r
+  r=$(auth_api POST /api/auth/sign-in/email "$cookie" \
+    "{\"email\":\"${email}\",\"password\":\"${password}\"}")
+  [ "$(code_of "$r")" = "200" ] || fail "Better Auth login ${email} ($(code_of "$r"))"
+  better_token "$cookie"
+}
+better_signup() {
+  local cookie="$1" email="$2" name="$3" org="$4" slug="$5" r
+  r=$(auth_api POST /api/auth/sign-up/email "$cookie" \
+    "{\"email\":\"${email}\",\"password\":\"smoke1234\",\"name\":\"${name}\",\"locale\":\"it\"}")
+  [ "$(code_of "$r")" = "200" ] || fail "Better Auth signup ${email} ($(code_of "$r"))"
+  r=$(auth_api POST /api/auth/organization/create "$cookie" \
+    "{\"name\":\"${org}\",\"slug\":\"${slug}\"}")
+  [ "$(code_of "$r")" = "200" ] || fail "Better Auth create organization ($(code_of "$r"))"
+  better_token "$cookie"
+}
+
 RND="${RANDOM}${RANDOM}"
 echo "== Arvo smoke @ ${BASE} (suffix ${RND}) =="
 
@@ -55,14 +91,11 @@ echo "== Arvo smoke @ ${BASE} (suffix ${RND}) =="
 # ---------------------------------------------------------------------------
 
 EMAIL_A="smoke-a-${RND}@arvo.test"
-R=$(api POST /api/v1/auth/register - "{\"email\":\"${EMAIL_A}\",\"password\":\"smoke1234\",\"full_name\":\"Smoke A\",\"org_name\":\"Smoke Org A ${RND}\",\"locale\":\"it\"}")
-[ "$(code_of "$R")" = "201" ] || fail "register A (got $(code_of "$R"))"
-TOK_A=$(jq_get "$(body_of "$R")" '.token')
+COOKIE_A="$(mkt arvo-smoke-auth-a)"
+TOK_A=$(better_signup "$COOKIE_A" "$EMAIL_A" "Smoke A" "Smoke Org A ${RND}" "smoke-org-a-${RND}")
 pass "register org A"
 
-R=$(api POST /api/v1/auth/login - "{\"email\":\"${EMAIL_A}\",\"password\":\"smoke1234\"}")
-[ "$(code_of "$R")" = "200" ] || fail "login A"
-TOK_A=$(jq_get "$(body_of "$R")" '.token')
+TOK_A=$(better_login "$COOKIE_A" "$EMAIL_A" "smoke1234")
 pass "login org A"
 
 R=$(api GET /api/v1/auth/me "$TOK_A")
@@ -191,9 +224,8 @@ pass "GeoJSON export"
 # Part B — demo seed: index series, anomaly alert lifecycle, CSV, report
 # ---------------------------------------------------------------------------
 
-R=$(api POST /api/v1/auth/login - '{"email":"demo@arvo.local","password":"demo1234"}')
-[ "$(code_of "$R")" = "200" ] || fail "login demo (is the demo tenant seeded?)"
-TOK_D=$(jq_get "$(body_of "$R")" '.token')
+COOKIE_D="$(mkt arvo-smoke-auth-demo)"
+TOK_D=$(better_login "$COOKIE_D" "demo@arvo.local" "demo1234")
 pass "login demo tenant"
 
 R=$(api GET /api/v1/parcels "$TOK_D")
@@ -468,9 +500,8 @@ pass "parcel rollup matches the mean of its plants (ndvi ${IMEAN}, ${IPX} plants
 # ---------------------------------------------------------------------------
 
 EMAIL_B="smoke-b-${RND}@arvo.test"
-R=$(api POST /api/v1/auth/register - "{\"email\":\"${EMAIL_B}\",\"password\":\"smoke1234\",\"full_name\":\"Smoke B\",\"org_name\":\"Smoke Org B ${RND}\"}")
-[ "$(code_of "$R")" = "201" ] || fail "register B"
-TOK_B=$(jq_get "$(body_of "$R")" '.token')
+COOKIE_B="$(mkt arvo-smoke-auth-b)"
+TOK_B=$(better_signup "$COOKIE_B" "$EMAIL_B" "Smoke B" "Smoke Org B ${RND}" "smoke-org-b-${RND}")
 
 R=$(api GET "/api/v1/parcels/${PARCEL_A}" "$TOK_B")
 [ "$(code_of "$R")" = "404" ] || fail "cross-tenant leak: org B got $(code_of "$R") on org A parcel"
