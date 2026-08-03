@@ -42,14 +42,6 @@
           <path d="M60 46C66 39 65 30 60 22C54 30 54 39 60 46Z" />
           <path d="M48 131L32 113M72 119L87 100M49 107L34 89M71 95L84 77M50 83L37 65M69 71L80 53M52 59L42 41M67 47L75 29M55 37L50 19M60 23V2" />
         </symbol>
-        <symbol id="crop-simple" viewBox="0 0 180 300">
-          <path d="M89 288C89 225 91 172 90 88" />
-          <path d="M90 210C58 183 29 177 7 184C22 210 48 224 89 226" />
-          <path d="M91 178C124 148 152 141 174 148C158 176 132 191 91 194" />
-          <path d="M90 139C64 116 42 111 24 117C37 139 58 151 90 154" />
-          <path d="M90 108C111 86 130 80 147 84C136 105 117 118 90 122" />
-          <path d="M90 88C74 64 75 38 91 8C108 39 107 65 90 88Z" />
-        </symbol>
         <symbol id="crop-sunflower" viewBox="0 0 220 340">
           <path d="M110 336C108 269 112 204 110 127" />
           <path d="M109 260C77 231 48 226 24 235C43 261 70 273 109 275Z" />
@@ -166,11 +158,21 @@
       </section>
 
       <section class="product section" id="prodotto" aria-labelledby="product-title">
-        <svg class="crop-backdrop crop-backdrop-product" viewBox="0 0 420 620" aria-hidden="true" focusable="false">
-          <g class="crop-sway crop-sway-3"><g transform="translate(12 241) scale(.9)"><use href="#crop-simple" /></g></g>
-          <g class="crop-sway crop-sway-1"><g transform="translate(145 183) scale(1.12)"><use href="#crop-simple" /></g></g>
-          <g class="crop-sway crop-sway-4"><g transform="translate(302 307) scale(.72)"><use href="#crop-simple" /></g></g>
-        </svg>
+        <!-- Mixkit: "Aerial view at dawn of a crop field and forest" (Free License) -->
+        <video
+          class="product-video"
+          data-ambient-video
+          autoplay
+          muted
+          loop
+          playsinline
+          preload="metadata"
+          poster="./media/field-aerial-poster.jpg"
+          aria-hidden="true"
+          tabindex="-1"
+        >
+          <source src="./media/field-aerial.mp4" type="video/mp4" />
+        </video>
         <div class="product-intro">
           <p class="section-index section-index-light">02 / Prodotto</p>
           <h2 id="product-title">Cosa puoi monitorare.</h2>
@@ -228,6 +230,11 @@
       </section>
 
       <section class="data section" id="dati" aria-labelledby="data-title">
+        <svg class="crop-backdrop crop-backdrop-data" viewBox="0 0 420 330" aria-hidden="true" focusable="false">
+          <g class="crop-sway crop-sway-2"><g transform="translate(12 94) scale(.68)"><use href="#crop-sunflower" /></g></g>
+          <g class="crop-sway crop-sway-3"><g transform="translate(142 42) scale(.82)"><use href="#crop-sunflower" /></g></g>
+          <g class="crop-sway crop-sway-1"><g transform="translate(308 128) scale(.58)"><use href="#crop-sunflower" /></g></g>
+        </svg>
         <div class="data-copy">
           <p class="section-index">03 / Dati e responsabilità</p>
           <h2 id="data-title">Dati aziendali protetti. Analisi verificabili.</h2>
@@ -259,12 +266,8 @@
         </dl>
       </section>
 
+      <!-- famingjia inventor / Unsplash: "A field full of green plants with lots of leaves" -->
       <section class="closing section" aria-labelledby="closing-title">
-        <svg class="crop-backdrop crop-backdrop-closing" viewBox="0 0 420 330" aria-hidden="true" focusable="false">
-          <g class="crop-sway crop-sway-2"><g transform="translate(12 94) scale(.68)"><use href="#crop-sunflower" /></g></g>
-          <g class="crop-sway crop-sway-3"><g transform="translate(142 42) scale(.82)"><use href="#crop-sunflower" /></g></g>
-          <g class="crop-sway crop-sway-1"><g transform="translate(308 128) scale(.58)"><use href="#crop-sunflower" /></g></g>
-        </svg>
         <div>
           <p class="section-index section-index-light">Primo passo</p>
           <h2 id="closing-title">Inizia con Arvo.</h2>
