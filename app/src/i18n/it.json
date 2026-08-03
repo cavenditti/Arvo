@@ -810,6 +810,7 @@
   "alerts_group.title_generic_noparcel_one": "Un nuovo segnale",
   "alerts_group.title_generic_noparcel_other": "{{count}} nuovi segnali",
   "menu.add": "Aggiungi",
+  "menu.add_hint": "Aggiungi un campo, una nota o una foto",
   "menu.new_note": "Nuova nota",
   "menu.close": "Chiudi il menu",
   "alerts_group.more": "Altro",

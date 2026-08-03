@@ -1,7 +1,7 @@
-// OWNER: capture-observe — the observations list, now a plain stack route (/scouting). The center
-// tab FAB goes straight to capture; this list is reached from the dashboard and after-save
-// moments. Native header carries the title, so sync state lives in a content row recast as
-// reassurance ("Tutto salvato sul telefono") rather than a second header bar.
+// OWNER: capture-observe — the observations list, now a plain stack route (/scouting). It is
+// reached from the dashboard and after-save moments; its labeled action starts a note directly.
+// Native header carries the title, so sync state lives in a content row recast as reassurance
+// ("Tutto salvato sul telefono") rather than a second header bar.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { format } from 'date-fns';
 import { Image } from 'expo-image';
@@ -85,11 +85,14 @@ export default function Screen() {
 
       <Pressable
         style={[styles.fab, { bottom: spacing.lg + insets.bottom }]}
-        onPress={() => router.push('/observation/new')}
+        onPress={() => router.push('/observation/new?mode=note')}
         accessibilityRole="button"
-        accessibilityLabel={t('scouting.new_observation')}
+        accessibilityLabel={t('menu.new_note')}
       >
-        <Ionicons name="add" size={30} color={colors.onPrimary} />
+        <Ionicons name="create-outline" size={20} color={colors.onPrimary} />
+        <Text style={styles.fabText} maxFontSizeMultiplier={typeScale.maxMult}>
+          {t('menu.new_note')}
+        </Text>
       </Pressable>
     </View>
   );
@@ -338,16 +341,23 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: spacing.lg,
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: colors.primary,
+    minHeight: 56,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primary,
     elevation: 4,
     shadowColor: '#000',
     shadowOpacity: 0.18,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
+  },
+  fabText: {
+    color: colors.onPrimary,
+    fontFamily: fonts.bodyBold,
+    fontSize: typeScale.body,
   },
 });

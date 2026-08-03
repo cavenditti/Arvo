@@ -29,6 +29,7 @@ export interface MapInitMessage {
   markers: { id: string; lon: number; lat: number; label?: string }[];
   focus: [number, number, number?] | null;
   mode: 'view' | 'draw';
+  showZoomControl: boolean;
   labels: MapLabels;
   /** XYZ index raster tiles rendered above the base map, below parcel polygons; null = none */
   overlay: NonNullable<MapViewProps['overlay']> | null;
@@ -37,7 +38,11 @@ export interface MapInitMessage {
 }
 
 /** Flatten the frozen MapView props into the wire payload the Leaflet document understands. */
-export function buildInit(props: MapViewProps, labels: MapLabels): MapInitMessage {
+export function buildInit(
+  props: MapViewProps,
+  labels: MapLabels,
+  options: { showZoomControl?: boolean } = {},
+): MapInitMessage {
   return {
     type: 'init',
     parcels: props.parcels.map((f) => ({
@@ -49,6 +54,7 @@ export function buildInit(props: MapViewProps, labels: MapLabels): MapInitMessag
     markers: props.markers ?? [],
     focus: props.focus ?? null,
     mode: props.mode,
+    showZoomControl: options.showZoomControl ?? true,
     labels,
     overlay: props.overlay ?? null,
     cadastre: props.cadastre ?? null,
@@ -217,6 +223,8 @@ export const mapHtml = `<!DOCTYPE html>
     gotInit = true; // both bridges (postMessage and injected JS) land here — stop re-announcing
     if (!map) { setTimeout(function(){ window.__update(p); }, 60); return; }
     mode = p.mode || 'view';
+    var zoomControl = document.querySelector('.leaflet-control-zoom');
+    if (zoomControl) zoomControl.style.display = p.showZoomControl === false ? 'none' : '';
     if (p.labels) {
       document.getElementById('btnFinish').textContent = p.labels.finish || 'Fine';
       document.getElementById('btnCancel').textContent = p.labels.cancel || 'Annulla';

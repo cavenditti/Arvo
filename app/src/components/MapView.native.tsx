@@ -26,14 +26,22 @@ export default function MapView(props: MapViewProps) {
   const lastSent = useRef('');
 
   const payloadStr = JSON.stringify(
-    buildInit(props, {
-      finish: t('map.draw_finish'),
-      cancel: t('map.draw_cancel'),
-      hint: t('map.draw_hint'),
-      undo: t('map.draw_undo', { defaultValue: 'Annulla ultimo punto' }),
-      zoomIn: t('map.zoom_in'),
-      zoomOut: t('map.zoom_out'),
-    }),
+    buildInit(
+      props,
+      {
+        finish: t('map.draw_finish'),
+        cancel: t('map.draw_cancel'),
+        hint: t('map.draw_hint'),
+        undo: t('map.draw_undo', { defaultValue: 'Annulla ultimo punto' }),
+        zoomIn: t('map.zoom_in'),
+        zoomOut: t('map.zoom_out'),
+      },
+      {
+        // Read-only maps support pinch zoom and host their own floating controls. Leaflet's
+        // bottom-right +/- stack otherwise sits behind NativeTabs' bottom accessory.
+        showZoomControl: props.mode === 'draw',
+      },
+    ),
   );
 
   const send = useCallback(() => {

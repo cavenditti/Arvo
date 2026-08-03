@@ -1,6 +1,6 @@
 // OWNER: map-native — Mappa tab: every field on Leaflet (OSM or satellite base), colored by the
 // Arvo score or one chosen index, floating search with an explicit results list, bottom selection
-// card driven by the shared status pipeline, labeled "Nuovo campo" pill.
+// card driven by the shared status pipeline, and creation through the native tab accessory.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -42,7 +42,6 @@ import {
   colors,
   fonts,
   gradients,
-  navigationMetrics,
   radius,
   spacing,
   touch,
@@ -245,10 +244,9 @@ export default function MapScreen() {
   const mapReady = !parcelsQ.isLoading && !parcelsQ.isError;
   const showResults = query.trim().length > 0;
   const newFieldLabel = t('map.new_field', { defaultValue: 'Nuovo campo' });
-  const bottomOverlayOffset =
-    Math.max(insets.bottom, spacing.sm) +
-    navigationMetrics.barHeight +
-    navigationMetrics.controlGap;
+  // NativeTabs lays this screen out above its tab bar and bottom accessory already. A second
+  // bar-sized offset here pushes map chrome into the middle of the viewport.
+  const bottomOverlayOffset = spacing.md;
 
   return (
     <View style={styles.root}>
@@ -451,11 +449,11 @@ export default function MapScreen() {
             <InteractivePressable
               style={styles.scoutBtn}
               hoverStyle={styles.scoutBtnHover}
-              onPress={() => router.push(`/observation/new?parcelId=${selected.id}`)}
-              accessibilityLabel={t('map.scout_here')}
+              onPress={() => router.push(`/observation/new?parcelId=${selected.id}&mode=note`)}
+              accessibilityLabel={t('menu.new_note')}
             >
               <Text style={styles.scoutBtnTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('map.scout_here')}
+                {t('menu.new_note')}
               </Text>
             </InteractivePressable>
           </View>
@@ -633,9 +631,8 @@ export default function MapScreen() {
             })}
         </View>
       </NativeSheet>
-
-      {/* No on-map create button: the tab bar's "+" menu owns creation everywhere.
-          The empty-state card above keeps its contextual CTA. */}
+      {/* The native tab accessory owns creation everywhere. The empty state above keeps its
+          direct field CTA, and a selected field keeps its contextual note action. */}
     </View>
   );
 }

@@ -810,6 +810,7 @@
   "alerts_group.title_generic_noparcel_one": "One new insight",
   "alerts_group.title_generic_noparcel_other": "{{count}} new insights",
   "menu.add": "Add",
+  "menu.add_hint": "Add a field, note, or photo",
   "menu.new_note": "New note",
   "menu.close": "Close menu",
   "alerts_group.more": "More",
