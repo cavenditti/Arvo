@@ -75,6 +75,106 @@ svg {
   display: block;
 }
 
+.svg-library {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.hero,
+.product,
+.data,
+.closing {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.hero > :not(.crop-backdrop),
+.product > :not(.crop-backdrop),
+.data > :not(.crop-backdrop),
+.closing > :not(.crop-backdrop) {
+  position: relative;
+  z-index: 1;
+}
+
+.crop-backdrop {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.crop-backdrop-hero {
+  right: -2.5rem;
+  bottom: -2rem;
+  width: min(45vw, 650px);
+  color: var(--forest);
+  opacity: 0.105;
+}
+
+.crop-backdrop-product {
+  right: -5.5rem;
+  bottom: -4.5rem;
+  width: min(31vw, 440px);
+  color: #b8d7bb;
+  opacity: 0.055;
+}
+
+.crop-backdrop-data {
+  left: -5.5rem;
+  bottom: -4rem;
+  width: min(34vw, 470px);
+  color: var(--eucalyptus);
+  opacity: 0.075;
+}
+
+.crop-backdrop-closing {
+  right: -3rem;
+  bottom: -3.25rem;
+  width: min(31vw, 420px);
+  color: #b8d7bb;
+  opacity: 0.065;
+}
+
+.crop-sway {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: crop-sway 8s ease-in-out infinite;
+}
+
+.crop-sway-2 {
+  animation-delay: -2.7s;
+  animation-duration: 9.4s;
+}
+
+.crop-sway-3 {
+  animation-delay: -5.1s;
+  animation-duration: 7.3s;
+}
+
+.crop-sway-4 {
+  animation-delay: -6.4s;
+  animation-duration: 10.6s;
+}
+
+@keyframes crop-sway {
+  0%,
+  100% {
+    transform: rotate(-0.65deg);
+  }
+
+  50% {
+    transform: rotate(0.8deg);
+  }
+}
+
 h1,
 h2,
 h3,
@@ -678,6 +778,31 @@ footer a:hover {
     padding-bottom: 4rem;
   }
 
+  .crop-backdrop-hero {
+    right: -28vw;
+    bottom: -1.5rem;
+    width: 78vw;
+    opacity: 0.075;
+  }
+
+  .crop-backdrop-product {
+    right: -28vw;
+    width: 68vw;
+    opacity: 0.045;
+  }
+
+  .crop-backdrop-data {
+    left: -35vw;
+    width: 75vw;
+    opacity: 0.055;
+  }
+
+  .crop-backdrop-closing {
+    right: -31vw;
+    width: 72vw;
+    opacity: 0.05;
+  }
+
   h1 {
     font-size: clamp(3.25rem, 13vw, 5rem);
   }
@@ -798,5 +923,9 @@ footer a:hover {
   *::before,
   *::after {
     transition-duration: 0.01ms !important;
+  }
+
+  .crop-sway {
+    animation: none;
   }
 }

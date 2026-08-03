@@ -24,6 +24,35 @@
   <body>
     <a class="skip-link" href="#contenuto">Vai al contenuto</a>
 
+    <svg class="svg-library" aria-hidden="true" focusable="false">
+      <defs>
+        <symbol id="crop-grain" viewBox="0 0 120 300">
+          <path d="M61 288C60 219 61 146 60 28" />
+          <path d="M60 225C45 207 31 201 14 199C21 218 35 230 60 236" />
+          <path d="M61 193C77 174 92 168 108 167C101 186 87 198 61 204" />
+          <path d="M60 155C45 139 33 134 18 133C25 151 37 161 60 166" />
+          <path d="M61 122C75 106 87 101 102 101C96 117 83 128 61 133" />
+          <path d="M60 88C48 77 38 73 27 73C32 86 42 94 60 98" />
+          <path d="M60 58C70 47 80 43 91 43C86 56 76 64 60 68" />
+          <path d="M60 28C51 18 51 9 60 2C69 9 69 18 60 28Z" />
+        </symbol>
+        <symbol id="crop-leaf" viewBox="0 0 180 300">
+          <path d="M89 288C89 225 91 172 90 88" />
+          <path d="M90 210C58 183 29 177 7 184C22 210 48 224 89 226" />
+          <path d="M91 178C124 148 152 141 174 148C158 176 132 191 91 194" />
+          <path d="M90 139C64 116 42 111 24 117C37 139 58 151 90 154" />
+          <path d="M90 108C111 86 130 80 147 84C136 105 117 118 90 122" />
+          <path d="M90 88C74 64 75 38 91 8C108 39 107 65 90 88Z" />
+        </symbol>
+        <symbol id="crop-sprout" viewBox="0 0 150 220">
+          <path d="M75 212C74 165 75 121 74 78" />
+          <path d="M74 128C44 105 21 101 5 108C19 132 41 143 74 144" />
+          <path d="M75 102C104 78 126 74 144 81C130 104 108 117 75 118" />
+          <path d="M74 79C62 59 63 36 75 9C89 37 88 60 74 79Z" />
+        </symbol>
+      </defs>
+    </svg>
+
     <header class="site-header" data-header>
       <a class="brand" href="./" aria-label="Arvo, pagina iniziale">
         <img src="./logo.svg" alt="" width="34" height="34" />
@@ -40,6 +69,14 @@
 
     <main id="contenuto">
       <section class="hero" aria-labelledby="hero-title">
+        <svg class="crop-backdrop crop-backdrop-hero" viewBox="0 0 620 540" aria-hidden="true" focusable="false">
+          <g class="crop-sway crop-sway-1"><g transform="translate(30 222) scale(.68)"><use href="#crop-grain" /></g></g>
+          <g class="crop-sway crop-sway-2"><g transform="translate(102 126) scale(1.03)"><use href="#crop-leaf" /></g></g>
+          <g class="crop-sway crop-sway-3"><g transform="translate(238 238) scale(.82)"><use href="#crop-grain" /></g></g>
+          <g class="crop-sway crop-sway-4"><g transform="translate(306 170) scale(1.14)"><use href="#crop-sprout" /></g></g>
+          <g class="crop-sway crop-sway-2"><g transform="translate(438 88) scale(1.12)"><use href="#crop-grain" /></g></g>
+          <g class="crop-sway crop-sway-1"><g transform="translate(504 251) scale(.88)"><use href="#crop-leaf" /></g></g>
+        </svg>
         <div class="hero-copy">
           <p class="kicker">Intelligenza agronomica</p>
           <h1 id="hero-title">Monitora la salute delle colture con dati satellitari, meteo e rilievi.</h1>
@@ -108,6 +145,11 @@
       </section>
 
       <section class="product section" id="prodotto" aria-labelledby="product-title">
+        <svg class="crop-backdrop crop-backdrop-product" viewBox="0 0 420 620" aria-hidden="true" focusable="false">
+          <g class="crop-sway crop-sway-3"><g transform="translate(22 255) scale(1.05)"><use href="#crop-grain" /></g></g>
+          <g class="crop-sway crop-sway-1"><g transform="translate(105 222) scale(1.34)"><use href="#crop-leaf" /></g></g>
+          <g class="crop-sway crop-sway-4"><g transform="translate(286 335) scale(.96)"><use href="#crop-sprout" /></g></g>
+        </svg>
         <div class="product-intro">
           <p class="section-index section-index-light">02 / Prodotto</p>
           <h2 id="product-title">Cosa puoi monitorare.</h2>
@@ -165,6 +207,11 @@
       </section>
 
       <section class="data section" id="dati" aria-labelledby="data-title">
+        <svg class="crop-backdrop crop-backdrop-data" viewBox="0 0 460 410" aria-hidden="true" focusable="false">
+          <g class="crop-sway crop-sway-4"><g transform="translate(18 111) scale(.92)"><use href="#crop-sprout" /></g></g>
+          <g class="crop-sway crop-sway-2"><g transform="translate(156 95) scale(.98)"><use href="#crop-grain" /></g></g>
+          <g class="crop-sway crop-sway-1"><g transform="translate(258 137) scale(.84)"><use href="#crop-leaf" /></g></g>
+        </svg>
         <div class="data-copy">
           <p class="section-index">03 / Dati e responsabilità</p>
           <h2 id="data-title">Dati aziendali protetti. Analisi verificabili.</h2>
@@ -197,6 +244,11 @@
       </section>
 
       <section class="closing section" aria-labelledby="closing-title">
+        <svg class="crop-backdrop crop-backdrop-closing" viewBox="0 0 420 330" aria-hidden="true" focusable="false">
+          <g class="crop-sway crop-sway-2"><g transform="translate(24 70) scale(.76)"><use href="#crop-grain" /></g></g>
+          <g class="crop-sway crop-sway-3"><g transform="translate(112 67) scale(.84)"><use href="#crop-sprout" /></g></g>
+          <g class="crop-sway crop-sway-1"><g transform="translate(226 50) scale(.88)"><use href="#crop-leaf" /></g></g>
+        </svg>
         <div>
           <p class="section-index section-index-light">Primo passo</p>
           <h2 id="closing-title">Inizia con Arvo.</h2>
