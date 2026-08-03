@@ -14,9 +14,18 @@ import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  useColorScheme,
+  View,
+} from 'react-native';
 
 import { AuthProvider, useAuth } from '@/auth/AuthContext';
 import Logo from '@/components/Logo';
@@ -183,6 +192,10 @@ function RootNavigator() {
 }
 
 export default function RootLayout() {
+  // Subscribe once at the shell. Native semantic colors update in place on iOS, while this
+  // guarantees navigation and Android system surfaces re-evaluate when appearance changes.
+  useColorScheme();
+
   // Terra voices (docs/DESIGN.md §3). On a load error we render anyway — RN falls
   // back to system fonts rather than blanking the app.
   const [fontsLoaded, fontsError] = useFonts({
@@ -201,16 +214,24 @@ export default function RootLayout() {
   }
 
   return (
-    <PersistQueryClientProvider client={queryClient} persistOptions={queryPersistOptions}>
-      <AuthProvider>
-        <RootNavigator />
-        <ToastHost />
-      </AuthProvider>
-    </PersistQueryClientProvider>
+    <View style={styles.root}>
+      <StatusBar style="auto" />
+      <PersistQueryClientProvider client={queryClient} persistOptions={queryPersistOptions}>
+        <AuthProvider>
+          <RootNavigator />
+          <ToastHost />
+        </AuthProvider>
+      </PersistQueryClientProvider>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    ...(Platform.OS === 'web' ? ({ colorScheme: 'light dark' } as object) : {}),
+  },
   boot: {
     flex: 1,
     alignItems: 'center',

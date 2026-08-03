@@ -40,7 +40,7 @@ export default function Logo({
         width: size,
         height: size,
         borderRadius: Math.min(radius.md, Math.round(size * 0.28)),
-        backgroundColor: '#FFFFFF',
+        backgroundColor: colors.card,
         borderWidth: 1,
         borderColor: colors.borderSoft,
         alignItems: 'center',

@@ -101,6 +101,21 @@ export const mapHtml = `<!DOCTYPE html>
   #btnCancel { background: #8A8F86; }
   #btnUndo { background: #FBFAF7; color: #1B1E1A; border: 1px solid #E4E1D7; }
   #btnUndo:disabled { color: #8A8F86; opacity: 0.75; }
+  .leaflet-control-attribution { color: #5C625C; background: rgba(251,250,247,0.82) !important; }
+  .leaflet-control-attribution a { color: #234B34; }
+  @media (prefers-color-scheme: dark) {
+    #map { background: #171E1D; }
+    .parcel-label { background: rgba(24,29,24,0.88); color: #F3F3EC; }
+    .leaflet-control-zoom, .leaflet-touch .leaflet-control-zoom { border-color: #343B34; }
+    .leaflet-control-zoom a, .leaflet-touch .leaflet-control-zoom a {
+      color: #F3F3EC; background: #181D18; border-bottom-color: #282F28;
+    }
+    .leaflet-control-zoom a.leaflet-disabled { color: #899188; }
+    #btnUndo { background: #181D18; color: #F3F3EC; border-color: #343B34; }
+    #btnUndo:disabled { color: #899188; }
+    .leaflet-control-attribution { color: #B7BEB5; background: rgba(24,29,24,0.82) !important; }
+    .leaflet-control-attribution a { color: #9BC7A5; }
+  }
 </style>
 </head>
 <body>

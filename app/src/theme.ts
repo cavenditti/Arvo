@@ -1,25 +1,48 @@
 // OWNER: fe-shell — Terra design language tokens (docs/DESIGN.md). Other code imports tokens,
 // never hardcodes colors/fonts. Extend here first when a screen needs something new.
+import { DynamicColorIOS, Platform } from 'react-native';
+
+/**
+ * One semantic token with a Terra light and dark value. iOS keeps this as a native dynamic
+ * UIColor, so an already-mounted view updates with the system appearance without rebuilding its
+ * StyleSheet. Web uses the equivalent CSS color function; Android keeps the light fallback until
+ * the generated native project can provide paired resource colors.
+ *
+ * The public type stays `string` because a few shared helpers also use tokens in CSS-only values.
+ * React Native accepts the native color object anywhere it accepts a ColorValue.
+ */
+function adaptive(light: string, dark: string): string {
+  if (Platform.OS === 'ios') {
+    return DynamicColorIOS({
+      light,
+      dark,
+      highContrastLight: light,
+      highContrastDark: dark,
+    }) as unknown as string;
+  }
+  if (Platform.OS === 'web') return `light-dark(${light}, ${dark})`;
+  return light;
+}
 
 export const colors = {
-  primary: '#234B34', // forest green — actions, active states
-  primaryDark: '#1F4430',
-  primarySoft: '#E9EFE9', // tinted green surface (active nav, healthy chip)
-  accent: '#A5432B', // clay
-  bg: '#F2F1EC', // paper
-  card: '#FBFAF7',
-  cardAlt: '#F6F5F2', // inset panels on top of card
-  text: '#1B1E1A',
-  textMuted: '#5C625C',
-  textFaint: '#8A8F86',
-  border: '#E4E1D7',
-  borderSoft: '#EDECE7',
-  danger: '#A5432B',
-  warning: '#9A6A1E', // straw
-  info: '#5B8F8A', // eucalyptus
-  success: '#3F7D45', // leaf
-  onPrimary: '#F6F5F2',
-  focus: '#6D8F78', // keyboard focus ring — visible without introducing a new accent hue
+  primary: adaptive('#234B34', '#9BC7A5'), // forest green — actions, active states
+  primaryDark: adaptive('#1F4430', '#B9DDBF'),
+  primarySoft: adaptive('#E9EFE9', '#203329'), // tinted green surface (active nav, healthy chip)
+  accent: adaptive('#A5432B', '#F09A80'), // clay
+  bg: adaptive('#F2F1EC', '#101410'), // paper / night soil
+  card: adaptive('#FBFAF7', '#181D18'),
+  cardAlt: adaptive('#F6F5F2', '#202720'), // inset panels on top of card
+  text: adaptive('#1B1E1A', '#F3F3EC'),
+  textMuted: adaptive('#5C625C', '#B7BEB5'),
+  textFaint: adaptive('#8A8F86', '#899188'),
+  border: adaptive('#E4E1D7', '#343B34'),
+  borderSoft: adaptive('#EDECE7', '#282F28'),
+  danger: adaptive('#A5432B', '#F09A80'),
+  warning: adaptive('#9A6A1E', '#E3BD70'), // straw
+  info: adaptive('#5B8F8A', '#83C6C0'), // eucalyptus
+  success: adaptive('#3F7D45', '#87C68C'), // leaf
+  onPrimary: adaptive('#F6F5F2', '#102016'),
+  focus: adaptive('#6D8F78', '#B8D5C1'), // keyboard focus ring
 };
 
 // iOS 26 Liquid Glass preserves Terra's warm field-notebook palette beneath native material.
@@ -27,9 +50,9 @@ export const colors = {
 // edge treatment; the app only supplies a faint contextual color. Every glass surface has the
 // existing paper/card treatment as its fallback on older iOS versions and other platforms.
 export const glass = {
-  tint: '#F8F8F4',
-  actionTint: '#234B34',
-  selectionTint: 'rgba(35, 75, 52, 0.12)',
+  tint: adaptive('#F8F8F4', '#202620'),
+  actionTint: adaptive('#234B34', '#9BC7A5'),
+  selectionTint: adaptive('rgba(35, 75, 52, 0.12)', 'rgba(155, 199, 165, 0.18)'),
 };
 
 /** Floating bottom-navigation geometry shared by content, overlays and transient UI. */
@@ -77,17 +100,17 @@ export const fonts = {
 // Semantic backdrop gradients (docs/DESIGN.md §2) — two close same-temperature stops,
 // rendered diagonally. Use only when the surface MEANS the condition.
 export const gradients: Record<string, [string, string]> = {
-  paper: ['#FBFAF7', '#F3F2EA'],
-  meadow: ['#EAF1E3', '#FAF9F1'],
-  straw: ['#F7EFD7', '#FBF8EE'],
-  clay: ['#F6E2D9', '#FBF6F1'],
-  eucalyptus: ['#E2EDEB', '#F6F8F5'],
-  skyClear: ['#FBEFC9', '#F4F5E7'],
-  skyHot: ['#F6DEBB', '#F8EFDC'],
-  skyRain: ['#D9E6E7', '#EFF3F0'],
-  skyCloud: ['#EBECE6', '#F5F5F0'],
-  skyFrost: ['#E2ECF0', '#F2F6F5'],
-  forest: ['#2C5A40', '#1F4430'],
+  paper: [adaptive('#FBFAF7', '#181D18'), adaptive('#F3F2EA', '#151A15')],
+  meadow: [adaptive('#EAF1E3', '#1A2B20'), adaptive('#FAF9F1', '#171F19')],
+  straw: [adaptive('#F7EFD7', '#2D281A'), adaptive('#FBF8EE', '#201E17')],
+  clay: [adaptive('#F6E2D9', '#2F201C'), adaptive('#FBF6F1', '#211917')],
+  eucalyptus: [adaptive('#E2EDEB', '#192928'), adaptive('#F6F8F5', '#171E1D')],
+  skyClear: [adaptive('#FBEFC9', '#2B291B'), adaptive('#F4F5E7', '#1C2119')],
+  skyHot: [adaptive('#F6DEBB', '#302319'), adaptive('#F8EFDC', '#211C17')],
+  skyRain: [adaptive('#D9E6E7', '#17272A'), adaptive('#EFF3F0', '#171E1D')],
+  skyCloud: [adaptive('#EBECE6', '#242824'), adaptive('#F5F5F0', '#181C18')],
+  skyFrost: [adaptive('#E2ECF0', '#1A262C'), adaptive('#F2F6F5', '#171E1F')],
+  forest: [adaptive('#2C5A40', '#9BC7A5'), adaptive('#1F4430', '#78A985')],
 };
 
 /** Below this width, the web app follows the native phone/tablet navigation and stacking. */
@@ -101,9 +124,9 @@ export const severityColor: Record<string, string> = {
 
 // Severity tag tints (chips) — the matching backdrop lives in severityGradient below.
 export const severityTint: Record<string, { fg: string; bg: string }> = {
-  critical: { fg: '#A5432B', bg: '#F7E7E2' },
-  warning: { fg: '#9A6A1E', bg: '#F6EFDD' },
-  info: { fg: '#5B8F8A', bg: '#E5EEED' },
+  critical: { fg: adaptive('#A5432B', '#F09A80'), bg: adaptive('#F7E7E2', '#38231E') },
+  warning: { fg: adaptive('#9A6A1E', '#E3BD70'), bg: adaptive('#F6EFDD', '#332C1B') },
+  info: { fg: adaptive('#5B8F8A', '#83C6C0'), bg: adaptive('#E5EEED', '#1C302F') },
 };
 
 /** Severity → semantic backdrop recipe (critical=clay, warning=straw, info=eucalyptus). */
@@ -125,9 +148,9 @@ export const alertStateTint: Record<AlertStateKey, { fg: string; bg: string }> =
 // Parcel/alert health status: chip tint + text color pairs.
 export type Status = 'healthy' | 'watch' | 'attention';
 export const statusColors: Record<Status, { fg: string; bg: string }> = {
-  healthy: { fg: '#3F7D45', bg: '#E9EFE9' },
-  watch: { fg: '#9A6A1E', bg: '#F6EFDD' },
-  attention: { fg: '#A5432B', bg: '#F7E7E2' },
+  healthy: { fg: adaptive('#3F7D45', '#87C68C'), bg: adaptive('#E9EFE9', '#203329') },
+  watch: { fg: adaptive('#9A6A1E', '#E3BD70'), bg: adaptive('#F6EFDD', '#332C1B') },
+  attention: { fg: adaptive('#A5432B', '#F09A80'), bg: adaptive('#F7E7E2', '#38231E') },
 };
 
 /** Status → semantic backdrop recipe (healthy=meadow, watch=straw, attention=clay). */

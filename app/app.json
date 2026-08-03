@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "arvo",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "farm.arvo.app",
       "supportsTablet": false,
@@ -46,9 +46,14 @@
         {
           "backgroundColor": "#F2F1EC",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 120
+          "imageWidth": 120,
+          "dark": {
+            "backgroundColor": "#101410",
+            "image": "./assets/images/splash-icon.png"
+          }
         }
       ],
+      "expo-system-ui",
       "expo-secure-store",
       "expo-localization",
       "expo-sharing",
