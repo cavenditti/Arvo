@@ -127,14 +127,6 @@ svg {
   opacity: 0.055;
 }
 
-.crop-backdrop-data {
-  left: -5.5rem;
-  bottom: -4rem;
-  width: min(34vw, 470px);
-  color: var(--eucalyptus);
-  opacity: 0.075;
-}
-
 .crop-backdrop-closing {
   right: -3rem;
   bottom: -3.25rem;
@@ -655,6 +647,7 @@ h2 {
   max-width: 850px;
   margin-bottom: 0;
   color: var(--surface);
+  letter-spacing: -0.015em;
 }
 
 .closing-action {
@@ -789,12 +782,6 @@ footer a:hover {
     right: -28vw;
     width: 68vw;
     opacity: 0.045;
-  }
-
-  .crop-backdrop-data {
-    left: -35vw;
-    width: 75vw;
-    opacity: 0.055;
   }
 
   .crop-backdrop-closing {
