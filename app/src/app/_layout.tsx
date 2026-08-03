@@ -1,6 +1,8 @@
 // OWNER: shell-nav — app shell: branded splash, offline-persisted QueryClient, auth gate,
 // toast host, push bootstrap, and the one Stack that names every screen. The native splash
 // stays up until fonts AND auth restore finish, so cold boot never shows a bare spinner.
+import 'react-native-gesture-handler';
+
 import { Fraunces_600SemiBold, Fraunces_700Bold } from '@expo-google-fonts/fraunces';
 import { IBMPlexMono_400Regular, IBMPlexMono_600SemiBold } from '@expo-google-fonts/ibm-plex-mono';
 import {
@@ -17,6 +19,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import {
   ActivityIndicator,
   Platform,
@@ -214,7 +217,7 @@ export default function RootLayout() {
   }
 
   return (
-    <View style={styles.root}>
+    <GestureHandlerRootView style={styles.root}>
       <StatusBar style="auto" />
       <PersistQueryClientProvider client={queryClient} persistOptions={queryPersistOptions}>
         <AuthProvider>
@@ -222,7 +225,7 @@ export default function RootLayout() {
           <ToastHost />
         </AuthProvider>
       </PersistQueryClientProvider>
-    </View>
+    </GestureHandlerRootView>
   );
 }
 

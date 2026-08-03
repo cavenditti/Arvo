@@ -1,7 +1,7 @@
-// OWNER: alert-grouping — grouped alert-event cards (docs/UX-REVAMP.md). Renders AlertEvents
-// from features/insights/grouping.ts: plain-language Fraunces title, parcel + relative time
-// meta, plain body, count badge, a "Dettagli tecnici" disclosure hiding the mono summary and
-// the individual alerts, and bulk actions ≥44pt (Conferma / Posponi 1g·3g·7g / Ignora).
+// OWNER: alert-grouping — grouped alert-event rows (docs/UX-REVAMP.md). Renders AlertEvents
+// from features/insights/grouping.ts as one standard content list: plain-language title,
+// parcel + relative time, body, and a technical disclosure. Native actions live behind the row:
+// swipe right to confirm; swipe left to postpone or dismiss. Web retains visible button fallbacks.
 //
 // PUBLIC PROPS (new frozen contract, replaces the old per-alert onAction shape):
 //   alerts      raw Alert[] — the component groups them into events itself
@@ -11,14 +11,16 @@
 //   onDismiss   dismiss every id of the event
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { formatDistanceToNow, isValid, parseISO } from 'date-fns';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useMemo, useState } from 'react';
+import { type ComponentProps, useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from 'react-native-gesture-handler/ReanimatedSwipeable';
 
 import type { Alert } from '@/api/types';
 import { kindGlyph } from '@/components/glyphs';
-import { GlyphBadge, InteractivePressable, MonoLabel, Pill, TintCard } from '@/components/ui';
+import { GlyphBadge, InteractivePressable, MonoLabel, Pill } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
 import { groupAlerts, type AlertEvent } from '@/features/insights/grouping';
 import * as haptics from '@/lib/haptics';
@@ -26,9 +28,7 @@ import {
   alertStateTint,
   colors,
   fonts,
-  gradients,
   radius,
-  severityGradient,
   severityTint,
   spacing,
   statusColors,
@@ -54,15 +54,27 @@ export default function AlertList({
   onDismiss,
 }: AlertListProps) {
   const events = useMemo(() => groupAlerts(alerts, parcelName), [alerts, parcelName]);
+  const openRow = useRef<SwipeableMethods | null>(null);
+  const handleWillOpen = useCallback((row: SwipeableMethods) => {
+    if (openRow.current !== row) openRow.current?.close();
+    openRow.current = row;
+  }, []);
+  const handleClose = useCallback((row: SwipeableMethods) => {
+    if (openRow.current === row) openRow.current = null;
+  }, []);
+
   return (
     <View style={styles.list}>
-      {events.map((ev) => (
+      {events.map((ev, index) => (
         <EventCard
           key={ev.key}
           event={ev}
+          last={index === events.length - 1}
           onConfirm={onConfirm}
           onSnooze={onSnooze}
           onDismiss={onDismiss}
+          onWillOpen={handleWillOpen}
+          onClose={handleClose}
         />
       ))}
     </View>
@@ -71,18 +83,25 @@ export default function AlertList({
 
 function EventCard({
   event,
+  last,
   onConfirm,
   onSnooze,
   onDismiss,
+  onWillOpen,
+  onClose,
 }: {
   event: AlertEvent;
+  last: boolean;
   onConfirm: (ids: string[]) => void;
   onSnooze: (ids: string[], days: number) => void;
   onDismiss: (ids: string[]) => void;
+  onWillOpen: (row: SwipeableMethods) => void;
+  onClose: (row: SwipeableMethods) => void;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [snoozing, setSnoozing] = useState(false);
+  const swipeable = useRef<SwipeableMethods | null>(null);
 
   const sev = severityTint[event.severity] ?? severityTint.info;
   const actionableIds = event.alerts
@@ -101,27 +120,30 @@ function EventCard({
   const allDismissed =
     actionableIds.length === 0 && event.alerts.every((a) => a.state === 'dismissed');
 
-  return (
-    <TintCard gradient={severityGradient(event.severity)} style={styles.card}>
+  const row = (
+    <View style={[styles.row, !last && styles.rowDivider]}>
       <View style={styles.titleRow}>
-        <GlyphBadge glyph={kindGlyph(event.kind)} fg={sev.fg} bg={sev.bg} size={28} />
-        <Text style={styles.title} maxFontSizeMultiplier={typeScale.maxMult}>
-          {t(event.titleKey, event.titleParams)}
-        </Text>
-        {event.count > 1 ? (
-          <View style={[styles.countBadge, { backgroundColor: sev.bg }]}>
-            <Text
-              style={[styles.countText, { color: sev.fg }]}
-              maxFontSizeMultiplier={typeScale.maxMult}
-            >
-              {event.count}
+        <GlyphBadge glyph={kindGlyph(event.kind)} fg={sev.fg} bg={sev.bg} size={36} />
+        <View style={styles.titleContent}>
+          <View style={styles.titleLine}>
+            <Text style={styles.title} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t(event.titleKey, event.titleParams)}
             </Text>
+            {event.count > 1 ? (
+              <View style={[styles.countBadge, { backgroundColor: sev.bg }]}>
+                <Text
+                  style={[styles.countText, { color: sev.fg }]}
+                  maxFontSizeMultiplier={typeScale.maxMult}
+                >
+                  {event.count}
+                </Text>
+              </View>
+            ) : null}
           </View>
-        ) : null}
+          <MonoLabel style={styles.meta}>{[parcel, ago].filter(Boolean).join(' · ')}</MonoLabel>
+        </View>
         <Pill label={t(`severity.${event.severity}`)} fg={sev.fg} bg={sev.bg} />
       </View>
-
-      <MonoLabel style={styles.meta}>{[parcel, ago].filter(Boolean).join(' · ')}</MonoLabel>
 
       <Text style={styles.body} maxFontSizeMultiplier={typeScale.maxMult}>
         {t(event.bodyKey, event.bodyParams)}
@@ -166,7 +188,7 @@ function EventCard({
         </>
       ) : null}
 
-      {actionableIds.length > 0 ? (
+      {Platform.OS === 'web' && actionableIds.length > 0 ? (
         <View style={styles.actions}>
           {snoozing ? (
             // "Altro" expanded: postpone choices + dismiss + back. Two taps for the
@@ -205,7 +227,7 @@ function EventCard({
             </>
           )}
         </View>
-      ) : (
+      ) : actionableIds.length === 0 ? (
         <View style={styles.footer}>
           {allDismissed ? (
             <Pill
@@ -221,8 +243,97 @@ function EventCard({
             />
           )}
         </View>
+      ) : null}
+    </View>
+  );
+
+  if (Platform.OS === 'web' || actionableIds.length === 0) return row;
+
+  return (
+    <ReanimatedSwipeable
+      ref={swipeable}
+      friction={1.35}
+      leftThreshold={44}
+      rightThreshold={58}
+      dragOffsetFromLeftEdge={12}
+      dragOffsetFromRightEdge={12}
+      overshootLeft={false}
+      overshootRight={false}
+      overshootFriction={8}
+      enableTrackpadTwoFingerGesture
+      containerStyle={styles.swipeContainer}
+      childrenContainerStyle={styles.swipeChildren}
+      onSwipeableWillOpen={() => {
+        if (swipeable.current) onWillOpen(swipeable.current);
+      }}
+      onSwipeableClose={() => {
+        if (swipeable.current) onClose(swipeable.current);
+      }}
+      renderLeftActions={(_progress, _translation, methods) => (
+        <SwipeAction
+          icon="checkmark-circle-outline"
+          label={many ? t('alerts_group.confirm_all') : t('alerts.ack')}
+          backgroundColor={colors.primary}
+          onPress={() => {
+            methods.close();
+            haptics.success();
+            onConfirm(actionableIds);
+          }}
+        />
       )}
-    </TintCard>
+      renderRightActions={(_progress, _translation, methods) => (
+        <View style={styles.swipeActions}>
+          <SwipeAction
+            icon="time-outline"
+            label={`${t('alerts.snooze')}\n${t('alerts.snooze_3d')}`}
+            backgroundColor={colors.warning}
+            onPress={() => {
+              methods.close();
+              haptics.selection();
+              onSnooze(actionableIds, 3);
+            }}
+          />
+          <SwipeAction
+            icon="eye-off-outline"
+            label={many ? t('alerts_group.dismiss_all') : t('alerts.dismiss')}
+            backgroundColor={colors.danger}
+            onPress={() => {
+              methods.close();
+              haptics.warning();
+              onDismiss(actionableIds);
+            }}
+          />
+        </View>
+      )}
+    >
+      {row}
+    </ReanimatedSwipeable>
+  );
+}
+
+function SwipeAction({
+  icon,
+  label,
+  backgroundColor,
+  onPress,
+}: {
+  icon: ComponentProps<typeof Ionicons>['name'];
+  label: string;
+  backgroundColor: string;
+  onPress: () => void;
+}) {
+  return (
+    <InteractivePressable
+      onPress={onPress}
+      accessibilityLabel={label}
+      style={[styles.swipeAction, { backgroundColor }]}
+      pressedStyle={styles.swipeActionPressed}
+    >
+      <Ionicons name={icon} size={22} color={colors.onPrimary} />
+      <Text style={styles.swipeActionLabel} maxFontSizeMultiplier={typeScale.maxMult}>
+        {label}
+      </Text>
+    </InteractivePressable>
   );
 }
 
@@ -260,19 +371,12 @@ function ActionButton({
     return (
       <InteractivePressable
         onPress={onPress}
-        style={styles.actionPrimaryWrap}
+        style={[styles.action, styles.actionPrimary]}
         hoverStyle={styles.actionPrimaryHover}
       >
-        <LinearGradient
-          colors={gradients.forest}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0.9, y: 1 }}
-          style={styles.actionPrimary}
-        >
-          <Text style={styles.actionTextPrimary} maxFontSizeMultiplier={typeScale.maxMult}>
-            {label}
-          </Text>
-        </LinearGradient>
+        <Text style={styles.actionTextPrimary} maxFontSizeMultiplier={typeScale.maxMult}>
+          {label}
+        </Text>
       </InteractivePressable>
     );
   }
@@ -286,17 +390,41 @@ function ActionButton({
 }
 
 const styles = StyleSheet.create({
-  list: { gap: spacing.sm },
-  card: {
+  list: {
     borderRadius: radius.lg,
-    padding: spacing.md,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: colors.border,
+    backgroundColor: colors.card,
   },
+  swipeContainer: { backgroundColor: colors.card },
+  swipeChildren: { backgroundColor: colors.card },
+  swipeActions: { flexDirection: 'row' },
+  swipeAction: {
+    width: 92,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.xs,
+  },
+  swipeActionPressed: { transform: [{ scale: 0.96 }] },
+  swipeActionLabel: {
+    color: colors.onPrimary,
+    fontFamily: fonts.bodyBold,
+    fontSize: typeScale.caption,
+    textAlign: 'center',
+  },
+  row: {
+    backgroundColor: colors.card,
+    padding: spacing.md,
+  },
+  rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  titleContent: { flex: 1, gap: 3 },
+  titleLine: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   title: {
     flex: 1,
-    fontFamily: fonts.display,
+    fontFamily: fonts.bodySemiBold,
     fontSize: typeScale.bodyLg,
     lineHeight: 22,
     color: colors.text,
@@ -310,7 +438,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   countText: { fontFamily: fonts.monoSemiBold, fontSize: 13 },
-  meta: { marginTop: 6 },
+  meta: {},
   body: {
     fontFamily: fonts.body,
     fontSize: typeScale.body,
@@ -397,14 +525,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   actionHover: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
-  actionPrimaryWrap: { flexGrow: 1, borderRadius: radius.lg },
   actionPrimaryHover: { opacity: 0.9 },
   actionPrimary: {
-    minHeight: touch.min,
-    paddingHorizontal: spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.lg,
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   actionText: { fontFamily: fonts.bodySemiBold, fontSize: typeScale.body, color: colors.primaryDark },
   actionTextPrimary: { fontFamily: fonts.bodyBold, fontSize: typeScale.body, color: colors.onPrimary },
