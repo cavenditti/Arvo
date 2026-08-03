@@ -301,7 +301,6 @@ nav a:not(.nav-cta):hover {
 }
 
 .kicker,
-.section-index,
 .feature-label {
   font-family: var(--mono);
   font-size: 0.75rem;
@@ -432,23 +431,6 @@ h1 {
   padding: clamp(5.5rem, 9vw, 9rem) var(--page-gutter);
 }
 
-.section-index {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  width: 100%;
-  margin-bottom: 1.65rem;
-  color: var(--green);
-}
-
-.section-index::after {
-  flex: 1;
-  height: 1px;
-  content: "";
-  background: currentColor;
-  opacity: 0.34;
-}
-
 h2 {
   margin-bottom: 1.6rem;
   color: var(--forest);
@@ -466,13 +448,6 @@ h2 {
   column-gap: clamp(4rem, 10vw, 10rem);
   row-gap: clamp(3rem, 5vw, 5rem);
   border-bottom: 1px solid var(--line);
-}
-
-.method > .section-index,
-.data > .section-index,
-.closing > .section-index {
-  grid-column: 1 / -1;
-  margin-bottom: 0;
 }
 
 .section-heading {
@@ -578,7 +553,7 @@ h2 {
   height: 100%;
   object-fit: cover;
   object-position: center;
-  filter: saturate(0.62) contrast(0.96) brightness(0.88);
+  filter: saturate(0.82) contrast(0.96) brightness(0.99);
 }
 
 .product-intro {
@@ -587,14 +562,6 @@ h2 {
   align-items: end;
   gap: clamp(3rem, 8vw, 8rem);
   margin-bottom: clamp(4rem, 7vw, 7rem);
-}
-
-.product > .section-index {
-  margin-bottom: clamp(3rem, 5vw, 5rem);
-}
-
-.section-index-light {
-  color: #8fc696;
 }
 
 .product-intro h2 {
@@ -633,7 +600,7 @@ h2 {
 
 .feature-icon {
   top: 50%;
-  left: -1rem;
+  left: 2rem;
   width: clamp(108px, 10vw, 154px);
   height: clamp(108px, 10vw, 154px);
   color: #a8d0ac;
@@ -642,7 +609,7 @@ h2 {
 }
 
 .feature-row:nth-child(even) .feature-icon {
-  left: 42%;
+  left: 10%;
   transform: translate(-50%, -50%) rotate(-6deg);
 }
 
@@ -682,7 +649,7 @@ h2 {
   max-width: 670px;
 }
 
-.data-copy > p:not(.section-index) {
+.data-copy > p {
   max-width: 610px;
   color: var(--muted);
   font-size: 1.05rem;
@@ -735,7 +702,7 @@ h2 {
 
 .data-icon {
   top: 50%;
-  right: -0.85rem;
+  left: 2.85rem;
   width: clamp(84px, 8vw, 116px);
   height: clamp(84px, 8vw, 116px);
   color: var(--eucalyptus);
@@ -745,7 +712,8 @@ h2 {
 
 .data-list > div:nth-child(even) .data-icon {
   right: auto;
-  left: -0.75rem;
+  top: 2rem;
+  left: -3.75rem;
   transform: translateY(-50%) rotate(-5deg);
 }
 
