@@ -675,14 +675,6 @@ h2 {
   overflow: hidden;
 }
 
-.data-list > div:nth-child(odd) {
-  padding-right: clamp(4.75rem, 8vw, 6.5rem);
-}
-
-.data-list > div:nth-child(even) {
-  padding-left: clamp(4.75rem, 8vw, 6.5rem);
-}
-
 .data-list dt {
   position: relative;
   z-index: 1;
@@ -702,7 +694,7 @@ h2 {
 
 .data-icon {
   top: 50%;
-  left: 2.85rem;
+  right: 2.85rem;
   width: clamp(84px, 8vw, 116px);
   height: clamp(84px, 8vw, 116px);
   color: var(--eucalyptus);
@@ -711,9 +703,8 @@ h2 {
 }
 
 .data-list > div:nth-child(even) .data-icon {
-  right: auto;
   top: 2rem;
-  left: -3.75rem;
+  right: 5rem;
   transform: translateY(-50%) rotate(-5deg);
 }
 
@@ -912,7 +903,7 @@ footer a:hover {
   }
 
   .crop-backdrop-data {
-    right: -31vw;
+    left: -31vw;
     width: 72vw;
     opacity: 0.065;
   }
