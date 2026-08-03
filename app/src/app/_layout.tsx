@@ -14,7 +14,14 @@ import {
 import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { useFonts } from 'expo-font';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import {
+  DarkTheme,
+  DefaultTheme,
+  Stack,
+  ThemeProvider,
+  useRouter,
+  useSegments,
+} from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
@@ -58,6 +65,26 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// React Navigation owns native stack bars separately from each screen's React Native styles.
+// Feed it Terra's semantic colors and switch its `dark` contract with the system appearance;
+// otherwise iOS keeps the default white navigation bar above otherwise-dark detail screens.
+const navigationColors = {
+  primary: colors.primary,
+  background: colors.bg,
+  card: colors.card,
+  text: colors.text,
+  border: colors.border,
+  notification: colors.accent,
+};
+const lightNavigationTheme = {
+  ...DefaultTheme,
+  colors: { ...DefaultTheme.colors, ...navigationColors },
+};
+const darkNavigationTheme = {
+  ...DarkTheme,
+  colors: { ...DarkTheme.colors, ...navigationColors },
+};
 
 /** Branded boot view (paper + mark), replacing the old anonymous white spinner. The
  * wordmark is skipped while fonts are still loading so we never render an unregistered
@@ -197,7 +224,7 @@ function RootNavigator() {
 export default function RootLayout() {
   // Subscribe once at the shell. Native semantic colors update in place on iOS, while this
   // guarantees navigation and Android system surfaces re-evaluate when appearance changes.
-  useColorScheme();
+  const colorScheme = useColorScheme();
 
   // Terra voices (docs/DESIGN.md §3). On a load error we render anyway — RN falls
   // back to system fonts rather than blanking the app.
@@ -219,12 +246,14 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={styles.root}>
       <StatusBar style="auto" />
-      <PersistQueryClientProvider client={queryClient} persistOptions={queryPersistOptions}>
-        <AuthProvider>
-          <RootNavigator />
-          <ToastHost />
-        </AuthProvider>
-      </PersistQueryClientProvider>
+      <ThemeProvider value={colorScheme === 'dark' ? darkNavigationTheme : lightNavigationTheme}>
+        <PersistQueryClientProvider client={queryClient} persistOptions={queryPersistOptions}>
+          <AuthProvider>
+            <RootNavigator />
+            <ToastHost />
+          </AuthProvider>
+        </PersistQueryClientProvider>
+      </ThemeProvider>
     </GestureHandlerRootView>
   );
 }
