@@ -244,9 +244,10 @@ export default function MapScreen() {
   const mapReady = !parcelsQ.isLoading && !parcelsQ.isError;
   const showResults = query.trim().length > 0;
   const newFieldLabel = t('map.new_field', { defaultValue: 'Nuovo campo' });
-  // NativeTabs lays this screen out above its tab bar and bottom accessory already. A second
-  // bar-sized offset here pushes map chrome into the middle of the viewport.
-  const bottomOverlayOffset = spacing.md;
+  // NativeTabs exposes its tab bar + bottom accessory through this screen's safe-area inset.
+  // Use that measured value once: ignoring it hides controls under the bars, while adding our
+  // own estimated bar heights a second time pushes them into the middle of the map.
+  const bottomOverlayOffset = Math.max(insets.bottom, spacing.md) + spacing.sm;
 
   return (
     <View style={styles.root}>
