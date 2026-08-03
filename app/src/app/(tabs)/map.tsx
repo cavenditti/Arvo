@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -42,6 +43,7 @@ import {
   colors,
   fonts,
   gradients,
+  navigationMetrics,
   radius,
   spacing,
   touch,
@@ -64,6 +66,8 @@ type MapChoropleth = 'score' | 'none' | IndexName;
 
 const BASEMAP_KEY = 'arvo.map.basemap';
 const MAX_SEARCH_RESULTS = 6;
+const usesCustomFabTabs =
+  Platform.OS === 'ios' && Number.parseInt(String(Platform.Version), 10) >= 26;
 
 export default function MapScreen() {
   const { t } = useTranslation();
@@ -244,10 +248,11 @@ export default function MapScreen() {
   const mapReady = !parcelsQ.isLoading && !parcelsQ.isError;
   const showResults = query.trim().length > 0;
   const newFieldLabel = t('map.new_field', { defaultValue: 'Nuovo campo' });
-  // NativeTabs exposes its tab bar + bottom accessory through this screen's safe-area inset.
-  // Use that measured value once: ignoring it hides controls under the bars, while adding our
-  // own estimated bar heights a second time pushes them into the middle of the map.
-  const bottomOverlayOffset = Math.max(insets.bottom, spacing.md) + spacing.sm;
+  // Expo's visible native bar contributes its measured safe-area inset. The custom iOS 26
+  // FabNativeTabs bar is an overlay, so reserve its complete navigation zone explicitly.
+  const bottomOverlayOffset = usesCustomFabTabs
+    ? navigationMetrics.contentBottomInset + spacing.sm
+    : Math.max(insets.bottom, spacing.md) + spacing.sm;
 
   return (
     <View style={styles.root}>

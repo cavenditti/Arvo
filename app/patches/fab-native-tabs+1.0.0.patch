@@ -1,0 +1,99 @@
+diff --git a/node_modules/fab-native-tabs/ios/FabBarSource/Internal/GlassTabBarView.swift b/node_modules/fab-native-tabs/ios/FabBarSource/Internal/GlassTabBarView.swift
+index 78dcf4e..f5c472d 100644
+--- a/node_modules/fab-native-tabs/ios/FabBarSource/Internal/GlassTabBarView.swift
++++ b/node_modules/fab-native-tabs/ios/FabBarSource/Internal/GlassTabBarView.swift
+@@ -172,6 +172,7 @@ final class GlassTabBarView: UIView {
+ 
+     override func tintColorDidChange() {
+         super.tintColorDidChange()
++        segmentedControl.activeTintColor = tintColor.resolvedColor(with: traitCollection)
+         guard let fabGlassView = fabGlassView else { return }
+         let newEffect = UIGlassEffect()
+         newEffect.isInteractive = true
+diff --git a/node_modules/fab-native-tabs/ios/FabNativeTabsModule.swift b/node_modules/fab-native-tabs/ios/FabNativeTabsModule.swift
+index 14abdb2..d097fdd 100644
+--- a/node_modules/fab-native-tabs/ios/FabNativeTabsModule.swift
++++ b/node_modules/fab-native-tabs/ios/FabNativeTabsModule.swift
+@@ -1,4 +1,5 @@
+ import ExpoModulesCore
++import UIKit
+ 
+ public class FabNativeTabsModule: Module {
+     public func definition() -> ModuleDefinition {
+@@ -20,7 +21,7 @@ public class FabNativeTabsModule: Module {
+             Prop("showFab") { (view: FabNativeTabsViewCompat, value: Bool) in
+                 view.showFab = value
+             }
+-            Prop("accentColor") { (view: FabNativeTabsViewCompat, value: String?) in
++            Prop("accentColor") { (view: FabNativeTabsViewCompat, value: UIColor?) in
+                 view.accentColor = value
+             }
+ 
+@@ -35,7 +36,7 @@ public class FabNativeTabsViewCompat: ExpoView {
+     var selectedIndex: Int = 0 { didSet { update() } }
+     var fabSystemImage: String = "plus" { didSet { update() } }
+     var fabAccessibilityLabel: String = "Action" { didSet { update() } }
+-    var accentColor: String? { didSet { update() } }
++    var accentColor: UIColor? { didSet { update() } }
+ 
+     let onTabChange = EventDispatcher()
+     let onFabPress = EventDispatcher()
+@@ -67,7 +68,8 @@ public class FabNativeTabsViewCompat: ExpoView {
+                 selectedIndex: selectedIndex,
+                 fabSystemImage: fabSystemImage,
+                 fabAccessibilityLabel: fabAccessibilityLabel,
+-                showFab: showFab
++                showFab: showFab,
++                accentColor: accentColor
+             )
+         }
+     }
+diff --git a/node_modules/fab-native-tabs/ios/FabNativeTabsView.swift b/node_modules/fab-native-tabs/ios/FabNativeTabsView.swift
+index 02b8bc4..a7d76e7 100644
+--- a/node_modules/fab-native-tabs/ios/FabNativeTabsView.swift
++++ b/node_modules/fab-native-tabs/ios/FabNativeTabsView.swift
+@@ -12,6 +12,7 @@ public class FabNativeTabsView26: UIView {
+     private var currentFabSystemImage: String = "plus"
+     private var currentFabAccessibilityLabel: String = "Action"
+     private var currentShowFab: Bool = true  // ← stored as property
++    private var currentAccentColor: UIColor?
+ 
+     init(frame: CGRect, onTabChange: EventDispatcher, onFabPress: EventDispatcher) {
+         self.onTabChange = onTabChange
+@@ -28,13 +29,15 @@ public class FabNativeTabsView26: UIView {
+         selectedIndex: Int,
+         fabSystemImage: String,
+         fabAccessibilityLabel: String,
+-        showFab: Bool
++        showFab: Bool,
++        accentColor: UIColor?
+     ) {
+         currentTabs = tabs
+         currentIndex = selectedIndex
+         currentFabSystemImage = fabSystemImage
+         currentFabAccessibilityLabel = fabAccessibilityLabel
+         currentShowFab = showFab  // ← store it
++        currentAccentColor = accentColor
+         render()
+     }
+ 
+@@ -55,6 +58,7 @@ public class FabNativeTabsView26: UIView {
+         let fabImage = currentFabSystemImage
+         let fabLabel = currentFabAccessibilityLabel
+         let showFab = currentShowFab  // ← read from stored property
++        let accentColor = currentAccentColor ?? UIColor.tintColor
+ 
+         let action: FabBarAction? = showFab
+             ? FabBarAction(
+@@ -81,9 +85,11 @@ public class FabNativeTabsView26: UIView {
+ 
+         if let hc = hostingController {
+             hc.rootView = view
++            hc.view.tintColor = accentColor
+         } else {
+             let hc = UIHostingController(rootView: view)
+             hc.view.backgroundColor = UIColor.clear  // ← explicit UIColor
++            hc.view.tintColor = accentColor
+             addSubview(hc.view)
+             hc.view.translatesAutoresizingMaskIntoConstraints = false
+             NSLayoutConstraint.activate([
