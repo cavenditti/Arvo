@@ -85,8 +85,9 @@ export function buildPlantInit(
 // MapLibre GL JS loads two ways, chosen by the caller (the rest of the document is identical):
 //  • MAPLIBRE_CDN — native (react-native-webview). Pinned to an exact version AND an SRI digest,
 //    exactly like the leaflet tags in ./mapHtml.ts. `crossorigin="anonymous"` makes the browser
-//    enforce the pin (unpkg answers `access-control-allow-origin: *`, so it holds from the WebView's
-//    opaque origin too). The sha384 digests were computed from the dist/ files in the
+//    enforce the pin (unpkg answers `access-control-allow-origin: *`, so it also holds when the
+//    native document uses the API as its explicit base URL). The sha384 digests were computed from
+//    the dist/ files in the
 //    maplibre-gl@4.7.1 npm tarball and confirmed byte-identical to what unpkg serves. The pin is
 //    defence in depth: this document renders third-party code next to an org-scoped media token (it
 //    rides in the MVT tile URL). Never bump the version without recomputing BOTH digests, and never

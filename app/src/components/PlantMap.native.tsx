@@ -8,8 +8,16 @@ import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
+import { API_URL } from '@/api/client';
+
 import { buildPlantInit, plantMapHtml } from './map/plantMapHtml';
 import type { PlantMapProps } from './types';
+
+// Static HTML otherwise loads at about:blank, so MapLibre's fetch-based vector tile requests carry
+// `Origin: null`. Production deliberately rejects that opaque origin. react-native-webview uses
+// baseUrl as the CORS origin for an HTML source, making the protected tiles same-origin with the
+// API on iOS and Android. Keeping the object stable also avoids reloading the WebView on renders.
+const PLANT_MAP_SOURCE = { html: plantMapHtml(), baseUrl: API_URL };
 
 export default function PlantMap(props: PlantMapProps) {
   const { onSelectPlant, height } = props;
@@ -79,7 +87,7 @@ export default function PlantMap(props: PlantMapProps) {
         // MapLibre keeps its tile/glyph state in a worker-backed cache; without DOM storage the
         // WebGL context still runs, but Android throws on the first IndexedDB touch.
         domStorageEnabled
-        source={{ html: plantMapHtml() }}
+        source={PLANT_MAP_SOURCE}
         onMessage={onMessage}
         style={styles.flex}
         scrollEnabled={false}
