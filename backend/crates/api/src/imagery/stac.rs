@@ -23,8 +23,7 @@ pub struct SceneRow {
     pub id: Uuid,
     pub stac_id: String,
     pub acquired_at: DateTime<Utc>,
-    /// Persisted via SQL; kept on the struct for logging/debug context.
-    #[allow(dead_code)]
+    /// Provider-reported scene cloud percentage; seasonal sampling prefers the clearest scene.
     pub cloud_cover: Option<f64>,
     pub assets: Value,
     /// Earth Search harmonization flag: when true the -1000 BOA offset is already baked

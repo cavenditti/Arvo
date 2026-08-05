@@ -20,6 +20,7 @@ services:
       start_period: 30s
 
   api:
+    image: arvo-production-backend
     build:
       context: ../backend
     restart: unless-stopped
@@ -47,6 +48,46 @@ services:
       timeout: 5s
       retries: 12
       start_period: 60s
+
+  plant-detect:
+    build:
+      context: ../services/plant-detect
+      args:
+        INSTALL_ML: "1"
+    restart: unless-stopped
+    environment:
+      STORE_DIR: /var/lib/arvo/store
+      PORT: 8788
+      # DeepForest and raster processing are CPU/RAM intensive. The production host has one
+      # detector process so a large orthophoto cannot starve the API and database.
+      WEB_CONCURRENCY: 1
+      PLANT_DETECT_ALLOW_ABS_PATHS: 0
+      PLANT_DETECT_ML: auto
+      PLANT_DETECT_ML_MODEL: weecology/deepforest-tree
+    volumes:
+      - arvo-data:/var/lib/arvo:ro
+      - plant-detect-cache:/var/cache/plant-detect
+
+  worker:
+    image: arvo-production-backend
+    build:
+      context: ../backend
+    restart: unless-stopped
+    command: ["arvo-worker", "run", "--interval-secs", "5"]
+    environment:
+      DATABASE_URL: postgres://arvo:${POSTGRES_PASSWORD}@db:5432/arvo
+      DATABASE_MAX_CONNECTIONS: 4
+      STORE_DIR: /var/lib/arvo/store
+      PLANT_DETECT_URL: http://plant-detect:8788
+      PLANT_DETECT_TIMEOUT_S: 600
+      RUST_LOG: arvo_worker=info
+    volumes:
+      - arvo-data:/var/lib/arvo
+    depends_on:
+      db:
+        condition: service_healthy
+      plant-detect:
+        condition: service_healthy
 
   auth:
     build:
@@ -99,5 +140,6 @@ services:
 volumes:
   postgres-data:
   arvo-data:
+  plant-detect-cache:
   caddy-data:
   caddy-config:

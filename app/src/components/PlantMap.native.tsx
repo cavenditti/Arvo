@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 import { buildPlantInit, plantMapHtml } from './map/plantMapHtml';
@@ -13,17 +14,29 @@ import type { PlantMapProps } from './types';
 export default function PlantMap(props: PlantMapProps) {
   const { onSelectPlant, height } = props;
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const ref = useRef<WebView>(null);
   const readyRef = useRef(false);
   const lastSent = useRef('');
 
+  // This route uses a translucent iOS header and draws the WebView underneath it. Keep map-owned
+  // chrome below the navigation bar and aligned with the React metric selector.
+  const selectorTop = insets.top + 56;
+  // Field selection moved into the navigation title; metric and basemap now share one row.
+  const mapChromeTop = selectorTop;
   const payloadStr = JSON.stringify(
-    buildPlantInit(props, {
-      loading: t('plantmap.loading'),
-      empty: t('plantmap.empty'),
-      zoomIn: t('plantmap.zoom_in'),
-      error: t('plantmap.load_error'),
-    }),
+    buildPlantInit(
+      props,
+      {
+        loading: t('plantmap.loading'),
+        empty: t('plantmap.empty'),
+        zoomIn: t('plantmap.zoom_in'),
+        error: t('plantmap.load_error'),
+        map: t('map.basemap_map'),
+        satellite: t('map.basemap_sat'),
+      },
+      mapChromeTop,
+    ),
   );
 
   const send = useCallback(() => {

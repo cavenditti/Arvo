@@ -5,11 +5,11 @@
 // Full-bleed like (tabs)/map.tsx: the map fills the screen and every control floats over it.
 // Terra: no state dots, no left-border stripes, fonts are family tokens (never fontWeight).
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { format, parseISO } from 'date-fns';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -53,6 +53,18 @@ const PANEL_LIMIT = 8;
 // Panel-height guess used for the FAB offset until onLayout reports the real value.
 const PANEL_HEIGHT_ESTIMATE = 260;
 
+// Prefer an actual health index when one exists, then measurements the RGB detector can produce.
+// This keeps an RGB-only capture from opening on an empty NDVI view even though plants were found.
+const AUTO_METRIC_ORDER: PlantMetric[] = [
+  'ndvi',
+  'canopy_m2',
+  'height_m',
+  'ndre',
+  'gndvi',
+  'ndmi',
+  'savi',
+];
+
 type Segment = 'weakest' | 'replant';
 
 // Replant reason → chip tint (labelled chip, never a coloured dot — docs/DESIGN.md §5).
@@ -93,7 +105,10 @@ export default function PlantsScreen() {
   const parcels = useMemo(() => (parcelsQ.data ?? []).filter((p) => !p.archived), [parcelsQ.data]);
 
   const [pickedId, setPickedId] = useState<string | null>(null);
-  const [metric, setMetric] = useState<PlantMetric>('ndvi');
+  const [metricChoice, setMetricChoice] = useState<{
+    parcelId: string;
+    metric: PlantMetric;
+  } | null>(null);
   const [segment, setSegment] = useState<Segment>('weakest');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [metricOpen, setMetricOpen] = useState(false);
@@ -116,9 +131,18 @@ export default function PlantsScreen() {
   );
   const parcelId = parcel?.id ?? '';
 
+  const summaryQ = usePlantSummary(parcelId);
+  const summary = summaryQ.data;
+  const autoMetric = useMemo(
+    () =>
+      AUTO_METRIC_ORDER.find(
+        (candidate) => (summary?.latest[candidate]?.plant_count ?? 0) > 0,
+      ) ?? 'ndvi',
+    [summary],
+  );
+  const metric = metricChoice?.parcelId === parcelId ? metricChoice.metric : autoMetric;
   const tileUrl = usePlantTileUrl(parcelId, metric);
   const scaleQ = usePlantMetricScale(parcelId, metric);
-  const summaryQ = usePlantSummary(parcelId);
   const rankingQ = usePlantRanking(parcelId, { metric, limit: PANEL_LIMIT });
   const replantQ = useReplantList(parcelId, { limit: PANEL_LIMIT });
 
@@ -135,7 +159,6 @@ export default function PlantsScreen() {
     [rankingQ.data],
   );
   const replant = replantQ.data?.items ?? [];
-  const summary = summaryQ.data;
 
   const observedAt = scale?.observed_at ?? summary?.last_capture?.captured_at ?? null;
   const legendDate = observedAt
@@ -150,7 +173,7 @@ export default function PlantsScreen() {
   }
 
   function pickMetric(m: PlantMetric) {
-    setMetric(m);
+    setMetricChoice({ parcelId, metric: m });
     setMetricOpen(false);
   }
 
@@ -169,6 +192,7 @@ export default function PlantsScreen() {
   const panelBottom =
     insets.bottom + navigationMetrics.barHeight + navigationMetrics.controlGap + spacing.md;
   const fabBottom = panelBottom + (panelHeight || PANEL_HEIGHT_ESTIMATE) + spacing.sm;
+  const selectorTop = insets.top + 56;
 
   if (parcelsQ.isLoading) {
     return (
@@ -211,6 +235,38 @@ export default function PlantsScreen() {
 
   return (
     <View style={styles.root}>
+      <Stack.Screen
+        options={{
+          title: parcel.name,
+          headerTitle: () => (
+            <Pressable
+              onPress={() => {
+                setMetricOpen(false);
+                setPickerOpen((open) => !open);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`${t('fields.select_field')}: ${parcel.name}`}
+              accessibilityState={{ expanded: pickerOpen }}
+              hitSlop={8}
+              style={({ pressed }) => [styles.headerField, pressed && styles.headerFieldPressed]}
+            >
+              <Text
+                style={styles.headerFieldText}
+                numberOfLines={1}
+                maxFontSizeMultiplier={typeScale.maxMult}
+              >
+                {parcel.name}
+              </Text>
+              <Ionicons
+                name={pickerOpen ? 'chevron-up' : 'chevron-down'}
+                size={15}
+                color={colors.textMuted}
+              />
+            </Pressable>
+          ),
+        }}
+      />
+
       {tileUrl ? (
         <PlantMap
           parcelId={parcel.id}
@@ -229,35 +285,30 @@ export default function PlantsScreen() {
         </View>
       )}
 
-      {/* parcel + metric selectors */}
-      <View style={[styles.topRow, { top: insets.top + 56 }]}>
-        <InteractivePressable
-          haptic
-          style={styles.parcelChip}
-          accessibilityLabel={parcel.name}
-          accessibilityState={{ expanded: pickerOpen }}
-          onPress={() => setPickerOpen((v) => !v)}
-        >
-          <Ionicons name="leaf-outline" size={15} color={colors.primary} />
-          <Text style={styles.parcelChipTxt} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
-            {parcel.name}
-          </Text>
-          <Text style={styles.caret} maxFontSizeMultiplier={typeScale.maxMult}>
-            ▾
-          </Text>
-        </InteractivePressable>
+      {/* One compact map row: the field selector now lives in the native navigation title. */}
+      <View style={[styles.topRow, { top: selectorTop }]}>
         <InteractivePressable
           haptic
           style={styles.metricChip}
-          onPress={() => setMetricOpen(true)}
+          onPress={() => {
+            setPickerOpen(false);
+            setMetricOpen(true);
+          }}
           accessibilityLabel={`${t('plantmap.change_metric')} · ${metricOptionLabel(metric)}`}
         >
-          <MonoLabel color={colors.text}>{`${metricOptionLabel(metric)} ▾`}</MonoLabel>
+          <Text
+            style={styles.metricChipText}
+            numberOfLines={1}
+            maxFontSizeMultiplier={typeScale.maxMult}
+          >
+            {metricOptionLabel(metric)}
+          </Text>
+          <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
         </InteractivePressable>
       </View>
 
       {pickerOpen ? (
-        <View style={[styles.picker, { top: insets.top + 104 }]}>
+        <View style={[styles.picker, { top: insets.top + 48 }]}>
           <ScrollView style={styles.pickerScroll}>
             {parcels.map((p) => {
               const active = p.id === parcel.id;
@@ -534,35 +585,35 @@ const styles = StyleSheet.create({
   pad: { paddingVertical: spacing.md },
 
   // floating selectors
+  headerField: {
+    maxWidth: 230,
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.pill,
+  },
+  headerFieldPressed: { backgroundColor: colors.cardAlt },
+  headerFieldText: {
+    flexShrink: 1,
+    color: colors.text,
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 17,
+  },
   topRow: {
     position: 'absolute',
     left: spacing.md,
-    right: spacing.md,
+    right: 116,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
   },
-  parcelChip: {
-    flex: 1,
-    maxWidth: 420,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    minHeight: touch.chip,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.card,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
-  },
-  parcelChipTxt: { flex: 1, fontSize: typeScale.body, fontFamily: fonts.bodySemiBold, color: colors.text },
-  caret: { fontSize: typeScale.caption, fontFamily: fonts.body, color: colors.textFaint },
   metricChip: {
+    flex: 1,
+    maxWidth: 260,
+    flexDirection: 'row',
+    gap: spacing.xs,
     minHeight: touch.chip,
     paddingHorizontal: spacing.md,
     alignItems: 'center',
@@ -577,11 +628,18 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
   },
+  metricChipText: {
+    flexShrink: 1,
+    color: colors.text,
+    fontFamily: fonts.bodySemiBold,
+    fontSize: typeScale.caption,
+  },
   picker: {
     position: 'absolute',
-    left: spacing.md,
-    maxWidth: 420,
-    minWidth: 220,
+    left: spacing.xl,
+    right: spacing.xl,
+    maxWidth: 440,
+    alignSelf: 'center',
     backgroundColor: colors.card,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -591,7 +649,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
+    elevation: 10,
+    zIndex: 10,
   },
   pickerScroll: { maxHeight: 264 },
   pickerItem: {

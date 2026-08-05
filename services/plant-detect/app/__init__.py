@@ -1,4 +1,4 @@
-"""Arvo plant-detect — label-free classical-CV plant detection (docs/PHASE-PLANT.md §6)."""
+"""Arvo plant-detect — hybrid ML/classical plant detection (docs/PHASE-PLANT.md §6)."""
 
 from .config import DETECTOR_VER
 

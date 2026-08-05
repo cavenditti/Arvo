@@ -331,8 +331,8 @@ async fn get_or_create_parcel(
         return Ok(id);
     }
     let (id,) = sqlx::query_as::<_, (Uuid,)>(
-        "INSERT INTO parcels (org_id, farm_id, name, geom, crop, variety, planting_date, season_year)
-         VALUES ($1, $2, $3, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($4), 4326)), $5, $6, $7, $8)
+        "INSERT INTO parcels (org_id, farm_id, name, geom, crop, crop_source, variety, planting_date, season_year)
+         VALUES ($1, $2, $3, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($4), 4326)), $5, 'manual', $6, $7, $8)
          RETURNING id",
     )
     .bind(org_id)

@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 
 # `model_ver` stamped on every detection — "<detector>-<semver>", the format frozen in
 # docs/API-PLANT.md; mirrors `DETECTOR_VER` in worker/detect.rs.
-DETECTOR_VER = "cv-chm-0.1.0"
+DETECTOR_VER = "hybrid-crown-0.3.0"
 
 UNIT_TYPES = ("tree", "vine", "row_segment", "bush")
 #: CHM local-maxima + watershed crown delineation.

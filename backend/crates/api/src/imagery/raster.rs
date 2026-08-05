@@ -19,6 +19,10 @@ pub fn configure() {
     ONCE.call_once(|| {
         for (k, v) in [
             ("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR"),
+            // GDAL documents both values in seconds. Remote COG reads must eventually yield a
+            // retryable failed refresh instead of pinning an in-memory task indefinitely.
+            ("GDAL_HTTP_CONNECTTIMEOUT", "10"),
+            ("GDAL_HTTP_TIMEOUT", "30"),
             ("GDAL_HTTP_MAX_RETRY", "3"),
             ("GDAL_HTTP_RETRY_DELAY", "1"),
             ("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif"),
@@ -64,4 +68,10 @@ pub fn scl_nodata(scl: f64) -> bool {
 /// `scl_nodata`; tile/GeoTIFF rendering has no polygon mask and treats both as transparent.
 pub fn scl_masked(scl: f64) -> bool {
     scl_nodata(scl) || SCL_CLOUD_CLASSES.contains(&(scl.round() as i64))
+}
+
+/// Sentinel-2 L2A Scene Classification Layer class 4 = vegetation. At 10 m this is parcel-scale
+/// plant cover, never an individual-tree/vine observation.
+pub fn scl_vegetation(scl: f64) -> bool {
+    scl.round() as i64 == 4
 }

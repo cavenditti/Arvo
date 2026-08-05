@@ -1,9 +1,9 @@
-// OWNER: fe-capture — Flight registration → imagery upload → pipeline status (FR-P-010/012/014).
-// One screen, three acts: register the flight (POST /captures), attach imagery
+// OWNER: fe-capture — Capture registration → imagery upload → pipeline status (FR-P-010/012/014).
+// One screen, three acts: register the capture (POST /captures), attach imagery
 // (POST /captures/{id}/assets/{raw|ortho|dsm}, multipart with real byte progress), then watch the
 // state machine (POST …/process → poll GET …/status every 5 s until `extracted`/`failed`, with a
 // retry on the failed stage). Both upload paths of the contract are offered side by side: drone
-// photos (server-side SfM) and a pre-built ortho + surface model (FR-P-014); `demo` synthesises a
+// photos (server-side SfM) and a detailed ortho with an optional surface model (FR-P-014); `demo` synthesises a
 // planting for servers built without GDAL (/meta features.imagery = false → capture.imagery_off,
 // job error `stage_unsupported`).
 // Terra: pipeline state is carried by the hero gradient + glyph badges and labelled chips —
@@ -48,6 +48,7 @@ import type { GlyphName } from '@/components/glyphs';
 import { GlyphBadge, GlyphCard, MonoLabel, MonoValue, Pill, TintCard } from '@/components/ui';
 import { useOutsideDismiss } from '@/components/useOutsideDismiss';
 import { dfLocale } from '@/features/insights/format';
+import { cropLabelKey } from '@/features/parcels/crops';
 import { notify } from '@/features/parcels/dialog';
 import { useParcels } from '@/features/parcels/hooks';
 import {
@@ -71,6 +72,13 @@ import {
 
 const SOURCES: CaptureSource[] = ['drone', 'prebuilt', 'demo'];
 const BANDS = ['red', 'green', 'blue', 'rededge', 'nir', 'swir'] as const;
+
+function unitForCrop(crop: string | null | undefined): PlantUnit {
+  if (crop === 'vine') return 'vine';
+  if (crop === 'olive') return 'tree';
+  if (crop === 'tomato' || crop === 'wheat' || crop === 'maize') return 'row_segment';
+  return 'tree';
+}
 
 const STAGES: PipelineStage[] = ['sfm', 'detect', 'register', 'extract'];
 /** milestone reached → how far the machine has walked (docs/API-PLANT.md §Pipeline stages) */
@@ -272,10 +280,12 @@ function stageViews(capture: Capture, info: CaptureStatusInfo | undefined): Stag
 export default function NewCaptureScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const { parcelId: paramParcelId, captureId: paramCaptureId } = useLocalSearchParams<{
+  const { parcelId: paramParcelId, captureId: paramCaptureId, source: paramSource } = useLocalSearchParams<{
     parcelId?: string;
     captureId?: string;
+    source?: string;
   }>();
+  const initialSource: CaptureSource = paramSource === 'prebuilt' ? 'prebuilt' : 'drone';
   const [captureId, setCaptureId] = useState<string | null>(paramCaptureId ?? null);
   const [justCreated, setJustCreated] = useState(false);
 
@@ -299,6 +309,7 @@ export default function NewCaptureScreen() {
       ) : (
         <RegisterForm
           initialParcelId={paramParcelId ?? null}
+          initialSource={initialSource}
           onCreated={(id) => {
             setCaptureId(id);
             setJustCreated(true);
@@ -313,9 +324,11 @@ export default function NewCaptureScreen() {
 
 function RegisterForm({
   initialParcelId,
+  initialSource,
   onCreated,
 }: {
   initialParcelId: string | null;
+  initialSource: CaptureSource;
   onCreated: (id: string) => void;
 }) {
   const { t } = useTranslation();
@@ -334,8 +347,9 @@ function RegisterForm({
   const pickerRef = useRef<View | null>(null);
   const closePicker = useCallback(() => setPickerOpen(false), []);
   useOutsideDismiss(pickerRef, pickerOpen, closePicker);
-  const [source, setSource] = useState<CaptureSource>('drone');
+  const [source, setSource] = useState<CaptureSource>(initialSource);
   const [unitType, setUnitType] = useState<PlantUnit>('tree');
+  const [unitEdited, setUnitEdited] = useState(false);
   const [capturedAt, setCapturedAt] = useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [sensor, setSensor] = useState('');
   const [gsdCm, setGsdCm] = useState('');
@@ -350,6 +364,11 @@ function RegisterForm({
   const createM = useCreateCapture();
   const selected = parcels.find((p) => p.id === parcelId) ?? null;
   const showImagery = source !== 'demo';
+
+  // Sentinel crop recognition writes `parcel.crop`; carry that result into the geometry
+  // detector automatically, while leaving the agronomist free to override unusual plantings.
+  const suggestedUnit = unitForCrop(selected?.crop);
+  const effectiveUnit = unitEdited ? unitType : suggestedUnit;
 
   const submit = () => {
     setError(null);
@@ -385,7 +404,7 @@ function RegisterForm({
         parcel_id: parcelId,
         captured_at: at.toISOString(),
         source,
-        unit_type: unitType,
+        unit_type: effectiveUnit,
         sensor: sensor.trim() || undefined,
         gsd_cm: gsd,
         bands: Object.keys(bandPayload).length ? bandPayload : undefined,
@@ -478,6 +497,7 @@ function RegisterForm({
                   style={styles.option}
                   onPress={() => {
                     setParcelId(p.id);
+                    setUnitEdited(false);
                     setPickerOpen(false);
                   }}
                 >
@@ -504,14 +524,22 @@ function RegisterForm({
         {/* Unit type */}
         <View style={styles.section}>
           <Text style={styles.label}>{t('capture.unit_type')}</Text>
+          {selected?.crop ? (
+            <Text style={styles.hint}>
+              {t('capture.unit_type_auto', { crop: t(cropLabelKey(selected.crop)) })}
+            </Text>
+          ) : null}
           <View style={styles.chipWrap}>
             {PLANT_UNITS.map((u) => {
-              const on = unitType === u;
+              const on = effectiveUnit === u;
               return (
                 <Pressable
                   key={u}
                   style={[styles.chip, on && styles.chipOn]}
-                  onPress={() => setUnitType(u)}
+                  onPress={() => {
+                    setUnitType(u);
+                    setUnitEdited(true);
+                  }}
                 >
                   <Text style={[styles.chipText, on && styles.chipTextOn]}>
                     {t(`plant.unit.${u}`)}
@@ -567,39 +595,41 @@ function RegisterForm({
           </View>
         ) : null}
 
-        {/* Flight details (EASA record, NFR-P-OPS) */}
-        <View style={styles.section}>
-          <Text style={styles.label}>{t('capture.flight_meta')}</Text>
-          <TextInput
-            style={styles.input}
-            value={pilotName}
-            onChangeText={setPilotName}
-            placeholder={t('capture.pilot_name')}
-            placeholderTextColor={colors.textFaint}
-          />
-          <TextInput
-            style={styles.input}
-            value={operatorId}
-            onChangeText={setOperatorId}
-            placeholder={t('capture.operator_id')}
-            placeholderTextColor={colors.textFaint}
-            autoCapitalize="characters"
-          />
-          <TextInput
-            style={styles.input}
-            value={droneModel}
-            onChangeText={setDroneModel}
-            placeholder={t('capture.drone_model')}
-            placeholderTextColor={colors.textFaint}
-          />
-          <TextInput
-            style={styles.input}
-            value={flightRef}
-            onChangeText={setFlightRef}
-            placeholder={t('capture.flight_ref')}
-            placeholderTextColor={colors.textFaint}
-          />
-        </View>
+        {/* Flight details are relevant only when these pixels came from a drone operation. */}
+        {source === 'drone' ? (
+          <View style={styles.section}>
+            <Text style={styles.label}>{t('capture.flight_meta')}</Text>
+            <TextInput
+              style={styles.input}
+              value={pilotName}
+              onChangeText={setPilotName}
+              placeholder={t('capture.pilot_name')}
+              placeholderTextColor={colors.textFaint}
+            />
+            <TextInput
+              style={styles.input}
+              value={operatorId}
+              onChangeText={setOperatorId}
+              placeholder={t('capture.operator_id')}
+              placeholderTextColor={colors.textFaint}
+              autoCapitalize="characters"
+            />
+            <TextInput
+              style={styles.input}
+              value={droneModel}
+              onChangeText={setDroneModel}
+              placeholder={t('capture.drone_model')}
+              placeholderTextColor={colors.textFaint}
+            />
+            <TextInput
+              style={styles.input}
+              value={flightRef}
+              onChangeText={setFlightRef}
+              placeholder={t('capture.flight_ref')}
+              placeholderTextColor={colors.textFaint}
+            />
+          </View>
+        ) : null}
 
         {/* Notes */}
         <View style={styles.section}>
@@ -621,7 +651,7 @@ function RegisterForm({
       <View style={[styles.footer, { paddingBottom: spacing.md + insets.bottom }]}>
         <PrimaryButton
           label={t('capture.create')}
-          icon="airplane-outline"
+          icon={source === 'drone' ? 'airplane-outline' : 'images-outline'}
           busy={createM.isPending}
           onPress={submit}
         />
@@ -719,7 +749,6 @@ function FlightPanel({
     ortho: (capture.assets ?? []).filter((a) => a.kind === 'ortho').length,
     dsm: (capture.assets ?? []).filter((a) => a.kind === 'dsm').length,
   };
-  const needsDsm = capture.unit_type === 'tree' || capture.unit_type === 'bush';
   const started = status !== 'uploaded' || (capture.jobs ?? []).length > 0;
   // A server built without GDAL fails every real-imagery stage with `stage_unsupported`; say so
   // before the bytes are uploaded, not after (docs/API-PLANT.md §Pipeline stages).
@@ -731,8 +760,6 @@ function FlightPanel({
   let blocked: string | null = null;
   if (capture.source === 'drone' && counts.raw === 0) blocked = t('capture.err_no_raw');
   else if (capture.source === 'prebuilt' && counts.ortho === 0) blocked = t('capture.err_no_ortho');
-  else if (capture.source === 'prebuilt' && needsDsm && counts.dsm === 0)
-    blocked = t('capture.err_no_dsm');
 
   const pickAndUpload = async (kind: CaptureAssetKind) => {
     setActionError(null);
@@ -824,6 +851,13 @@ function FlightPanel({
               .filter(Boolean)
               .join(' · ')}
           </MonoLabel>
+          {capture.sensor ? (
+            <MonoLabel>
+              {[capture.sensor, capture.gsd_cm ? `${Math.round(capture.gsd_cm)} cm/px` : null]
+                .filter(Boolean)
+                .join(' · ')}
+            </MonoLabel>
+          ) : null}
           <Text style={styles.heroTitle}>
             {terminal || !started ? t(`capture.status.${status}`) : t('capture.processing')}
           </Text>

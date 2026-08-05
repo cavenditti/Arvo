@@ -417,6 +417,19 @@ export function useCreateCapture() {
   });
 }
 
+/** Fetches the best server-managed orthophoto for the parcel and immediately queues detection. */
+export function useAutomaticCapture() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (parcelId: string) =>
+      api.post<Capture>(`/parcels/${parcelId}/captures/automatic`, {}),
+    onSuccess: (capture) => {
+      invalidateCapture(qc, capture);
+      void qc.invalidateQueries({ queryKey: ['captures'] });
+    },
+  });
+}
+
 function invalidateCapture(qc: ReturnType<typeof useQueryClient>, capture: Capture) {
   void qc.invalidateQueries({ queryKey: ['captures'] });
   void qc.invalidateQueries({ queryKey: ['capture', capture.id] });

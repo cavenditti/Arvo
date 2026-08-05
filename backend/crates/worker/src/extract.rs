@@ -14,8 +14,9 @@
 //! reached once `index_observations` has been upserted.
 //!
 //! Pixel access sits behind [`Sampler`] so the stage builds without GDAL: `source="demo"`
-//! captures use the deterministic synthetic sampler, everything else reports
-//! [`STAGE_UNSUPPORTED`] until the raster sampler lands with the `imagery` feature.
+//! captures use the deterministic synthetic sampler. A prebuilt capture can still finish with
+//! the crown area and optional height already measured by detection; spectral-index extraction
+//! remains unavailable until the raster sampler lands.
 
 use anyhow::{anyhow, Context};
 use arvo_core::plant_metrics::{self as pm, Bands, Sample};
@@ -23,6 +24,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
+use crate::detect::DETECTOR_VER;
 use crate::pipeline::{Job, Worker, STAGE_UNSUPPORTED};
 
 /// `model_ver` stamped on every `plant_observations` row this extractor writes (NFR-P-REPRO).
@@ -40,7 +42,13 @@ pub async fn run(w: &Worker, job: &Job) -> anyhow::Result<()> {
     let capture = load_capture(w, job).await?;
     // Resolve the pixel source first: a `drone` capture in a GDAL-less build must fail before
     // it touches the DB, with the frozen `stage_unsupported` error.
-    let sampler = sampler_for(&capture)?;
+    let sampler = match sampler_for(&capture) {
+        Ok(sampler) => sampler,
+        Err(error) if capture.source == "prebuilt" && error.to_string() == STAGE_UNSUPPORTED => {
+            return extract_detection_metrics(w, &capture).await;
+        }
+        Err(error) => return Err(error),
+    };
     let plants = load_plants(w, &capture).await?;
 
     let mut rows: Vec<ObsRow> = Vec::with_capacity(plants.len() * pm::PLANT_METRICS.len());
@@ -90,6 +98,73 @@ pub async fn run(w: &Worker, job: &Job) -> anyhow::Result<()> {
         "extracted per-plant metrics"
     );
     audit(w, &capture, plants.len(), rows.len(), sampler.model_ver()).await;
+    Ok(())
+}
+
+/// A detailed prebuilt ortho already produced honest crown geometry in `detect`. Persist those
+/// measurements as observations even though the full spectral raster sampler is not available,
+/// so an RGB-only plant scan completes instead of failing after registration.
+async fn extract_detection_metrics(w: &Worker, capture: &CaptureRow) -> anyhow::Result<()> {
+    let mut tx = w.pool.begin().await?;
+    sqlx::query("DELETE FROM plant_observations WHERE capture_id = $1")
+        .bind(capture.id)
+        .execute(&mut *tx)
+        .await?;
+
+    let rows = sqlx::query(
+        "INSERT INTO plant_observations
+             (plant_id, capture_id, org_id, parcel_id, metric, observed_at,
+              value, quality, model_ver)
+         SELECT d.plant_id, $1, $2, $3, metric.name, $4,
+                metric.value, 100::smallint, $5
+           FROM plant_detections d
+           CROSS JOIN LATERAL (VALUES
+                ('canopy_m2'::text, d.canopy_m2),
+                ('height_m'::text, d.height_m)
+           ) AS metric(name, value)
+          WHERE d.capture_id = $1 AND d.org_id = $2
+            AND d.plant_id IS NOT NULL AND metric.value IS NOT NULL
+         ON CONFLICT (plant_id, metric, observed_at) DO UPDATE
+            SET capture_id = EXCLUDED.capture_id,
+                org_id     = EXCLUDED.org_id,
+                parcel_id  = EXCLUDED.parcel_id,
+                value      = EXCLUDED.value,
+                quality    = EXCLUDED.quality,
+                model_ver  = EXCLUDED.model_ver",
+    )
+    .bind(capture.id)
+    .bind(capture.org_id)
+    .bind(capture.parcel_id)
+    .bind(capture.captured_at)
+    .bind(DETECTOR_VER)
+    .execute(&mut *tx)
+    .await
+    .context("persist detection geometry metrics")?
+    .rows_affected();
+
+    sqlx::query("UPDATE captures SET observation_count = $2, updated_at = now() WHERE id = $1")
+        .bind(capture.id)
+        .bind(rows as i32)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    crate::rollup::run(w, capture.id).await?;
+    let plants: i64 = sqlx::query_scalar(
+        "SELECT count(DISTINCT plant_id) FROM plant_detections
+          WHERE capture_id = $1 AND org_id = $2 AND plant_id IS NOT NULL",
+    )
+    .bind(capture.id)
+    .bind(capture.org_id)
+    .fetch_one(&w.pool)
+    .await?;
+    tracing::info!(
+        capture = %capture.id,
+        plants,
+        observations = rows,
+        "extract complete from detection geometry; no spectral raster metrics"
+    );
+    audit(w, capture, plants as usize, rows as usize, DETECTOR_VER).await;
     Ok(())
 }
 
@@ -249,7 +324,8 @@ trait Sampler {
     fn sample(&self, plant: &PlantRow) -> anyhow::Result<Sample>;
 }
 
-/// `demo` → the synthetic sampler; `drone`/`prebuilt` → real pixels, which need GDAL.
+/// `demo` → the synthetic sampler; real spectral pixels are not implemented here yet. The caller
+/// gives `prebuilt` captures a detection-geometry fallback before surfacing this error.
 ///
 /// **The raster sampler is not implemented in P-MVP** (it lands with the ODM/detector pixel path
 /// behind `--features imagery`), so those captures fail with the frozen job error

@@ -41,6 +41,8 @@ export default function PlantMap(props: PlantMapProps) {
       empty: t('plantmap.empty'),
       zoomIn: t('plantmap.zoom_in'),
       error: t('plantmap.load_error'),
+      map: t('map.basemap_map'),
+      satellite: t('map.basemap_sat'),
     }),
   );
 

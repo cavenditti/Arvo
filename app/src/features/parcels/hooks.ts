@@ -88,6 +88,46 @@ export function useLatestIndices(parcelIds: string[]) {
   });
 }
 
+export type ImageryRefreshState = 'queued' | 'running' | 'ready' | 'empty' | 'failed';
+
+export interface ImageryRefreshStatus {
+  state: ImageryRefreshState;
+  requested_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  scenes_found: number;
+  scenes_new: number;
+  computed: number;
+  error_code: string | null;
+  updated_at: string | null;
+}
+
+const IMAGERY_ACTIVE_MAX_MS = 45 * 60 * 1000;
+
+export function imageryIsActive(status: ImageryRefreshStatus | undefined): boolean {
+  if (status?.state !== 'queued' && status?.state !== 'running') return false;
+  // The phone may retain a successful query while it moves from Wi-Fi to 5G and loses access to
+  // the private-LAN dev API. Bound cached activity locally as well as on the server.
+  const touchedAt = status.updated_at ?? status.started_at ?? status.requested_at;
+  const timestamp = touchedAt ? Date.parse(touchedAt) : Number.NaN;
+  return Number.isFinite(timestamp) && Date.now() - timestamp < IMAGERY_ACTIVE_MAX_MS;
+}
+
+/** Persisted provider/compute lifecycle. Absence is unknown, never "still processing". */
+export function useImageryStatuses(parcelIds: string[]) {
+  const ids = parcelIds.join(',');
+  return useQuery({
+    queryKey: ['imagery-status', ids],
+    queryFn: () =>
+      api.get<Record<string, ImageryRefreshStatus>>(`/imagery/status?parcel_ids=${ids}`),
+    enabled: parcelIds.length > 0,
+    refetchInterval: (query) => {
+      const statuses = query.state.data;
+      return statuses && Object.values(statuses).some(imageryIsActive) ? 10_000 : false;
+    },
+  });
+}
+
 export function useIndexSeries(id: string, index: IndexName) {
   return useQuery({
     queryKey: ['indices', id, index],
@@ -129,6 +169,34 @@ export function useParcelAlerts(id: string) {
     queryKey: ['alerts', 'parcel', id],
     queryFn: () => api.get<Alert[]>(`/alerts?parcel_id=${id}`),
     enabled: !!id,
+  });
+}
+
+export interface SatelliteAnalysis {
+  status: 'pending' | 'ready';
+  crop?: string | null;
+  confidence?: number | null;
+  scene_count?: number;
+  month_count?: number;
+  applied_to_parcel?: boolean;
+  vegetation?: {
+    detected: boolean | null;
+    cover_pct: number | null;
+    clear_pixels: number | null;
+    observed_at: string | null;
+  };
+  model_version?: string;
+  resolution_m: number;
+  individual_plants_supported: false;
+}
+
+/** Automatic parcel-scale interpretation produced by the Sentinel-2 imagery refresh. */
+export function useSatelliteAnalysis(id: string) {
+  return useQuery({
+    queryKey: ['satellite-analysis', id],
+    queryFn: () => api.get<SatelliteAnalysis>(`/parcels/${id}/satellite-analysis`),
+    enabled: !!id,
+    refetchInterval: (query) => (query.state.data?.status === 'pending' ? 30_000 : false),
   });
 }
 
@@ -389,14 +457,22 @@ export function useRefreshImagery(id: string) {
     // A successful refresh may have computed new observations — the chart, sparkline and
     // latest-stats caches for this parcel are all stale now.
     onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['imagery-status'] });
       void qc.invalidateQueries({ queryKey: ['indices'] });
       void qc.invalidateQueries({ queryKey: ['scenes', id] });
+      void qc.invalidateQueries({ queryKey: ['satellite-analysis', id] });
+      void qc.invalidateQueries({ queryKey: ['parcel', id] });
+      void qc.invalidateQueries({ queryKey: ['parcels'] });
       // Background imagery can take longer than the HTTP request budget. Re-check a few times
       // so fields with existing readings also pick up a fresher pass without manual refreshing.
       for (const delay of [15_000, 45_000, 90_000]) {
         setTimeout(() => {
+          void qc.invalidateQueries({ queryKey: ['imagery-status'] });
           void qc.invalidateQueries({ queryKey: ['indices'] });
           void qc.invalidateQueries({ queryKey: ['scenes', id] });
+          void qc.invalidateQueries({ queryKey: ['satellite-analysis', id] });
+          void qc.invalidateQueries({ queryKey: ['parcel', id] });
+          void qc.invalidateQueries({ queryKey: ['parcels'] });
         }, delay);
       }
     },

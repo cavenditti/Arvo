@@ -55,9 +55,24 @@ def _parcel_of(shape, pixel_m):
     return {"type": "Polygon", "coordinates": [[[w, s], [e, s], [e, n], [w, n], [w, s]]]}
 
 
+def _rgb_orchard(orchard):
+    """Plain RGB image whose green crown blobs match the synthetic planting grid."""
+    yy, xx = np.mgrid[0 : orchard.dsm.shape[0], 0 : orchard.dsm.shape[1]]
+    canopy = np.zeros(orchard.dsm.shape, dtype=bool)
+    radius_px = orchard.crown_r_m / orchard.pixel_m
+    for row, col in orchard.centres_rc:
+        canopy |= np.hypot(xx - col, yy - row) <= radius_px
+    red_blue = np.where(canopy, 0.10, 0.22)
+    green = np.where(canopy, 0.55, 0.20)
+    return np.stack([red_blue, green, red_blue])
+
+
 @pytest.fixture()
 def store(tmp_path, monkeypatch):
     monkeypatch.setenv("STORE_DIR", str(tmp_path))
+    # The integration suite is deterministic and offline. ML adapter behaviour has isolated
+    # fake-model tests; production defaults to `auto` and uses DeepForest when installed.
+    monkeypatch.setenv("PLANT_DETECT_ML", "off")
     monkeypatch.delenv("PLANT_DETECT_ALLOW_ABS_PATHS", raising=False)
     (tmp_path / "captures" / "c1").mkdir(parents=True)
     return tmp_path
@@ -140,6 +155,88 @@ def test_ndvi_from_a_coarser_ortho_is_warped_onto_the_dsm_grid(store):
     assert body["count"] == orchard.n
 
 
+def test_tree_crowns_from_a_detailed_rgb_ortho_without_dsm(store):
+    orchard = make_orchard()
+    _write_tif(store / "captures/c1/ortho.tif", _rgb_orchard(orchard), orchard.pixel_m)
+
+    response = client.post(
+        "/detect",
+        json={
+            "unit_type": "tree",
+            "ortho_path": "captures/c1/ortho.tif",
+            "bands": {"red": 1, "green": 2, "blue": 3},
+            "parcel_geometry": _parcel_of(orchard.dsm.shape, orchard.pixel_m),
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["count"] == orchard.n == 48
+    assert body["stats"]["method"] == "ortho_vegetation_watershed"
+    assert body["stats"]["veg_index"] == "exg"
+    assert all(d["height_m"] is None for d in body["detections"])
+    assert all(d["crown_geom"]["type"] == "Polygon" for d in body["detections"])
+
+
+def test_uint8_satellite_rgb_is_promoted_before_nodata_fill(store):
+    orchard = make_orchard(n_rows=2, n_cols=3)
+    rgb = np.clip(_rgb_orchard(orchard) * 255.0, 0, 255).astype(np.uint8)
+    _write_tif(
+        store / "captures/c1/ortho.tif", rgb, orchard.pixel_m, dtype="uint8"
+    )
+
+    response = client.post(
+        "/detect",
+        json={
+            "unit_type": "tree",
+            "ortho_path": "captures/c1/ortho.tif",
+            "bands": {"red": 1, "green": 2, "blue": 3},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["count"] == orchard.n
+
+
+def test_ortho_only_crowns_prefer_rgb_ml_when_available(store, monkeypatch):
+    orchard = make_orchard(n_rows=2, n_cols=2)
+    _write_tif(store / "captures/c1/ortho.tif", _rgb_orchard(orchard), orchard.pixel_m)
+    monkeypatch.setenv("PLANT_DETECT_ML", "auto")
+
+    def fake_detect(bands, valid, px, params, clip=None):
+        assert set(("red", "green", "blue")) <= bands.keys()
+        return [], {"method": "deepforest_rgb_boxes", "raw_predictions": 0, "crowns": 0}
+
+    monkeypatch.setattr("app.main.ml_crowns.detect", fake_detect)
+    body = client.post(
+        "/detect",
+        json={
+            "unit_type": "tree",
+            "ortho_path": "captures/c1/ortho.tif",
+            "bands": {"red": 1, "green": 2, "blue": 3},
+        },
+    ).json()
+
+    assert body["count"] == 0
+    assert body["stats"]["method"] == "deepforest_rgb_boxes"
+    assert "ml_fallback" not in body["stats"]
+
+
+def test_ortho_only_crowns_reject_sentinel_scale_pixels(store):
+    rgb = np.stack(
+        [np.full((8, 8), 0.1), np.full((8, 8), 0.6), np.full((8, 8), 0.1)]
+    )
+    _write_tif(store / "captures/c1/ortho.tif", rgb, 10.0)
+
+    response = client.post(
+        "/detect",
+        json={"unit_type": "tree", "ortho_path": "captures/c1/ortho.tif"},
+    )
+
+    assert response.status_code == 400
+    assert "1.0 m GSD or finer" in response.json()["error"]["message"]
+
+
 def test_vine_rows_from_an_rgb_ortho_only(store):
     mask, _ = make_rows_mask(n_rows=4, row_length_m=25.0, spacing_m=2.5, angle_deg=15.0)
     green = np.where(mask, 0.55, 0.20)
@@ -213,7 +310,7 @@ def test_absolute_paths_need_the_env_opt_in(store, monkeypatch, tmp_path):
     "payload",
     [
         {"unit_type": "banana", "dsm_path": "captures/c1/dsm.tif"},
-        {"unit_type": "tree"},  # no dsm_path
+        {"unit_type": "tree"},  # no raster path
         {"unit_type": "tree", "dsm_path": "captures/c1/dsm.tif", "params": {"min_heigth_m": 2}},
         {"unit_type": "tree", "dsm_path": "captures/c1/dsm.tif", "bands": {"purple": 1}},
         {"unit_type": "tree", "dsm_path": "captures/c1/dsm.tif", "parcel_geometry": {"type": "Point"}},

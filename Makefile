@@ -70,9 +70,9 @@ worker-imagery: db-up
 seed-plants: db-up
 	cd backend && cargo run -p arvo-api -- seed --demo-plants
 
-# Plant detector service (services/plant-detect). Optional: when PLANT_DETECT_URL is set the
-# worker's `detect` stage calls it and covers vine/row_segment too; when it is unset or down the
-# worker falls back to its in-process CV path (docs/API-PLANT.md §Detection).
+# Plant detector service (services/plant-detect). PLANT_DETECT_URL enables ortho-only crowns and
+# vine/row_segment; when it is unset or down the worker falls back to its DSM-only in-process CV
+# path (docs/API-PLANT.md §Detection).
 detect-up:
 	$(DOTENV); docker compose -f infra/docker-compose.yml --profile plant up -d --wait plant-detect
 

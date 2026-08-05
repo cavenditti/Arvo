@@ -209,8 +209,9 @@ async fn insert_parcel<'e, E: sqlx::PgExecutor<'e>>(
     cadastral_ref: Option<&str>,
 ) -> ApiResult<ParcelRow> {
     let sql = format!(
-        "INSERT INTO parcels (org_id, farm_id, name, geom, crop, variety, planting_date, season_year, cadastral_ref)
-         VALUES ($1, $2, $3, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($4), 4326)), $5, $6, $7, $8, $9)
+        "INSERT INTO parcels (org_id, farm_id, name, geom, crop, crop_source, variety, planting_date, season_year, cadastral_ref)
+         VALUES ($1, $2, $3, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($4), 4326)), $5,
+                 CASE WHEN $5::text IS NULL THEN NULL ELSE 'manual' END, $6, $7, $8, $9)
          RETURNING {PARCEL_COLS}"
     );
     let row = sqlx::query_as::<_, ParcelRow>(&sql)
@@ -322,15 +323,23 @@ async fn create(
         json!({ "name": row.name, "farm_id": row.farm_id, "area_ha": row.area_ha }),
     )
     .await;
-    start_first_imagery_refresh(st.clone(), row.id, row.geometry_json.clone());
+    start_first_imagery_refresh(st.clone(), row.id, row.geometry_json.clone()).await;
     Ok((StatusCode::CREATED, Json(row.to_json()?)))
 }
 
 /// Start the first satellite pass as soon as a field exists. On a lightweight build this still
 /// catalogs scenes; the normal local server is an imagery build and also computes the indices.
 /// Onboarding must never fail because an external imagery provider is slow or unavailable.
-fn start_first_imagery_refresh(st: AppState, parcel_id: Uuid, geometry_json: String) {
+async fn start_first_imagery_refresh(st: AppState, parcel_id: Uuid, geometry_json: String) {
+    if let Err(error) = crate::imagery::queue_refresh(&st.pool, parcel_id).await {
+        tracing::warn!(parcel = %parcel_id, error = ?error, "could not queue initial imagery status");
+        return;
+    }
     tokio::spawn(async move {
+        if let Err(error) = crate::imagery::mark_refresh_running(&st.pool, parcel_id).await {
+            tracing::warn!(parcel = %parcel_id, error = ?error, "could not mark initial imagery refresh running");
+            return;
+        }
         match crate::imagery::refresh_scenes(
             &st,
             parcel_id,
@@ -339,18 +348,33 @@ fn start_first_imagery_refresh(st: AppState, parcel_id: Uuid, geometry_json: Str
         )
         .await
         {
-            Ok(outcome) => tracing::info!(
-                parcel = %parcel_id,
-                found = outcome.found,
-                new = outcome.new,
-                computed = outcome.computed,
-                "initial parcel imagery refresh complete"
-            ),
-            Err(error) => tracing::warn!(
-                parcel = %parcel_id,
-                error = ?error,
-                "initial parcel imagery refresh failed; manual retry remains available"
-            ),
+            Ok(outcome) => {
+                if let Err(error) =
+                    crate::imagery::complete_refresh(&st.pool, parcel_id, &outcome).await
+                {
+                    tracing::warn!(parcel = %parcel_id, error = ?error, "could not persist initial imagery completion");
+                }
+                tracing::info!(
+                    parcel = %parcel_id,
+                    found = outcome.found,
+                    new = outcome.new,
+                    computed = outcome.computed,
+                    "initial parcel imagery refresh complete"
+                );
+            }
+            Err(error) => {
+                if let Err(status_error) =
+                    crate::imagery::fail_refresh(&st.pool, parcel_id, "provider_or_compute_failed")
+                        .await
+                {
+                    tracing::warn!(parcel = %parcel_id, error = ?status_error, "could not persist initial imagery failure");
+                }
+                tracing::warn!(
+                    parcel = %parcel_id,
+                    error = ?error,
+                    "initial parcel imagery refresh failed; manual retry remains available"
+                );
+            }
         }
     });
 }
@@ -583,6 +607,7 @@ async fn update(
         "UPDATE parcels SET
             name = COALESCE($3, name),
             crop = CASE WHEN $4 THEN $5 ELSE crop END,
+            crop_source = CASE WHEN $4 THEN 'manual' ELSE crop_source END,
             variety = CASE WHEN $6 THEN $7 ELSE variety END,
             planting_date = CASE WHEN $8 THEN $9 ELSE planting_date END,
             season_year = CASE WHEN $10 THEN $11 ELSE season_year END,
@@ -621,6 +646,19 @@ async fn update(
         json!({ "name": row.name }),
     )
     .await;
+    if body.geometry.is_some() {
+        // A new boundary invalidates both cover percentage and crop phenology evidence. Clear the
+        // projection and rebuild it in the same best-effort background path used at onboarding.
+        if let Err(error) =
+            sqlx::query("DELETE FROM parcel_satellite_analysis WHERE parcel_id = $1")
+                .bind(id)
+                .execute(&st.pool)
+                .await
+        {
+            tracing::warn!(parcel = %id, error = ?error, "satellite analysis reset failed");
+        }
+        start_first_imagery_refresh(st.clone(), row.id, row.geometry_json.clone()).await;
+    }
     Ok(Json(row.to_json()?))
 }
 
@@ -755,7 +793,7 @@ async fn import(
             json!({ "name": name, "farm_id": body.farm_id, "source": "import" }),
         )
         .await;
-        start_first_imagery_refresh(st.clone(), id, geometry_json);
+        start_first_imagery_refresh(st.clone(), id, geometry_json).await;
     }
     Ok((
         StatusCode::CREATED,

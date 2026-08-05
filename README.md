@@ -64,6 +64,11 @@ When enabled, `/api/v1/meta` reports `"features": {"imagery": true}` and these r
   set headers (see docs/API.md §"Media tokens").
 - `GET /api/v1/parcels/{id}/indices/{index}.tif?token=<media token>` — float32 GeoTIFF of the
   index clipped to the parcel bbox + 60 m buffer.
+- `GET /api/v1/parcels/{id}/satellite-analysis` — automatic crop-pattern classification plus
+  parcel-scale vegetation presence/cover. High-confidence results fill only an unknown crop;
+  farmer-entered crop metadata is never overwritten. Sentinel-2's 10 m pixels do not identify
+  individual plants; the high-resolution capture pipeline now delineates tree/bush crowns from
+  a ≤1 m RGB/NIR orthophoto, with an optional DSM for height and stronger separation.
 
 Without the feature the default build stays dependency-free: the platform still ingests the STAC
 scene catalog, and `make seed` synthesizes realistic index series so the full loop (series →

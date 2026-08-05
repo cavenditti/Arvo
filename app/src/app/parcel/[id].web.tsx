@@ -27,6 +27,7 @@ import { INDEX_NAMES, type IndexName, type Meta, type Observation } from '@/api/
 import AlertList from '@/components/AlertList';
 import IndexChart from '@/components/IndexChart';
 import MapView from '@/components/MapView';
+import SatelliteAnalysisCard from '@/components/SatelliteAnalysisCard';
 import { InteractivePressable, MonoLabel, MonoValue, Pill, StatusChip } from '@/components/ui';
 import FieldWorkspaceHeader from '@/components/web/FieldWorkspaceHeader';
 import PortalShell from '@/components/web/PortalShell';
@@ -42,6 +43,7 @@ import {
   useParcel,
   useParcelAlerts,
   useRefreshImagery,
+  useSatelliteAnalysis,
   useUpdateParcel,
   useWeather,
 } from '@/features/parcels/hooks';
@@ -87,6 +89,7 @@ export default function ParcelDetailWeb() {
   const advisoriesQ = useAdvisories(id);
   const alertsQ = useParcelAlerts(id);
   const observations = useParcelObservations(id);
+  const satelliteQ = useSatelliteAnalysis(id);
 
   const update = useUpdateParcel(id);
   const archive = useArchiveParcel();
@@ -235,12 +238,14 @@ export default function ParcelDetailWeb() {
         {/* two-column grid */}
         <View style={[styles.grid, compact && styles.gridCompact]}>
           {/* LEFT */}
-          <ColumnContainer
-            style={[styles.colLeft, compact && styles.colCompact]}
-          >
+          <ColumnContainer style={[styles.colLeft, compact && styles.colCompact]}>
             <View style={styles.columnContent}>
-            {/* score explanation + advanced chart, collapsed by default */}
-            <View style={styles.card}>
+              <SatelliteAnalysisCard
+                analysis={satelliteQ.data}
+                loading={satelliteQ.isLoading}
+              />
+              {/* score explanation + advanced chart, collapsed by default */}
+              <View style={styles.card}>
               <View style={styles.conditionHead}>
                 <View style={styles.conditionTitleRow}>
                   <Text style={styles.cardTitle}>{t('parcel.current_condition')}</Text>

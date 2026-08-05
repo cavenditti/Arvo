@@ -7,8 +7,8 @@
 
 Target: analytics on **individual plants** (orchard trees, vineyard vines, row-crop segments),
 scaling to **tens of thousands of plants per farm**, fed by **own-drone cm-scale imagery processed
-with self-hosted Structure-from-Motion**. Sentinel-2 stays as the cheap whole-parcel trend layer;
-drone captures are the per-plant layer.
+with self-hosted Structure-from-Motion or licensed sub-metre aerial/satellite orthophotos**.
+Sentinel-2 stays as the cheap whole-parcel trend layer; detailed captures are the per-plant layer.
 
 ---
 
@@ -19,7 +19,7 @@ Two assumptions the Tier-0 build rests on both break at plant scale:
 1. **Imagery = Sentinel-2 @ 10 m/px, finest object = parcel.** `imagery/worker.rs` resamples to a
    10 m grid and emits *one* aggregate stats row per index per scene per parcel. **10 m cannot see a
    plant** (a vine sits on 1–2 m spacing; one S2 pixel blends dozens). Per-plant is gated on a new
-   **cm-scale sensing layer**, not on more SQL.
+   **high-resolution sensing layer**, not on more SQL.
 2. **One `index_observations` row per parcel.** Per-plant multiplies row count by the plant count
    (~10³–10⁴×). The plain PostGIS btree table will not carry it (see §5, NFR-P-SCALE).
 
@@ -81,7 +81,7 @@ schema, API, and UI. Only detection + the extraction unit diverge:
 
 | unit_type | Layout | Detection method | Extraction unit | "Per-plant" means |
 |-----------|--------|------------------|-----------------|-------------------|
-| `tree` | crowns on a grid | DSM local-maxima + watershed crown delineation (label-free baseline) | crown polygon | one tree |
+| `tree` | crowns on a grid | DSM local-maxima, or RGB/NIR vegetation-distance maxima, + watershed crown delineation | crown polygon | one tree |
 | `vine` | trellised rows, 1–2 m spacing | row-line detection → regular point placement along the row | point + fixed buffer | one vine **or** row-segment (config) |
 | `row_segment` | continuous beds/rows | tile the row into fixed-length segments | segment polygon | a length of row / a bed cell |
 | `bush` | discrete shrubs | crown delineation (as `tree`) | crown polygon | one bush |
@@ -115,8 +115,8 @@ and endpoints with a different detector and extraction geometry.
   and surfaced.
 - **FR-P-013 (S):** Quality gate: reject/flag captures with insufficient overlap, GSD, or coverage
   of the parcel.
-- **FR-P-014 (S):** Accept a **pre-built** orthomosaic/DSM (vendor path), skipping SfM — keeps the
-  sensing choice swappable without touching downstream stages.
+- **FR-P-014 (S):** Accept a **pre-built** orthomosaic with an optional DSM (vendor path), skipping
+  SfM — keeps the sensing choice swappable without touching downstream stages.
 
 **Detection & registration**
 - **FR-P-020 (M):** Detect plants from the capture per `unit_type` (crown delineation / row-following
@@ -124,12 +124,13 @@ and endpoints with a different detector and extraction geometry.
 - **FR-P-021 (M):** Register detections to existing plants (spatial nearest-neighbour + assignment) so
   ids are stable across flights; unmatched detections → new plant; expected-but-absent → missing.
 - **FR-P-022 (S):** Flag missing/dead plants (absent where expected, or collapsed canopy/vigor).
-- **FR-P-023 (S):** Detector is pluggable behind one interface: classical CV (DSM maxima + watershed,
-  **no training labels**) as the baseline; instance-segmentation ML models later, same contract.
+- **FR-P-023 (S):** Detector is pluggable behind one interface: pretrained RGB feature detection
+  for high-resolution satellite/orthophoto imagery, with classical CV (DSM maxima or RGB/NIR
+  vegetation-distance maxima + watershed) as the deterministic fallback, same contract.
 
 **Extraction & time-series**
 - **FR-P-030 (M):** Extract per-plant metrics from the capture: per-plant index stats (NDVI, NDRE,
-  GNDVI, NDMI, SAVI within the crown), canopy area (m²), height (DSM percentile). Reuses
+  GNDVI, NDMI, SAVI within the crown), canopy area (m²), and height when a DSM exists. Reuses
   `core::indices` formulas.
 - **FR-P-031 (M):** Per-plant, per-metric time-series with capture lineage + quality flags +
   detector/model version stamp (NFR-P-REPRO).
@@ -343,9 +344,9 @@ anomaly and the replant list have something to find (mirrors the Tier-0 injected
 
 | Sub-phase | Scope | Gate |
 |-----------|-------|------|
-| **P-MVP** | one crop (`tree`), one block, one flight: ODM ortho in MinIO → classical-CV crowns → `plants` → per-plant NDVI/NDRE + canopy area → MVT + WebGL map colour-by-vigor + weakest-N + per-plant scouting. **No Timescale yet** (one flight fits Postgres). | Sensing→detection→analytics→viz proven end-to-end on real drone data. |
+| **P-MVP** | one crop (`tree`), one block, one flight: high-resolution RGB/ODM ortho → pretrained ML crowns with deterministic CV fallback → `plants` → per-plant NDVI/NDRE + canopy area → MVT + WebGL map colour-by-vigor + weakest-N + per-plant scouting. **No Timescale yet** (one flight fits Postgres). | Sensing→detection→analytics→viz proven end-to-end on real imagery. |
 | **P-scale** | Timescale hypertable + continuous aggregates + Temporal + cross-flight registration + `vine`/`row_segment` detectors + object-store hardening. | 10⁴ plants × many flights sustained within NFR-P-PERF/SCALE. |
-| **P-breadth** | ML detector, fruit counting / yield (FR-P-045), disease localisation, per-plant water/nutrient status, replant automation; per-plant → Tier-B variable-rate prescriptions. | Agronomic value validated per crop. |
+| **P-breadth** | Farm/crop-specific model fine-tuning, fruit counting / yield (FR-P-045), disease localisation, per-plant water/nutrient status, replant automation; per-plant → Tier-B variable-rate prescriptions. | Agronomic value validated per crop. |
 
 ---
 

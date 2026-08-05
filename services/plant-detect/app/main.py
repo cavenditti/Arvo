@@ -1,9 +1,9 @@
 """OWNER: be-detect — `services/plant-detect`, the label-free plant detector.
 
-One endpoint (`POST /detect`) behind which the two detection families live: CHM watershed
-crowns for `tree`/`bush`, row-line point placement for `vine`/`row_segment`
-(docs/PHASE-PLANT.md §3, docs/API-PLANT.md §"Pipeline stages" → Detection). Classical CV only:
-no training, no weights to download, CPU-only.
+One endpoint (`POST /detect`) behind which the two detection families live: CHM or detailed-
+ortho crowns for `tree`/`bush`, row-line point placement for `vine`/`row_segment`
+(docs/PHASE-PLANT.md §3, docs/API-PLANT.md §"Pipeline stages" → Detection). High-resolution RGB
+uses optional DeepForest feature detection; deterministic CV remains the fallback.
 
 Handlers are deliberately **sync** `def` — the CV work is CPU-bound, so Starlette runs them in
 its threadpool instead of stalling the event loop. Scale with `uvicorn --workers N`.
@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import chm as chm_mod
-from . import crowns, raster, rows
+from . import crowns, ml_crowns, raster, rows
 from .config import CROWN_UNITS, DEFAULT_BANDS, DETECTOR_VER, UNIT_TYPES, Params, resolve_params
 from .errors import DetectError
 from .geo import Detection
@@ -66,12 +66,18 @@ def health() -> HealthResponse:
         gdal_ver: Optional[str] = rasterio.__gdal_version__
     except Exception:  # pragma: no cover - rasterio is a hard dependency, this is belt & braces
         rio_ver = gdal_ver = None
+    ml = ml_crowns.status()
     return HealthResponse(
         status="ok",
         model_ver=DETECTOR_VER,
         unit_types=list(UNIT_TYPES),
         rasterio=rio_ver,
         gdal=gdal_ver,
+        ml_backend=ml["backend"],
+        ml_mode=ml["mode"],
+        ml_available=ml["available"],
+        ml_loaded=ml["loaded"],
+        ml_model=ml["model"],
     )
 
 
@@ -116,25 +122,78 @@ def detect(req: DetectRequest) -> DetectResponse:
 # --- the two detection families ---------------------------------------------
 
 
-def _vegetation(req: DetectRequest, grid: raster.Grid, params: Params) -> Optional[chm_mod.Veg]:
+def _ortho_bands(req: DetectRequest, grid: raster.Grid, params: Params) -> Dict[str, Any]:
+    if not req.ortho_path:
+        return {}
+    ortho = raster.resolve_store_path(req.ortho_path)
+    return raster.read_bands_on_grid(ortho, grid, req.bands or DEFAULT_BANDS, params)
+
+
+def _vegetation(
+    req: DetectRequest,
+    grid: raster.Grid,
+    params: Params,
+    bands: Optional[Dict[str, Any]] = None,
+) -> Optional[chm_mod.Veg]:
     """Vegetation index over the working grid, when the capture has an ortho."""
     if not req.ortho_path or params.veg_index == "none":
         return None
-    ortho = raster.resolve_store_path(req.ortho_path)
-    bands = raster.read_bands_on_grid(ortho, grid, req.bands or DEFAULT_BANDS, params)
-    return chm_mod.vegetation(bands, params.veg_index, params.veg_min)
+    return chm_mod.vegetation(bands or _ortho_bands(req, grid, params), params.veg_index, params.veg_min)
 
 
 def _detect_crowns(req: DetectRequest, params: Params) -> Tuple[List[Detection], raster.Grid, Dict[str, Any]]:
-    """`tree` / `bush`: canopy height model → local maxima → watershed crowns."""
-    if not req.dsm_path:
-        raise DetectError("bad_request", f"dsm_path is required for unit_type {req.unit_type!r}")
-    grid = raster.read_grid(raster.resolve_store_path(req.dsm_path), req.parcel_geometry, params)
-    veg = _vegetation(req, grid, params)
-    canopy = chm_mod.canopy_height_model(
-        grid.array, grid.px.mean_m, params.terrain_window_m, params.terrain_percentile, valid=grid.valid
-    )
-    detections, stats = crowns.detect_crowns(canopy, grid.px, params, veg=veg, clip=grid.clip)
+    """`tree` / `bush`: prefer DSM heights; fall back to detailed RGB/NIR crown shapes."""
+    if not req.dsm_path and not req.ortho_path:
+        raise DetectError(
+            "bad_request", f"ortho_path or dsm_path is required for unit_type {req.unit_type!r}"
+        )
+
+    if req.dsm_path:
+        grid = raster.read_grid(raster.resolve_store_path(req.dsm_path), req.parcel_geometry, params)
+        veg = _vegetation(req, grid, params)
+        canopy = chm_mod.canopy_height_model(
+            grid.array,
+            grid.px.mean_m,
+            params.terrain_window_m,
+            params.terrain_percentile,
+            valid=grid.valid,
+        )
+        detections, stats = crowns.detect_crowns(canopy, grid.px, params, veg=veg, clip=grid.clip)
+    else:
+        grid = raster.read_grid(raster.resolve_store_path(req.ortho_path), req.parcel_geometry, params)
+        if grid.px.mean_m > crowns.MAX_ORTHO_CROWN_GSD_M:
+            raise DetectError(
+                "bad_request",
+                "ortho-only crown detection needs imagery at "
+                f"{crowns.MAX_ORTHO_CROWN_GSD_M:.1f} m GSD or finer; "
+                f"this raster is {grid.px.mean_m:.2f} m GSD (use a DSM or higher-resolution RGB/NIR)",
+            )
+        bands = _ortho_bands(req, grid, params)
+        veg = None
+        ml_fallback = None
+        try:
+            detections, stats = ml_crowns.detect(
+                bands, grid.valid, grid.px, params, clip=grid.clip
+            )
+        except ml_crowns.MlUnavailable as exc:
+            if ml_crowns.mode() == "deepforest":
+                raise DetectError("internal", str(exc), status=503) from exc
+            ml_fallback = str(exc)
+            veg = _vegetation(req, grid, params, bands=bands)
+            if veg is None:
+                raise DetectError(
+                    "bad_request",
+                    "ortho-only detection needs RGB bands for ML, or RGB/red+NIR bands for the fallback",
+                )
+            detections, stats = crowns.detect_crowns_from_vegetation(
+                veg, grid.px, params, clip=grid.clip
+            )
+            stats["ml_fallback"] = ml_fallback
+        if veg is None and params.veg_index != "none":
+            try:
+                veg = chm_mod.vegetation(bands, params.veg_index, params.veg_min)
+            except DetectError:
+                veg = None
     stats["veg_index"] = veg.name if veg else None
     return detections, grid, stats
 

@@ -41,6 +41,15 @@ import { colors, fonts, radius, severityTint, spacing, WEB_COMPACT_BREAKPOINT } 
 // Keep the contextual rail deliberately short; it scrolls independently from the map workspace.
 const LIST_LIMIT = 8;
 const MAP_HEIGHT = 460;
+const AUTO_METRIC_ORDER: PlantMetric[] = [
+  'ndvi',
+  'canopy_m2',
+  'height_m',
+  'ndre',
+  'gndvi',
+  'ndmi',
+  'savi',
+];
 
 // Replant reason → chip tint (labelled chip, never a coloured dot — docs/DESIGN.md §5).
 const REASON_TINT: Record<ReplantReason, { fg: string; bg: string }> = {
@@ -64,7 +73,10 @@ export default function PlantsWebScreen() {
   const parcelsQ = useParcels();
   const parcels = useMemo(() => (parcelsQ.data ?? []).filter((p) => !p.archived), [parcelsQ.data]);
 
-  const [metric, setMetric] = useState<PlantMetric>('ndvi');
+  const [metricChoice, setMetricChoice] = useState<{
+    parcelId: string;
+    metric: PlantMetric;
+  } | null>(null);
   const [sidePanel, setSidePanel] = useState<'weakest' | 'replant'>('weakest');
 
   // Prefer the deep-linked field, then the parcel of the newest extracted flight, then the first
@@ -82,9 +94,18 @@ export default function PlantsWebScreen() {
   );
   const parcelId = parcel?.id ?? '';
 
+  const summaryQ = usePlantSummary(parcelId);
+  const summary = summaryQ.data;
+  const autoMetric = useMemo(
+    () =>
+      AUTO_METRIC_ORDER.find(
+        (candidate) => (summary?.latest[candidate]?.plant_count ?? 0) > 0,
+      ) ?? 'ndvi',
+    [summary],
+  );
+  const metric = metricChoice?.parcelId === parcelId ? metricChoice.metric : autoMetric;
   const tileUrl = usePlantTileUrl(parcelId, metric);
   const scaleQ = usePlantMetricScale(parcelId, metric);
-  const summaryQ = usePlantSummary(parcelId);
   const rankingQ = usePlantRanking(parcelId, { metric, limit: LIST_LIMIT });
   const replantQ = useReplantList(parcelId, { limit: LIST_LIMIT });
 
@@ -100,7 +121,6 @@ export default function PlantsWebScreen() {
     [rankingQ.data],
   );
   const replant = replantQ.data?.items ?? [];
-  const summary = summaryQ.data;
 
   const observedAt = scale?.observed_at ?? summary?.last_capture?.captured_at ?? null;
   const legendDate = observedAt
@@ -161,7 +181,9 @@ export default function PlantsWebScreen() {
           return (
             <InteractivePressable
               key={m}
-              onPress={() => setMetric(m)}
+              onPress={() => {
+                setMetricChoice({ parcelId, metric: m });
+              }}
               style={[styles.metricTab, active && styles.metricTabActive]}
               hoverStyle={!active ? styles.controlHover : undefined}
             >

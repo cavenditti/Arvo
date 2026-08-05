@@ -9,6 +9,8 @@ ENV PYTHONUNBUFFERED=1 \
     STORE_DIR=/var/store \
     PORT=8788
 
+ARG INSTALL_ML=0
+
 WORKDIR /srv/plant-detect
 
 # rasterio's manylinux wheel bundles GDAL/PROJ, so there is no GDAL build here. It does link
@@ -18,12 +20,21 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libexpat1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./
+COPY requirements.txt requirements-ml.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+RUN if [ "$INSTALL_ML" = "1" ]; then pip install --no-cache-dir -r requirements-ml.txt; fi
+
+# The runtime user has no writable home. Give Matplotlib/Hugging Face an explicit cache that
+# Compose persists, so model weights are downloaded once and survive container replacement.
+ENV XDG_CACHE_HOME=/var/cache/plant-detect \
+    HF_HOME=/var/cache/plant-detect/huggingface \
+    MPLCONFIGDIR=/var/cache/plant-detect/matplotlib
 
 COPY app ./app
 
-RUN useradd --system --uid 10001 detect && mkdir -p /var/store && chown detect /var/store
+RUN useradd --system --uid 10001 detect \
+    && mkdir -p /var/store /var/cache/plant-detect \
+    && chown detect /var/store /var/cache/plant-detect
 USER detect
 
 EXPOSE 8788

@@ -23,12 +23,15 @@ import type { PlantMapProps } from '../types';
 export interface PlantMapLabels {
   /** shown while the first tiles are in flight */
   loading: string;
-  /** shown when the parcel has no plants at all */
+  /** parent-owned empty-state copy; tile visibility is deliberately not used as a plant count */
   empty: string;
   /** shown below zoom 10, where the API rejects tile requests */
   zoomIn: string;
   /** shown when MapLibre itself never arrives (offline field device, CDN blocked) */
   error: string;
+  /** base-map switch labels (kept inside the map so the frozen PlantMap props stay unchanged) */
+  map: string;
+  satellite: string;
 }
 
 /** XYZ raster tiles drawn above the base map, below the plant layer (ortho/DSM, FR-P-053). */
@@ -52,13 +55,19 @@ export interface PlantMapInitMessage {
   focus: [number, number, number?] | null;
   selectedPlantId: string | null;
   labels: PlantMapLabels;
+  /** top edge for map-owned controls; native places it below the translucent navigation chrome */
+  chromeTop: number;
   /** ortho/DSM raster tiles are out of P-MVP scope, so nothing sets this yet — the document
    *  honours it the day a capture serves them, which keeps that a payload change, not a rewrite */
   overlay?: PlantMapOverlay | null;
 }
 
 /** Flatten the frozen PlantMap props into the wire payload the MapLibre document understands. */
-export function buildPlantInit(props: PlantMapProps, labels: PlantMapLabels): PlantMapInitMessage {
+export function buildPlantInit(
+  props: PlantMapProps,
+  labels: PlantMapLabels,
+  chromeTop = 12,
+): PlantMapInitMessage {
   return {
     type: 'init',
     tileUrlTemplate: props.tileUrlTemplate,
@@ -69,6 +78,7 @@ export function buildPlantInit(props: PlantMapProps, labels: PlantMapLabels): Pl
     focus: props.focus ?? null,
     selectedPlantId: props.selectedPlantId ?? null,
     labels,
+    chromeTop,
   };
 }
 
@@ -117,11 +127,16 @@ ${lib.js}
   #note { position: absolute; left: 12px; right: 12px; top: 12px; display: none; z-index: 2;
     text-align: center; background: rgba(27,30,26,0.88); color: #fff; font: 500 13px system-ui, sans-serif;
     padding: 8px 12px; border-radius: 8px; pointer-events: none; }
+  #basemap-toggle { position: absolute; right: 12px; top: 12px; z-index: 3; min-height: 38px;
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 0 13px;
+    background: rgba(27,30,26,0.92); color: #fff; font: 600 12px system-ui, sans-serif;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
   .maplibregl-ctrl-attrib { font: 400 10px system-ui, sans-serif; }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<button id="basemap-toggle" type="button" aria-pressed="false"></button>
 <div id="note"></div>
 <script>
 (function(){
@@ -133,6 +148,7 @@ ${lib.js}
   var t0 = Date.now();
 
   var map = null, styleReady = false, init = null, gotInit = false, cursorBound = false;
+  var basemap = 'map';
   var tileKey = null, paintKey = null, overlayKey = null, camKey = null, selectedId = null;
 
   function post(msg){
@@ -145,6 +161,23 @@ ${lib.js}
   }
 
   function labels(){ return (init && init.labels) || {}; }
+
+  try {
+    var storedBasemap = window.localStorage.getItem('arvo.plantmap.basemap');
+    if (storedBasemap === 'sat') basemap = 'sat';
+  } catch (e) {}
+
+  function updateChrome(){
+    var l = labels();
+    var top = init && typeof init.chromeTop === 'number' ? Math.max(0, init.chromeTop) : 12;
+    var button = document.getElementById('basemap-toggle');
+    button.style.top = top + 'px';
+    document.getElementById('note').style.top = (top + 46) + 'px';
+    // The compact button names the destination, not the current layer: "Satellite" switches
+    // imagery on; once active, "Map" switches back. One control recovers almost half a row.
+    button.textContent = basemap === 'map' ? (l.satellite || 'Satellite') : (l.map || 'Map');
+    button.setAttribute('aria-pressed', basemap === 'sat' ? 'true' : 'false');
+  }
 
   function note(text){
     var n = document.getElementById('note');
@@ -161,11 +194,37 @@ ${lib.js}
   function baseStyle(){
     return {
       version: 8,
-      sources: { osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-        tileSize: 256, maxzoom: 19, attribution: '&copy; OpenStreetMap' } },
-      layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
+      sources: {
+        osm: { type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+          tileSize: 256, maxzoom: 19, attribution: '&copy; OpenStreetMap' },
+        satellite: { type: 'raster',
+          tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256, maxzoom: 19, attribution: '&copy; Esri' }
+      },
+      layers: [
+        { id: 'base-map', type: 'raster', source: 'osm',
+          layout: { visibility: basemap === 'map' ? 'visible' : 'none' } },
+        { id: 'base-satellite', type: 'raster', source: 'satellite',
+          layout: { visibility: basemap === 'sat' ? 'visible' : 'none' } }
+      ]
     };
   }
+
+  function setBasemap(next){
+    if (next !== 'map' && next !== 'sat') return;
+    basemap = next;
+    if (map && map.getLayer('base-map')) {
+      map.setLayoutProperty('base-map', 'visibility', basemap === 'map' ? 'visible' : 'none');
+      map.setLayoutProperty('base-satellite', 'visibility', basemap === 'sat' ? 'visible' : 'none');
+    }
+    try { window.localStorage.setItem('arvo.plantmap.basemap', basemap); } catch (e) {}
+    updateChrome();
+  }
+
+  document.getElementById('basemap-toggle').addEventListener('click', function(){
+    setBasemap(basemap === 'map' ? 'sat' : 'map');
+  });
+  updateChrome();
 
   function boot(){
     if (typeof maplibregl === 'undefined') {
@@ -207,20 +266,21 @@ ${lib.js}
 
   function ramp(pal){ return (pal && pal.ramp && pal.ramp.length > 1) ? pal.ramp : RAMP; }
 
-  // circles fade in as the heatmap fades out — no zoom where the parcel looks empty
-  function fade(){ return ['interpolate', ['linear'], ['zoom'], 14, 0, 15.2, 1]; }
+  // Keep individual crowns legible at the parcel-fit zoom. The old 1.6–2.8 px dots disappeared
+  // into OSM orchard symbols and pale canopy colours even though the vector tile was populated.
+  function fade(){ return ['interpolate', ['linear'], ['zoom'], 13.5, 0.45, 14.8, 1]; }
 
   function circlePaint(p, pal){
     var stops = ['interpolate', ['linear'], normExpr(p)], r = ramp(pal);
     for (var i = 0; i < r.length; i++) stops.push(i / (r.length - 1), r[i]);
     return {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 1.6, 16, 2.8, 18, 5, 20, 10, 22, 18],
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 2.6, 16, 4.2, 18, 7, 20, 12, 22, 20],
       'circle-color': ['case',
         ['!=', ['get', 'status'], 'alive'], pal.muted || '#D5D3CA',
         ['<', normExpr(p), 0], pal.noData || '#8A8F86',
         stops],
       'circle-opacity': fade(),
-      'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 15, 0.4, 18, 1, 20, 1.6],
+      'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 14, 0.8, 18, 1.2, 20, 1.8],
       'circle-stroke-color': ['case',
         ['!=', ['get', 'status'], 'alive'], pal.mutedStroke || '#A5432B',
         pal.halo || '#FBFAF7'],
@@ -395,11 +455,12 @@ ${lib.js}
     var l = labels();
     if (map.getZoom() < MIN_TILE_Z) { note(l.zoomIn || ''); return; }
     if (!map.getSource(SRC) || !map.isSourceLoaded(SRC)) { note(l.loading || ''); return; }
-    // querySourceFeatures, not queryRenderedFeatures: below the circle layer's minzoom only the
-    // heatmap draws and heatmap layers are not queryable — a rendered query would call every
-    // parcel-wide view empty.
-    var f = map.querySourceFeatures(SRC, { sourceLayer: SRC });
-    note(f.length ? '' : (l.empty || ''));
+    // A vector source only exposes features from tiles currently retained by the renderer.
+    // During a metric/source swap it can therefore report zero even though the authoritative
+    // parcel summary and ranking contain plants (and the next tile already contains them). The
+    // React parent owns the true database-backed empty state; once tiles finish, map chrome must
+    // not invent a contradictory count from this transient viewport cache.
+    note('');
   }
 
   function onClick(e){
@@ -420,6 +481,7 @@ ${lib.js}
   }
 
   function apply(p){
+    updateChrome();
     var pal = p.palette || {};
     setParcel(p.parcelGeometry, pal);
     setOverlay(p.overlay);

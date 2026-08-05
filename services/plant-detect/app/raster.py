@@ -148,7 +148,9 @@ def _read_window(src, band: int, win: windows.Window, factor: int) -> Tuple[np.n
         masked=True,
     )
     mask = np.ma.getmaskarray(data)
-    array = np.ma.filled(data, np.nan).astype(np.float32)
+    # Cast before filling: ordinary RGB satellite/ortho TIFFs are commonly uint8, whose
+    # masked-array dtype cannot represent NaN as a fill value.
+    array = np.ma.filled(data.astype(np.float32), np.nan)
     valid = ~mask & np.isfinite(array)
     transform = windows.transform(win, src.transform) * Affine.scale(
         int(win.width) / out_w, int(win.height) / out_h

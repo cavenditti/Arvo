@@ -46,6 +46,25 @@ def test_finds_every_synthetic_tree():
         assert np.allclose(d.ring[0], d.ring[-1])  # closed
 
 
+def test_finds_every_tree_from_vegetation_without_height_data():
+    orchard = make_orchard()
+    params = resolve_params("tree")
+    chm = _chm(orchard, params)
+    index = np.where(chm > 0.5, 0.72, 0.02).astype(np.float32)
+    veg = chm_mod.Veg(name="ndvi", array=index, vmin=0.25, vhi=0.85)
+
+    detections, stats = crowns.detect_crowns_from_vegetation(veg, _px(orchard), params)
+
+    assert len(detections) == orchard.n == 48
+    assert stats["method"] == "ortho_vegetation_watershed"
+    assert stats["seeds"] == orchard.n
+    assert _nearest_distance_m(detections, orchard.centres_rc, orchard.pixel_m).max() < 1.0
+    for detection in detections:
+        assert detection.height_m is None
+        assert detection.ring is not None
+        assert 3.0 < detection.canopy_m2 < 15.0
+
+
 def test_watershed_splits_touching_crowns():
     # 3 m spacing with 1.7 m crowns: the canopy is continuous, only the watershed separates them.
     orchard = make_orchard(n_rows=5, n_cols=5, spacing_m=3.0, crown_r_m=1.7, margin_m=3.0)

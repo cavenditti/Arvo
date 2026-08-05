@@ -26,7 +26,14 @@ import { Card, GlassIconButton, GlyphBadge, InteractivePressable, StatusChip, Ti
 import { arvoScoreDetail, cropLabel, scoreColor } from '@/features/insights/format';
 import { countAlertEvents, groupAlerts, type AlertEvent } from '@/features/insights/grouping';
 import { deriveFieldStatus, trendFromSeries } from '@/features/insights/status';
-import { useIndexSeries, useLatestIndices, useParcels } from '@/features/parcels/hooks';
+import {
+  imageryIsActive,
+  type ImageryRefreshStatus,
+  useImageryStatuses,
+  useIndexSeries,
+  useLatestIndices,
+  useParcels,
+} from '@/features/parcels/hooks';
 import { useParcelNames } from '@/features/parcels/names';
 import { formatHectares } from '@/lib/format';
 import {
@@ -58,6 +65,7 @@ export default function Dashboard() {
   const ids = (parcels.data ?? []).map((p) => p.id);
   // Shared hook so the cache key matches every other consumer of the batch endpoint.
   const latest = useLatestIndices(ids);
+  const imageryStatuses = useImageryStatuses(ids);
   const openAlerts = useQuery({
     queryKey: ['alerts', 'open'],
     queryFn: () => api.get<Alert[]>('/alerts?state=open'),
@@ -123,11 +131,8 @@ export default function Dashboard() {
       })
     : t('dashboard.parcel_count', { count: list.length });
 
-  // Every field exists but none has a score yet → quiet "first satellite photos on the way".
-  const allPending =
-    list.length > 0 &&
-    latest.isSuccess &&
-    list.every((p) => arvoScoreDetail(latest.data?.[p.id]).score == null);
+  // A missing score is not a running job. Animate only a persisted queued/running refresh.
+  const anyProcessing = list.some((p) => imageryIsActive(imageryStatuses.data?.[p.id]));
 
   const header = (
     <View style={styles.header}>
@@ -164,7 +169,7 @@ export default function Dashboard() {
         <AttentionBanner event={bannerEvent} onPress={() => router.push('/alerts')} />
       ) : null}
 
-      {allPending ? (
+      {anyProcessing ? (
         <TintCard gradient={gradients.eucalyptus} style={styles.firstValue}>
           <View style={styles.processingTitleRow}>
             <ActivityIndicator size="small" color={colors.primary} />
@@ -238,6 +243,7 @@ export default function Dashboard() {
           <ParcelRow
             parcel={item}
             latest={latest.data?.[item.id]}
+            imageryStatus={imageryStatuses.data?.[item.id]}
             openAlertEvents={openEventsByParcel[item.id] ?? 0}
             onPress={() => router.push(`/parcel/${item.id}`)}
           />
@@ -304,11 +310,13 @@ function AttentionBanner({ event, onPress }: { event: AlertEvent; onPress: () =>
 function ParcelRow({
   parcel,
   latest,
+  imageryStatus,
   openAlertEvents,
   onPress,
 }: {
   parcel: Parcel;
   latest: LatestIndices | undefined;
+  imageryStatus: ImageryRefreshStatus | undefined;
   openAlertEvents: number;
   onPress: () => void;
 }) {
@@ -321,7 +329,9 @@ function ParcelRow({
     (data?.series ?? []).map((p) => ({ date: p.observed_at, value: p.mean })),
   );
   const { score, coverage } = arvoScoreDetail(latest);
-  const dataPending = score == null;
+  const dataPending = score == null && imageryIsActive(imageryStatus);
+  const dataUnavailable = score == null && !dataPending;
+  const refreshFailed = imageryStatus?.state === 'failed';
   const fs = deriveFieldStatus({ score, trend, openAlertEvents, coverage });
   const chipStatus: Status = fs.level === 'ok' ? 'healthy' : fs.level;
   const chipLabel = t(fs.chipKey);
@@ -367,7 +377,7 @@ function ParcelRow({
             <Ionicons name="cloud-download-outline" size={20} color={colors.onPrimary} />
           ) : (
             <Text style={styles.scoreValue} maxFontSizeMultiplier={typeScale.maxMult}>
-              {score}
+              {score ?? '—'}
             </Text>
           )}
         </View>
@@ -389,6 +399,21 @@ function ParcelRow({
                 {t('parcel.data_processing_short')}
               </Text>
             </View>
+          ) : dataUnavailable ? (
+            <View style={styles.processingLine}>
+              <Ionicons name="alert-circle-outline" size={14} color={colors.textMuted} />
+              <Text
+                style={[styles.processingText, styles.unavailableText]}
+                maxFontSizeMultiplier={typeScale.maxMult}
+                numberOfLines={2}
+              >
+                {t(
+                  refreshFailed
+                    ? 'parcel.data_refresh_failed_short'
+                    : 'parcel.data_unavailable_short',
+                )}
+              </Text>
+            </View>
           ) : fs.partial ? (
             <Text style={styles.partialText} maxFontSizeMultiplier={typeScale.maxMult}>
               {t('status.partial')}
@@ -400,6 +425,15 @@ function ParcelRow({
             <View style={styles.processingChip}>
               <Text style={styles.processingChipText} maxFontSizeMultiplier={typeScale.maxMult}>
                 {t('parcel.data_processing_chip')}
+              </Text>
+            </View>
+          ) : dataUnavailable ? (
+            <View style={[styles.processingChip, styles.unavailableChip]}>
+              <Text
+                style={[styles.processingChipText, styles.unavailableChipText]}
+                maxFontSizeMultiplier={typeScale.maxMult}
+              >
+                {t('parcel.data_unavailable_chip')}
               </Text>
             </View>
           ) : (
@@ -506,6 +540,7 @@ const styles = StyleSheet.create({
     fontSize: typeScale.caption,
     color: colors.primary,
   },
+  unavailableText: { color: colors.textMuted },
   processingChip: {
     borderRadius: radius.pill,
     backgroundColor: colors.primarySoft,
@@ -517,6 +552,8 @@ const styles = StyleSheet.create({
     fontSize: typeScale.caption,
     color: colors.primary,
   },
+  unavailableChip: { backgroundColor: colors.cardAlt },
+  unavailableChipText: { color: colors.textMuted },
   rowRight: { alignItems: 'flex-end', gap: 6 },
   scoreBadge: {
     width: 46,

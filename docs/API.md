@@ -99,13 +99,29 @@ sees GeoJSON. Endpoint override: `CADASTRE_WFS_URL` (tests, other providers).
 `IndexName = ndvi | ndre | gndvi | ndmi | savi`
 `IndexPoint = {observed_at, mean, median, p10, p90, stddev, pixel_count, cloud_pct, scene_id?, source: "sentinel-2"|"demo"}`
 
-- `POST /api/v1/parcels/{id}/imagery/refresh` `{days?: 90}` (clamped 1–366) → `{scenes_found, scenes_new, computed}`
+- `POST /api/v1/parcels/{id}/imagery/refresh` `{days?: 366, background?: false}` (clamped 1–366)
+  → `{scenes_found, scenes_new, computed}` or `202 {started: true, ...}` for background work.
   Searches Earth Search STAC (`sentinel-2-l2a`, intersects parcel, cloud<60%), upserts `scenes`
   (incl. footprint bbox + BOA-offset flag). Upstream/STAC failure → 500 (details stay in logs).
-  `computed` > 0 only when built with the `imagery` feature (GDAL); otherwise 0.
+  `computed` > 0 only when built with the `imagery` feature (GDAL); otherwise 0. Pixel compute
+  selects the clearest acquisition per half-month (at most 26 for a 366-day search), preserving
+  phenology while bounding remote COG reads.
+- `GET /api/v1/imagery/status?parcel_ids=a,b,c` → `{ "<parcel_id>": {state, requested_at,
+  started_at, finished_at, scenes_found, scenes_new, computed, error_code, updated_at} }` where
+  `state = queued|running|ready|empty|failed`. This persisted lifecycle—not absence of an index—is
+  the only source for processing UI. A queued/running row older than 45 minutes becomes
+  `failed/refresh_timeout`, so process loss cannot create an indefinite spinner.
 - `GET /api/v1/parcels/{id}/scenes?limit=50` → `[{id, stac_id, acquired_at, cloud_cover}]`
   Only scenes whose footprint intersects the parcel (rows ingested before footprints were stored
   are included until the next refresh backfills them).
+- `GET /api/v1/parcels/{id}/satellite-analysis` → `{status, crop?, confidence?, scene_count?,
+  month_count?, applied_to_parcel?, vegetation?, model_version?, resolution_m: 10,
+  individual_plants_supported: false}`. Crop type is inferred from the clear-sky seasonal NDVI
+  profile; vegetation presence/cover comes from Sentinel-2 L2A SCL class 4. A confident result may
+  fill an unset or previously satellite-filled `parcels.crop`, but never replaces a manual value.
+  `status="pending"` is a normal 200 while seasonal/clear-pixel evidence is insufficient.
+  Sentinel-2 provides parcel-scale vegetation detection only; individual plants remain the
+  high-resolution capture pipeline in `API-PLANT.md`.
 - `GET /api/v1/parcels/{id}/indices?index=ndvi&from=&to=` → `{index, series: [IndexPoint]}` (asc by
   time; `from`/`to` accept RFC3339 or `YYYY-MM-DD`, anything else → 400)
 - `GET /api/v1/parcels/{id}/indices/latest` → `{ndvi: IndexPoint|null, ndre: ..., gndvi: ..., ndmi: ..., savi: ...}`

@@ -41,6 +41,7 @@ import AlertList from '@/components/AlertList';
 import DateField from '@/components/DateField';
 import IndexChart from '@/components/IndexChart';
 import MapView from '@/components/MapView';
+import SatelliteAnalysisCard from '@/components/SatelliteAnalysisCard';
 import { StaleBanner } from '@/components/StaleBanner';
 import { showToast } from '@/components/Toast';
 import { MonoLabel, MonoValue, Pill, StatusChip, TintCard } from '@/components/ui';
@@ -48,21 +49,25 @@ import WeatherPanel from '@/components/WeatherPanel';
 import { CROP_OPTIONS, type CropKey, cropIcon, cropLabelKey, formatArea } from '@/features/parcels/crops';
 import { confirmDestructive, notify } from '@/features/parcels/dialog';
 import {
+  imageryIsActive,
   useAdvisories,
   useAgro,
   useArchiveParcel,
   useFarms,
   useIndexSeries,
+  useImageryStatuses,
   useLatestIndices,
   useParcel,
   useParcelAlerts,
   useRefreshImagery,
   useRemoveParcelPhoto,
   useSetParcelPhoto,
+  useSatelliteAnalysis,
   useUpdateParcel,
   useWeather,
 } from '@/features/parcels/hooks';
 import { useParcelObservations } from '@/features/scouting/byParcel';
+import { useAutomaticCapture } from '@/features/plants/hooks';
 import { arvoScore, arvoScoreDetail, dfLocale, scoreColor } from '@/features/insights/format';
 import { countAlertEvents } from '@/features/insights/grouping';
 import { deriveFieldStatus, trendFromSeries } from '@/features/insights/status';
@@ -99,12 +104,14 @@ export default function ParcelDetailScreen() {
   // so the chip/headline/trend never change with the advanced index switcher.
   const ndviQ = useIndexSeries(id, 'ndvi');
   const latestQ = useLatestIndices(id ? [id] : []);
+  const imageryStatusQ = useImageryStatuses(id ? [id] : []);
   const metaQ = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/meta') });
   const weatherQ = useWeather(id);
   const agroQ = useAgro(id);
   const advisoriesQ = useAdvisories(id);
   const alertsQ = useParcelAlerts(id);
   const observations = useParcelObservations(id);
+  const satelliteQ = useSatelliteAnalysis(id);
 
   const update = useUpdateParcel(id);
   const archive = useArchiveParcel();
@@ -113,6 +120,7 @@ export default function ParcelDetailScreen() {
   const mediaToken = useMediaToken();
   const setPhoto = useSetParcelPhoto();
   const removePhoto = useRemoveParcelPhoto();
+  const automaticCapture = useAutomaticCapture();
   const [sharingReport, setSharingReport] = useState(false);
 
   // Batched alert actions, mirroring (tabs)/alerts.tsx: optimistic flip on this parcel's
@@ -250,10 +258,14 @@ export default function ParcelDetailScreen() {
   // theme Status uses 'healthy' where status.ts says 'ok'
   const chipStatus: Status = fieldStatus.level === 'ok' ? 'healthy' : fieldStatus.level;
   const score = arvoScore(latestQ.data?.[id]);
-  const dataPending = score == null && metaQ.data?.features.imagery !== false;
+  const imageryStatus = imageryStatusQ.data?.[id];
+  const imageryEnabled = metaQ.data?.features.imagery !== false;
+  const dataPending = score == null && imageryEnabled && imageryIsActive(imageryStatus);
+  const dataUnavailable = score == null && imageryEnabled && !dataPending;
+  const refreshFailed = imageryStatus?.state === 'failed';
 
-  // Drone capture (13-field EASA form) is a professional flow — agronomist/admin only.
-  const canCapture = role === 'agronomist' || role === 'admin';
+  // Imagery captures mutate the plant inventory, so keep them to professional roles and owners.
+  const canCapture = role === 'agronomist' || role === 'admin' || role === 'owner';
 
   // Index-raster overlay gate: backend build must serve imagery AND the selected index's latest
   // observation must be scene-backed (has scene_id). series is asc by time → last point is latest.
@@ -331,6 +343,14 @@ export default function ParcelDetailScreen() {
         );
       },
       onError: () => notify(t('parcel.imagery_title'), t('toast.error_retry')),
+    });
+  }
+
+  function scanPlants() {
+    automaticCapture.mutate(p.id, {
+      onSuccess: (capture) =>
+        router.push({ pathname: '/capture/new', params: { captureId: capture.id } }),
+      onError: () => notify(t('plants.scan_error_title'), t('plants.scan_error')),
     });
   }
 
@@ -418,6 +438,11 @@ export default function ParcelDetailScreen() {
 
           {/* freshness: quiet pill, only when offline or stale (>10 min) */}
           <StaleBanner updatedAt={parcelQ.dataUpdatedAt || null} />
+
+          <SatelliteAnalysisCard
+            analysis={satelliteQ.data}
+            loading={satelliteQ.isLoading}
+          />
 
           {/* edit form */}
           {editing ? (
@@ -543,6 +568,46 @@ export default function ParcelDetailScreen() {
               <Text style={styles.processingBody} maxFontSizeMultiplier={typeScale.maxMult}>
                 {t('parcel.data_processing_body')}
               </Text>
+            </View>
+          ) : null}
+
+          {dataUnavailable ? (
+            <View
+              style={[styles.section, styles.unavailableSection]}
+              accessibilityLiveRegion="polite"
+            >
+              <View style={styles.processingTitleRow}>
+                <Ionicons name="alert-circle-outline" size={20} color={colors.textMuted} />
+                <Text style={[styles.processingTitle, styles.unavailableTitle]} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t(
+                    refreshFailed
+                      ? 'parcel.data_refresh_failed_title'
+                      : 'parcel.data_unavailable_title',
+                  )}
+                </Text>
+              </View>
+              <Text style={styles.processingBody} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t(
+                  refreshFailed
+                    ? 'parcel.data_refresh_failed_body'
+                    : 'parcel.data_unavailable_body',
+                )}
+              </Text>
+              <Pressable
+                style={styles.refreshBtn}
+                onPress={onRefreshImagery}
+                disabled={refresh.isPending}
+                accessibilityRole="button"
+              >
+                {refresh.isPending ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Ionicons name="refresh" size={16} color={colors.primary} />
+                )}
+                <Text style={styles.refreshTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('parcel.data_retry')}
+                </Text>
+              </Pressable>
             </View>
           ) : null}
 
@@ -831,8 +896,7 @@ export default function ParcelDetailScreen() {
             </TintCard>
           </Pressable>
 
-          {/* per-plant tier (Phase P): plant map for everyone; the drone-flight EASA form
-              only for professional roles — owners kept landing in a 13-field legal form. */}
+          {/* Per-plant tier: plant map for everyone; imagery capture for professional roles. */}
           <View style={styles.plantRow}>
             <Pressable
               style={styles.plantBtn}
@@ -846,17 +910,27 @@ export default function ParcelDetailScreen() {
             </Pressable>
             {canCapture ? (
               <Pressable
-                style={styles.plantBtn}
-                onPress={() => router.push({ pathname: '/capture/new', params: { parcelId: p.id } })}
+                style={[styles.plantBtn, automaticCapture.isPending && styles.disabled]}
+                onPress={scanPlants}
+                disabled={automaticCapture.isPending}
                 accessibilityRole="button"
               >
-                <Ionicons name="airplane-outline" size={18} color={colors.primary} />
+                {automaticCapture.isPending ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Ionicons name="scan-outline" size={18} color={colors.primary} />
+                )}
                 <Text style={styles.reportTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                  {t('plants.empty_cta')}
+                  {t(automaticCapture.isPending ? 'plants.scan_starting' : 'plants.empty_cta')}
                 </Text>
               </Pressable>
             ) : null}
           </View>
+          {canCapture ? (
+            <Text style={styles.plantHint} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('plants.scan_hint')}
+            </Text>
+          ) : null}
 
           <Pressable
             style={[styles.reportBtn, sharingReport && styles.disabled]}
@@ -983,8 +1057,10 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   processingSection: { backgroundColor: colors.primarySoft, borderColor: colors.primarySoft },
+  unavailableSection: { backgroundColor: colors.cardAlt, borderColor: colors.borderSoft },
   processingTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   processingTitle: { flex: 1, fontFamily: fonts.bodyBold, fontSize: typeScale.body, color: colors.primary },
+  unavailableTitle: { color: colors.text },
   processingBody: { fontFamily: fonts.body, fontSize: typeScale.caption, lineHeight: 18, color: colors.textMuted },
   processingInline: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   sectionHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -1109,6 +1185,12 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.card,
     minHeight: touch.min,
+  },
+  plantHint: {
+    color: colors.textMuted,
+    fontFamily: fonts.body,
+    fontSize: 12,
+    lineHeight: 17,
   },
   reportTxt: { color: colors.primary, fontFamily: fonts.bodySemiBold, fontSize: 15 },
   archiveBtn: {

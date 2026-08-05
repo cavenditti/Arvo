@@ -1,12 +1,12 @@
-# plant-detect — label-free plant detection
+# plant-detect — ML + deterministic plant detection
 
-Small Python/FastAPI service that turns a capture's **orthomosaic + DSM** into **plant
-detections**: a point per plant, a crown polygon where one exists, a confidence score.
+Small Python/FastAPI service that turns a capture's **orthomosaic, with an optional DSM**, into
+**plant detections**: a point per plant, a crown polygon where one exists, a confidence score.
 
-Classical computer vision only — **no training data, no labels, no model weights, no GPU**.
-The only priors are the physics of a canopy (a tree is a tall, compact blob above local ground)
-and the geometry of a planting (vines sit on straight, evenly spaced rows). That is what makes
-it deployable on the first flight over a farm that has never been surveyed.
+High-resolution RGB satellite/orthophoto imagery is analysed with a pretrained DeepForest feature
+detector. A CPU-only, label-free CV path remains available when weights are not installed or the
+model registry cannot be reached. DSMs still add physically grounded canopy height; Sentinel-2
+adds parcel crop and vegetation context rather than individual-tree pixels.
 
 Contract: [`docs/API-PLANT.md`](../../docs/API-PLANT.md) §"Pipeline stages" → Detection ·
 design: [`docs/PHASE-PLANT.md`](../../docs/PHASE-PLANT.md) §3, §6.
@@ -18,15 +18,15 @@ flight → captures/{id}/raw/*          POST /captures/{id}/assets/raw
   sfm      (ODM)                      → captures/{id}/ortho.tif + dsm.tif
   detect   ← THIS SERVICE             → plant_detections (point, crown, score, height, canopy)
   register (core::registration)       → plants, stable ids across flights
-  extract  (core::plant_metrics)      → plant_observations + the parcel rollup
+  extract  (worker fallback)          → canopy/height observations from those detections
 ```
 
-`arvo-worker`'s `detect` stage also carries an in-process implementation of the same algorithm
-behind its `imagery` cargo feature (`crates/worker/src/detect.rs`). This service is the
+`arvo-worker`'s `detect` stage also carries an in-process DSM implementation behind its
+`imagery` cargo feature (`crates/worker/src/detect.rs`). This service is the
 **pluggable detector behind one interface** required by FR-P-023: same inputs, same outputs,
-same `model_ver` — run it when you want detection off the Rust box, on a bigger machine, or
-swapped for an ML model later without touching the pipeline. The constants the two share are
-diffed by `tests/test_contract.py`.
+same `model_ver` — and additionally provides RGB ML detection and the RGB/NIR fallback. Run it when you want
+detection off the Rust box or on a bigger machine without
+touching the pipeline. Shared constants are diffed by `tests/test_contract.py`.
 
 ## Run it
 
@@ -46,7 +46,7 @@ Locally, without Docker (Python ≥ 3.10 — the rasterio pin's floor):
 cd services/plant-detect
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 STORE_DIR=../../backend/var/store .venv/bin/uvicorn app.main:app --port 8788
-.venv/bin/python -m pytest          # 50 tests, ~2 s, no drone data needed
+.venv/bin/python -m pytest          # 53 tests, a few seconds, no drone data needed
 ```
 
 | env | default | meaning |
@@ -64,8 +64,8 @@ STORE_DIR=../../backend/var/store .venv/bin/uvicorn app.main:app --port 8788
 {
   "capture_id": "…uuid…",                       // optional, echoed back (logs only)
   "unit_type": "tree",                          // tree | bush | vine | row_segment
-  "dsm_path":   "captures/{capture_id}/dsm.tif",   // required for tree|bush
-  "ortho_path": "captures/{capture_id}/ortho.tif", // optional for tree|bush, the mask source for vine|row_segment
+  "dsm_path":   "captures/{capture_id}/dsm.tif",   // optional; preferred for tree|bush
+  "ortho_path": "captures/{capture_id}/ortho.tif", // required without DSM and for vine|row_segment
   "bands": {"red": 1, "green": 2, "blue": 3, "nir": 4},   // = Capture.bands, 1-based indices in the ortho
   "parcel_geometry": {"type": "Polygon", "coordinates": [[[lon, lat], …]]},  // EPSG:4326, clips the search
   "params": {"min_spacing_m": 4.0}              // optional overrides, see §Tuning
@@ -80,7 +80,7 @@ rejected unless `PLANT_DETECT_ALLOW_ABS_PATHS=1`.
 
 ```jsonc
 {
-  "model_ver": "cv-chm-0.1.0",                  // → plant_detections.model_ver, plant_observations.model_ver
+  "model_ver": "hybrid-crown-0.3.0",            // → plant_detections.model_ver, plant_observations.model_ver
   "unit_type": "tree",
   "capture_id": "…uuid…",
   "count": 412,
@@ -95,7 +95,7 @@ rejected unless `PLANT_DETECT_ALLOW_ABS_PATHS=1`.
       "geom":  {"type": "Point", "coordinates": [15.8386, 41.4584]},        // crown centroid, EPSG:4326
       "crown_geom": {"type": "Polygon", "coordinates": [[[…], …]]},         // null for vine|row_segment
       "score": 0.83,                                                        // 0..1, see §Scoring
-      "height_m": 4.12,                                                     // max CHM inside the crown
+      "height_m": 4.12,                                                     // max CHM, null for ortho-only crowns
       "canopy_m2": 11.9                                                     // area of crown_geom
     }
   ]
@@ -109,7 +109,7 @@ closed; `canopy_m2` is the area of the emitted polygon, so a row can never disag
 
 ### `GET /health`
 
-`{"status": "ok", "model_ver": "cv-chm-0.1.0", "unit_types": [...], "rasterio": "1.3.9", "gdal": "3.6.4"}`
+`{"status": "ok", "model_ver": "hybrid-crown-0.3.0", "ml_backend": "deepforest", "ml_available": true, …}`
 
 ### Errors
 
@@ -119,8 +119,8 @@ with `bad_request` 400 (bad key, unknown unit type or parameter, geometry off th
 
 ## How detection works
 
-**`tree` · `bush` — canopy height model + watershed.** The textbook individual-tree-crown
-recipe, and the one the frozen contract specifies:
+**`tree` · `bush` — two crown paths.** When a DSM exists, the detector uses the textbook
+individual-tree-crown recipe:
 
 1. **CHM = DSM − rolling terrain baseline.** The baseline is the *p10 over a 15 m window*, so no
    DTM and no ground-classified point cloud is needed: over an orchard, the lowest decile of a
@@ -134,9 +134,27 @@ recipe, and the one the frozen contract specifies:
 5. **Filter** crowns outside 0.5–80 m², trace the outline (marching squares + Douglas–Peucker),
    emit centroid, polygon, max height, polygon area, score.
 
-An **ortho** is optional here but recommended: with `nir` it gives NDVI, without it excess green
-(ExG) from RGB, and the vegetation mask is what stops a shed, a polytunnel or a pole from being
-detected as a tree (tested: `test_vegetation_gate_rejects_a_shed`).
+An **ortho** is optional on that path but recommended: with `nir` it gives NDVI, without it
+excess green (ExG) from RGB, and the vegetation mask stops a shed, a polytunnel or a pole from
+being detected as a tree (tested: `test_vegetation_gate_rejects_a_shed`).
+
+Without a DSM, a detailed RGB ortho first runs tiled DeepForest inference. Its RGB feature boxes
+become georeferenced crown polygons and plant centroids, filtered by confidence, parcel boundary,
+and the configured crown-area range. This is ordinary ML inference on the source image; it does
+not depend on an NDVI/ExG mask. The model is loaded lazily and cached by the process.
+
+When ML is unavailable, a detailed RGB/NIR ortho uses a height-free deterministic fallback:
+
+1. Build and de-speckle the NDVI or ExG vegetation mask.
+2. Compute its Euclidean distance transform: crown centres are high and edges are zero.
+3. Seed centres at least `min_spacing_m` apart and watershed the inverted distance surface,
+   splitting touching crowns at their narrowest saddle.
+4. Apply the same crown-area filters and emit centroid, polygon, area and a shape/vigour score.
+
+This path accepts at most **1.0 m GSD** and is aimed at orchard crowns visible in sub-metre
+aerial or satellite imagery. It emits `height_m: null`; RGB pixels cannot provide an honest
+plant height. Sentinel-2's 10 m bands remain useful for parcel crop/cover analysis, but are
+intentionally rejected for individual-plant detection.
 
 **`vine` · `row_segment` — row lines.** Trellised rows have no separable crowns, so the geometry
 of the planting carries the signal:
@@ -158,8 +176,9 @@ of the planting carries the signal:
 
 ### Scoring
 
-`score` is a **ranking**, not a calibrated probability: `0.6·height + 0.4·shape`, and
-`0.5·height + 0.3·shape + 0.2·vigour` when a vegetation index is available.
+`score` is a **ranking**, not a calibrated probability: the DSM path uses `0.6·height +
+0.4·shape`, or `0.5·height + 0.3·shape + 0.2·vigour` with an ortho. The ortho-only path uses
+`0.6·shape + 0.4·vigour` because height is unavailable.
 
 - *height* — `(height_m − min_height_m) / max(min_height_m, 0.5)`, clamped: twice the minimum
   height scores full marks.
@@ -177,7 +196,7 @@ parameter would otherwise silently ruin a run.
 
 | param | tree | bush | vine | row_segment | what it does |
 |---|---|---|---|---|---|
-| `min_height_m` | 1.0 | 0.4 | 0.6 | 0.3 | canopy floor; **the first thing to change** — set it below the shortest plant and above the tallest weed |
+| `min_height_m` | 1.0 | 0.4 | 0.6 | 0.3 | DSM canopy floor; ignored by ortho-only crown detection |
 | `min_spacing_m` | 1.5 | 1.0 | 0.8 | 0.5 | minimum distance between two apexes ≈ half the planting distance |
 | `min_crown_m2` / `max_crown_m2` | 0.5 / 80 | 0.2 / 20 | — | — | crown area window; tighten to the crop's real crown size to drop shrubs and merged blobs |
 | `smooth_sigma_m` | 0.6 | 0.3 | — | — | raise if one tree yields several detections, lower if two trees merge into one |
@@ -201,10 +220,20 @@ and `stats.dropped_*` against the grower's own plant count. `stats` is there for
 ## Rasters it accepts
 
 Anything GDAL reads with a CRS: ODM's UTM GeoTIFF/COG is the happy path. The DSM is read at band
-1; the ortho's bands are named by the request's `bands` map and warped onto the DSM grid, so the
-two need not share a resolution or a projection. A raster in EPSG:4326 works — pixel size is
-converted to metres at the scene's latitude (~0.5 % error, harmless at these thresholds). Nodata
-is honoured and never leaks into the terrain baseline.
+1; the ortho's bands are named by the request's `bands` map and warped onto the DSM grid when
+both exist, so they need not share a resolution or projection. An ortho can be the reference
+grid when no DSM exists. A raster in EPSG:4326 works — pixel size is converted to metres at the
+scene's latitude (~0.5 % error, harmless at these thresholds). Nodata is honoured.
+
+Supply a georeferenced GeoTIFF/COG that is licensed for analysis. The ordinary no-upload path is
+`POST /parcels/{id}/captures/automatic`: for every parcel in Italy the API obtains a 50 cm RGB
+GeoTIFF from MASE's public Geoportale Nazionale / AGEA WMS, stores its attribution and acquisition
+year on the capture, and queues this detector. Newer regional/open providers can replace that
+national baseline. Do not scrape the map's interactive display tiles: standard OpenStreetMap tiles
+are a rendered street map rather than satellite pixels, and their
+[tile policy](https://operations.osmfoundation.org/policies/tiles/) prohibits bulk downloading.
+The app's Esri World Imagery layer is likewise a display layer; manual uploads remain available for
+licensed provider products or a grower's own orthophoto.
 
 Big files are safe: the read is windowed to `parcel_geometry` and decimated to `target_gsd_cm`,
 then further if the window would exceed `max_pixels`. A 2 GB ortho is never fully loaded.
@@ -215,9 +244,9 @@ then further if the window would exceed `max_pixels`. A 2 GB ortho is never full
 python -m pytest        # tests/ — synthetic fixtures only, no drone data, no network
 ```
 
-- `test_crowns.py` — the load-bearing one: a synthetic orchard (48 dome crowns on a 5 m grid over
-  a 2 % slope with noise) must yield **exactly 48** detections on the right trees, plus touching
-  crowns, area filters, the bush/tree height split, the shed rejection and the parcel clip.
+- `test_crowns.py` — a synthetic orchard (48 dome crowns on a 5 m grid over a 2 % slope with
+  noise) must yield **exactly 48** detections on the right trees from both DSM and vegetation,
+  plus touching crowns, area filters, the bush/tree height split, shed rejection and parcel clip.
 - `test_rows.py` — rows at a known angle/spacing are recovered to <0.6° and <0.2 m.
 - `test_geo.py` — crown outline, area/perimeter, ring orientation and closure.
 - `test_api.py` — the HTTP contract end to end over a generated GeoTIFF: detections in EPSG:4326,
@@ -226,7 +255,8 @@ python -m pytest        # tests/ — synthetic fixtures only, no drone data, no 
 
 ## Limits (P-MVP)
 
-No ML, no fruit counting, no per-plant species classification (FR-P-045 is P-breadth). No
+The pretrained RGB crown detector ships, but there is no farm-specific model fine-tuning, fruit
+counting, or per-plant species classification (FR-P-045 is P-breadth). There is no
 tiling across a parcel bigger than `max_pixels` at the requested GSD — it decimates instead. The
 detector has no memory: matching detections to *existing* plants is `core::registration`'s job,
 which is what keeps plant ids stable across flights.

@@ -7,11 +7,11 @@ except three additive details: `Observation.plant_id` (§Per-plant scouting), `A
 this document exactly; where it and `docs/PHASE-PLANT.md` differ, **this document wins** (the design
 doc is indicative, this is the contract).
 
-Scope is **P-MVP** (`docs/PHASE-PLANT.md` §11): one crop unit end to end — capture → ortho/DSM →
-classical-CV detection → plants → per-plant metrics → MVT map + weakest-N + per-plant scouting.
+Scope is **P-MVP** (`docs/PHASE-PLANT.md` §11): one crop unit end to end — capture → ortho + optional DSM →
+hybrid RGB-ML/classical detection → plants → per-plant metrics → MVT map + weakest-N + per-plant scouting.
 Binding MVP decisions baked into this contract: **local-disk object store behind a `Store` trait**
-(no S3 SDK), **no TimescaleDB** (`plant_observations` is a plain table), **label-free classical-CV
-detector**, **MapLibre GL from CDN inside the existing WebView/iframe HTML bridge**.
+(no S3 SDK), **no TimescaleDB** (`plant_observations` is a plain table), **pretrained RGB feature
+detection with a deterministic CV fallback**, **MapLibre GL from CDN inside the existing WebView/iframe HTML bridge**.
 
 All timestamps RFC3339 UTC · all ids UUID · geometry GeoJSON EPSG:4326 · errors
 `{"error": {"code", "message"}}` with the codes in `docs/API.md` · `org_id` always from the token ·
@@ -186,6 +186,15 @@ attach assets; `POST …/process` enqueues the pipeline.
   `captured_at` must be within ±10 years of now. `gsd_cm` 0.1–100. `bands` keys are limited to
   `red|green|blue|rededge|nir|swir`, values 1–16. Default when omitted and `source != "demo"`:
   `{"red":1,"green":2,"blue":3}` (RGB) — see the band rule in §Pipeline stages.
+- `POST /api/v1/parcels/{id}/captures/automatic` `{unit_type?}` → `202 Capture` — no-upload
+  path. The server selects and downloads an analysable orthophoto, creates the `prebuilt` capture
+  and ortho asset, and queues `detect` in one operation. The guaranteed national baseline is the
+  public MASE Geoportale Nazionale / AGEA 2012 WMS: RGB, 50 cm source pixels, all Italy, no fees or
+  access constraints, attribution required. The requested parcel window includes 20 m context and
+  is never resampled coarser than the detector's 1 m quality gate. A repeated request returns the
+  matching in-flight capture. Regional/newer providers may supersede this baseline; the returned
+  capture always records provider, acquisition year and effective GSD in `sensor`, `captured_at`,
+  `flight_ref`, `notes` and `gsd_cm`.
 - `GET /api/v1/captures?parcel_id=&status=&limit=50` → `[Capture]` (desc by `captured_at`, `limit`
   clamped 1–200; `assets`/`jobs` omitted). `parcel_id` optional — without it, all org captures.
 - `GET /api/v1/captures/{id}` → `Capture` **with** `assets` and `jobs`.
@@ -208,7 +217,7 @@ attach assets; `POST …/process` enqueues the pipeline.
 - `POST /api/v1/captures/{id}/process` → `202 Capture` — enqueues the first stage:
   `source="drone"` → `sfm` (requires ≥ 1 `raw` asset, else 400);
   `source="prebuilt"` → `detect` and the status moves straight to `ortho` (requires an `ortho`
-  asset; `dsm` is required for `unit_type ∈ {tree,bush}`, optional otherwise);
+  asset; `dsm` is optional but preferred for `unit_type ∈ {tree,bush}`);
   `source="demo"` → `detect` with the synthetic sampler (no assets required).
   Idempotent: if a job for the capture is already `queued`/`running`, returns `202` with the
   unchanged capture (never a duplicate job).
@@ -251,9 +260,9 @@ not a separate job, so `extracted` is only reached after the parcel rollup has b
 | stage | input | writes | status on success |
 |---|---|---|---|
 | `sfm` | `raw/` photos | `ortho.tif`, `dsm.tif` (ODM) | `ortho` |
-| `detect` | ortho + dsm | `plant_detections` | `detected` |
+| `detect` | detailed ortho, optional dsm | `plant_detections` | `detected` |
 | `register` | `plant_detections` | `plants` (matched / created / marked `missing`) | `registered` |
-| `extract` | ortho + dsm + `plants` | `plant_observations`, then the parcel rollup into `index_observations` | `extracted` |
+| `extract` | ortho + optional dsm + `plants` | `plant_observations`, then the parcel rollup into `index_observations` | `extracted` |
 
 ```
 uploaded --sfm--> ortho --detect--> detected --register--> registered --extract--> extracted
@@ -280,16 +289,29 @@ POST /captures/{id}/retry:          status rewound to the stage's input status, 
   `arvo-worker run [--once] [--interval-secs 5] [--capture <uuid>]`. `--once` drains every runnable
   job — including the ones it enqueues itself — then exits `0`; exit `1` if any job ended `failed`.
 
-**Detection (`detect`, label-free classical CV).** CHM = DSM − a rolling terrain baseline (p10 over a
-15 m window; no DTM required). Smooth, take local maxima with a minimum spacing of 1.5 m, delineate
-crowns by watershed on the CHM. Drop crowns < 0.5 m² or > 80 m². Emits one `plant_detections` row per
-crown: point (crown centroid), `crown_geom`, `height_m` (crown max CHM), `canopy_m2`
-(`ST_Area(geography)`), `score` 0..1. `vine`/`row_segment` place points along detected row lines at a
-fixed spacing instead (`crown_geom` null). `model_ver` format `"<detector>-<semver>"`, e.g.
-`cv-chm-0.1.0`; the synthetic path uses `synth-0.1.0`.
+**Detection (`detect`, hybrid ML/classical).** Tree/bush crowns have two input paths. When a DSM
+exists, CHM = DSM − a rolling terrain baseline (p10 over a 15 m window; no DTM required); smooth,
+take local maxima at least 1.5 m apart and watershed the CHM. Without a DSM, a georeferenced RGB
+satellite/ortho image at ≤ 1.0 m GSD is tiled through a pretrained DeepForest detector; its feature
+boxes become georeferenced crown polygons. This works directly on RGB pixels and does not require a
+vegetation-index mask. If ML is disabled/unavailable, RGB/NIR vegetation-distance watershed remains
+the deterministic fallback. All paths drop crowns
+< 0.5 m² or > 80 m² and emit point, `crown_geom`, `canopy_m2` and `score`; `height_m` is the crown
+max CHM on the DSM path and null on the ortho-only path. `vine`/`row_segment` place points along
+detected row lines at a fixed crop-tuned spacing; their `crown_geom` is null. The hybrid detector
+stamps `hybrid-crown-0.3.0`; the synthetic path uses `synth-0.1.0`.
 
-**Decision — two detector backends, service first, in-process fallback.** The same CHM/crown
-algorithm exists twice, and `detect` picks at runtime:
+Sentinel-2 (10 m) is deliberately limited to parcel-level crop/vegetation analysis and rejected
+for individual-crown extraction. High-resolution imagery must arrive as a licensed, exportable
+GeoTIFF/COG in a `prebuilt` capture. Interactive basemap tiles are not an ingestion API: standard
+OpenStreetMap tiles are cartographic renderings and its
+[tile policy](https://operations.osmfoundation.org/policies/tiles/) prohibits bulk downloading;
+the app's Esri World Imagery layer is display-only, so use a provider product licensed for export
+and analysis rather than scraping the map.
+
+**Decision — two detector backends, service first, in-process fallback.** The DSM crown algorithm
+exists in both backends; the orthophoto-only and row paths live in the service. `detect` picks at
+runtime:
 
 1. **`services/plant-detect`** (Python/FastAPI, `POST /detect`) — used whenever `PLANT_DETECT_URL`
    is set. It covers **every** unit type (including `vine`/`row_segment`) and needs no GDAL in the
@@ -297,11 +319,12 @@ algorithm exists twice, and `detect` picks at runtime:
    `make detect-up`; published on `127.0.0.1` only, because it has no authentication and reads
    capture rasters from a read-only store mount (NFR-P-SEC).
 2. **`worker/detect.rs` `mod cv`** (Rust + GDAL, behind `--features imagery`) — the fallback, and
-   the only path when `PLANT_DETECT_URL` is unset. `tree`/`bush` only.
+   the only path when `PLANT_DETECT_URL` is unset. DSM-backed `tree`/`bush` only.
 
 **Any** service failure — unset, unreachable, timeout, HTTP error, unparseable body — falls back to
-(2), so a down service can never fail a capture the local path could have handled. With neither
-available the stage fails with `stage_unsupported` and `source="demo"` keeps working. The worker
+(2), so a down service can never fail a capture the local path could have handled. Ortho-only
+tree/bush detection therefore requires `PLANT_DETECT_URL`; with neither backend available the
+stage fails and `source="demo"` keeps working. The worker
 sends **store keys** (never absolute paths); request/response shapes are
 `services/plant-detect/app/schemas.py` — keep the Rust client in `worker/detect.rs` `mod service`
 in step with it. Timeouts: 5 s connect (fail fast to the fallback), `PLANT_DETECT_TIMEOUT_S`
@@ -324,7 +347,8 @@ the plant point buffered by 1.5 m (`tree`/`bush`) or 0.75 m (`vine`/`row_segment
 pixels with NDVI ≥ 0.25; fewer than 5 masked pixels → index metrics are skipped for that plant.
 Index values are the **mean** over masked pixels, using the `core::indices` formulas and
 `captures.bands`; a band that is absent skips its metrics (RGB-only ortho ⇒ only `canopy_m2` +
-`height_m`). `canopy_m2` = sampling-geometry area in m²; `height_m` = p95 of the CHM inside it.
+`height_m`). `canopy_m2` = sampling-geometry area in m²; `height_m` = p95 of the CHM inside it
+when a DSM exists and is omitted otherwise.
 `quality = clamp(round(100 · used_pixels / pixels_in_geometry), 0, 100)`.
 `observed_at = captures.captured_at` for every row, so series align with flights.
 
@@ -335,13 +359,13 @@ the parcel: `observed_at = captured_at`, `mean/median/p10/p90/stddev` over the p
 dashboard, series API and anomaly loop working unchanged (FR-P-032). The spine widens
 `IndexPoint["source"]` to `'sentinel-2' | 'demo' | 'drone'` in `src/api/types.ts`.
 
-**Builds without GDAL (CI default).** Real pixel work needs the `imagery` feature. In a default build
-`sfm`/`detect`/`extract` on a `drone`/`prebuilt` capture fail with the job error string
-`stage_unsupported` (capture → `failed`; the HTTP error-code vocabulary of `docs/API.md` is
-unchanged), while `source="demo"` captures run the deterministic synthetic detector/sampler
-(`model_ver = synth-*`) end to end. CI and `seed --demo-plants` therefore use `source="demo"`;
-`/api/v1/meta`'s existing `features.imagery` flag tells the app which path is available (no new meta
-field in Phase P).
+**Builds without GDAL (CI default).** `sfm` and in-process raster work need the `imagery` feature.
+A `prebuilt` capture can instead use `services/plant-detect`: detection and registration run from
+the uploaded ortho, and extraction persists the detected `canopy_m2` plus `height_m` when present;
+spectral per-plant indices remain absent. With neither service nor GDAL, real capture stages report
+`stage_unsupported`. `source="demo"` continues to run the deterministic synthetic detector/sampler
+(`model_ver = synth-*`) end to end. `/api/v1/meta` reports only the in-process imagery capability;
+the detector service is an operational backend, not a client-visible provider.
 
 ## Plant insights
 
@@ -606,8 +630,7 @@ asset and tile**.
 
 ## Out of scope for P-MVP (do not build)
 
-TimescaleDB hypertables/continuous aggregates · MinIO/S3 · Temporal · ML detectors and fruit counting
-(FR-P-045) · `vine`/`row_segment` detectors (the schema and API already carry them; only `tree`/`bush`
-detection ships) · ortho/DSM raster overlay tiles (FR-P-053) · the plant-health printable report
+TimescaleDB hypertables/continuous aggregates · MinIO/S3 · Temporal · crop-specific model training and
+fruit counting (FR-P-045) · ortho/DSM raster overlay tiles (FR-P-053) · the plant-health printable report
 (FR-P-062) · capture `PATCH`/`DELETE` · plant hard delete · a WebSocket/SSE pipeline feed (the app
 polls `GET /captures/{id}/status`).

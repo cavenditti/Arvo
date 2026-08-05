@@ -1,0 +1,14 @@
+# Optional CPU inference stack. The explicit PyTorch CPU wheels avoid pulling CUDA into the
+# Linux/arm64 image used on Apple silicon. DeepForest remains a lazy runtime dependency.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0+cpu
+# The Linux/aarch64 CPU repository publishes this matching wheel without a `+cpu` suffix.
+torchvision==0.21.0
+# Keep both the ML and deterministic paths on one binary-compatible scientific stack.
+numpy==1.26.4
+scipy==1.11.4
+scikit-image==0.25.2
+opencv-python-headless==4.10.0.84
+# `supervision` names the GUI distribution even though inference is headless.
+opencv-python==4.10.0.84
+deepforest==2.1.0

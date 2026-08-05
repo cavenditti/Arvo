@@ -28,7 +28,10 @@ services:
 
   plant-detect:
     profiles: ["plant"]
-    build: ../services/plant-detect
+    build:
+      context: ../services/plant-detect
+      args:
+        INSTALL_ML: ${PLANT_DETECT_INSTALL_ML:-1}
     container_name: arvo-plant-detect
     ports:
       # LOOPBACK ONLY. The service has no authentication and reads capture rasters straight
@@ -38,11 +41,15 @@ services:
     environment:
       STORE_DIR: /var/store
       PORT: 8788
-      WEB_CONCURRENCY: ${PLANT_DETECT_WORKERS:-2}
+      # Each worker owns a model instance; one is the safe CPU/developer default.
+      WEB_CONCURRENCY: ${PLANT_DETECT_WORKERS:-1}
       PLANT_DETECT_ALLOW_ABS_PATHS: ${PLANT_DETECT_ALLOW_ABS_PATHS:-0}
+      PLANT_DETECT_ML: ${PLANT_DETECT_ML:-auto}
+      PLANT_DETECT_ML_MODEL: ${PLANT_DETECT_ML_MODEL:-weecology/deepforest-tree}
     volumes:
       # Read-only: detection only ever reads the ortho/DSM it is pointed at.
       - ../backend/var/store:/var/store:ro
+      - plant-detect-cache:/var/cache/plant-detect
 
   odm:
     profiles: ["odm"]
@@ -54,3 +61,4 @@ services:
 
 volumes:
   arvo-db:
+  plant-detect-cache:

@@ -133,3 +133,8 @@ class HealthResponse(BaseModel):
     unit_types: List[str]
     rasterio: Optional[str] = None
     gdal: Optional[str] = None
+    ml_backend: str
+    ml_mode: str
+    ml_available: bool
+    ml_loaded: bool
+    ml_model: Optional[str] = None

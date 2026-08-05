@@ -1,11 +1,13 @@
 //! OWNER: be-detect — stages `detect` and `register`
 //! (docs/API-PLANT.md §"Pipeline stages" → Detection / Registration).
 //!
-//! `detect`: label-free classical CV. CHM = DSM − rolling terrain baseline (p10 over a 15 m
-//! window, no DTM), smooth, local maxima ≥ 1.5 m apart, watershed crown delineation, drop
-//! crowns outside 0.5–80 m². One `plant_detections` row per crown (centroid point,
-//! `crown_geom`, `height_m`, `canopy_m2`, `score`). Deletes its own rows for the capture
-//! before inserting (idempotent). Capture → `detected`.
+//! `detect`: hybrid ML/classical detection. High-resolution satellite/ortho RGB uses an optional
+//! DeepForest model in the service. With a DSM, CHM = DSM − rolling terrain baseline (p10
+//! over a 15 m window, no DTM), followed by local maxima and watershed. The detector service
+//! also supports sub-metre RGB/NIR orthophotos without a DSM by applying watershed to the
+//! vegetation mask's distance transform as the deterministic fallback. One `plant_detections` row per crown (centroid point,
+//! `crown_geom`, optional `height_m`, `canopy_m2`, `score`). Deletes its own rows for the
+//! capture before inserting (idempotent). Capture → `detected`.
 //!
 //! `register`: greedy mutual nearest neighbour (`arvo_core::registration`) against the
 //! parcel's existing non-`removed` plants; matched → `plant_id` + `match_kind='matched'`,
@@ -33,8 +35,8 @@ use uuid::Uuid;
 
 use crate::pipeline::{Job, Worker};
 
-/// `model_ver` stamped by the classical-CV detector (`"<detector>-<semver>"`).
-pub const DETECTOR_VER: &str = "cv-chm-0.1.0";
+/// `model_ver` stamped by the hybrid ML/classical detector (`"<detector>-<semver>"`).
+pub const DETECTOR_VER: &str = "hybrid-crown-0.3.0";
 /// `model_ver` stamped by the deterministic synthetic path (`source="demo"`).
 pub const SYNTH_VER: &str = "synth-0.1.0";
 /// Minimum spacing between CHM local maxima (metres).
@@ -74,7 +76,7 @@ pub struct Crown {
     pub lon: f64,
     pub lat: f64,
     pub ring: Vec<(f64, f64)>,
-    pub height_m: f64,
+    pub height_m: Option<f64>,
     pub canopy_m2: f64,
     pub score: f64,
 }
@@ -299,7 +301,7 @@ async fn insert_crowns(
     let lat: Vec<f64> = crowns.iter().map(|c| c.lat).collect();
     let ring: Vec<Option<String>> = crowns.iter().map(|c| ring_geojson(&c.ring)).collect();
     let score: Vec<f64> = crowns.iter().map(|c| c.score).collect();
-    let height: Vec<f64> = crowns.iter().map(|c| c.height_m).collect();
+    let height: Vec<Option<f64>> = crowns.iter().map(|c| c.height_m).collect();
     let canopy: Vec<Option<f64>> = crowns
         .iter()
         .map(|c| (!c.ring.is_empty()).then_some(c.canopy_m2))
@@ -694,7 +696,11 @@ async fn local_detect(w: &Worker, cap: &Capture) -> anyhow::Result<Vec<Crown>> {
     .fetch_optional(&w.pool)
     .await
     .context("look up dsm asset")?;
-    let key = key.ok_or_else(|| anyhow!("capture has no dsm asset"))?;
+    let key = key.ok_or_else(|| {
+        anyhow!(
+            "orthophoto-only tree/bush detection requires PLANT_DETECT_URL and the plant-detect service"
+        )
+    })?;
     let path = crate::pipeline::key_path(&w.store_dir, &key);
 
     // GDAL is blocking and CPU-bound — keep it off the async runtime.
@@ -920,7 +926,7 @@ mod service {
                 lon,
                 lat,
                 ring: polygon_ring(d.crown_geom.as_ref()),
-                height_m: d.height_m.unwrap_or(0.0),
+                height_m: d.height_m,
                 canopy_m2: d.canopy_m2.unwrap_or(0.0),
                 score: d.score,
             });
@@ -1077,7 +1083,7 @@ mod cv {
                 lon: xs[base],
                 lat: ys[base],
                 ring,
-                height_m,
+                height_m: Some(height_m),
                 canopy_m2,
                 score: score_for(height_m),
             });

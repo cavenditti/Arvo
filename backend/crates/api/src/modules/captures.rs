@@ -23,10 +23,11 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::time::Duration;
 use tower_http::services::fs::AsyncReadBody;
 use uuid::Uuid;
 
@@ -55,6 +56,27 @@ const MAX_NOTES: usize = 2_000;
 /// A flight stamped further than this from now is a client clock bug, not a capture.
 const CAPTURED_AT_WINDOW_DAYS: i64 = 3_653;
 
+/// Guaranteed Italy-wide high-resolution baseline. MASE's public WMS metadata declares no
+/// fees/access constraints and requires source attribution. The underlying AGEA RGB orthophoto
+/// is 50 cm and was acquired during 2009–2012. Regional adapters can supersede it later without
+/// changing the capture/pipeline contract.
+const NATIONAL_WMS_URL: &str = "http://wms.pcn.minambiente.it/ogc";
+const NATIONAL_WMS_MAP: &str = "/ms_ogc/WMS_v1.3/raster/ortofoto_colore_12.map";
+const NATIONAL_WMS_LAYERS: &str = "OI.ORTOIMMAGINI.2012.32,OI.ORTOIMMAGINI.2012.33";
+const NATIONAL_SENSOR: &str = "MASE Geoportale Nazionale / AGEA orthophoto 2012";
+const NATIONAL_FLIGHT_REF: &str = "MASE-GN-OI.ORTOIMMAGINI.2012";
+const NATIONAL_NATIVE_GSD_M: f64 = 0.5;
+const NATIONAL_MAX_DETECT_GSD_M: f64 = 1.0;
+const NATIONAL_MAX_DIM: u32 = 2_048;
+const NATIONAL_MIN_DIM: u32 = 64;
+// Must stay below routes.rs' 30 s global request deadline so provider failures become the
+// actionable imagery error above instead of an opaque HTTP 408 from the outer middleware.
+const NATIONAL_TIMEOUT_SECS: u64 = 25;
+const NATIONAL_MAX_BYTES: u64 = 32 * MB;
+const NATIONAL_CONTEXT_M: f64 = 20.0;
+const M_PER_DEG_LAT: f64 = 110_540.0;
+const M_PER_DEG_LON: f64 = 111_320.0;
+
 const KIND_RAW: &str = "raw";
 const KIND_ORTHO: &str = "ortho";
 const KIND_DSM: &str = "dsm";
@@ -76,6 +98,7 @@ const STAGES: [&str; 4] = ["sfm", "detect", "register", "extract"];
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/captures", get(list).post(create))
+        .route("/parcels/{id}/captures/automatic", post(create_automatic))
         .route("/captures/{id}", get(get_one))
         .route("/captures/{id}/status", get(get_status))
         // Uploads stream straight to the store, so the global body limit is off and the caps
@@ -335,6 +358,333 @@ struct CreateBody {
     flight_ref: Option<String>,
     #[serde(default)]
     notes: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AutomaticBody {
+    #[serde(default)]
+    unit_type: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AutomaticParcelRow {
+    crop: Option<String>,
+    bbox_w: f64,
+    bbox_s: f64,
+    bbox_e: f64,
+    bbox_n: f64,
+}
+
+#[derive(Debug, Clone)]
+struct NationalRequest {
+    bbox: [f64; 4],
+    width: u32,
+    height: u32,
+    gsd_cm: f64,
+}
+
+fn inferred_unit_type(crop: Option<&str>) -> &'static str {
+    let crop = crop.unwrap_or_default().trim().to_ascii_lowercase();
+    if ["vine", "vineyard", "grape", "vite", "vigneto"].contains(&crop.as_str()) {
+        "vine"
+    } else if [
+        "tomato", "wheat", "maize", "pomodoro", "frumento", "grano", "mais",
+    ]
+    .contains(&crop.as_str())
+    {
+        "row_segment"
+    } else {
+        "tree"
+    }
+}
+
+/// Convert an Italy parcel bbox into a WMS request which preserves the provider's native 50 cm
+/// pixels when possible and never exceeds the detector's 1 m ortho-only quality gate.
+fn national_request(bbox: [f64; 4]) -> ApiResult<NationalRequest> {
+    let [west, south, east, north] = bbox;
+    if bbox.iter().any(|v| !v.is_finite()) || west >= east || south >= north {
+        return Err(ApiError::BadRequest("invalid parcel extent".into()));
+    }
+    // A little wider than Italy itself, matching the national service's advertised coverage.
+    if west < 5.0 || east > 20.0 || south < 34.0 || north > 48.0 {
+        return Err(ApiError::BadRequest(
+            "automatic national orthophotos currently cover Italy".into(),
+        ));
+    }
+
+    let centre_lat = (south + north) / 2.0;
+    let width_m = (east - west) * M_PER_DEG_LON * centre_lat.to_radians().cos().abs();
+    let height_m = (north - south) * M_PER_DEG_LAT;
+    let width =
+        ((width_m / NATIONAL_NATIVE_GSD_M).ceil() as u32).clamp(NATIONAL_MIN_DIM, NATIONAL_MAX_DIM);
+    let height = ((height_m / NATIONAL_NATIVE_GSD_M).ceil() as u32)
+        .clamp(NATIONAL_MIN_DIM, NATIONAL_MAX_DIM);
+    let col_gsd_m = width_m / f64::from(width);
+    let row_gsd_m = height_m / f64::from(height);
+    if col_gsd_m > NATIONAL_MAX_DETECT_GSD_M || row_gsd_m > NATIONAL_MAX_DETECT_GSD_M {
+        return Err(ApiError::BadRequest(
+            "this parcel is too wide for the national service's 1 m plant-detection export; use a newer regional orthophoto or upload a detailed image"
+                .into(),
+        ));
+    }
+    Ok(NationalRequest {
+        bbox,
+        width,
+        height,
+        gsd_cm: 100.0 * (col_gsd_m + row_gsd_m) / 2.0,
+    })
+}
+
+fn national_wms_url(request: &NationalRequest) -> ApiResult<reqwest::Url> {
+    let mut url = reqwest::Url::parse(NATIONAL_WMS_URL)
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("invalid national WMS URL: {e}")))?;
+    let bbox = request
+        .bbox
+        .iter()
+        .map(|v| format!("{v:.8}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let width = request.width.to_string();
+    let height = request.height.to_string();
+    url.query_pairs_mut()
+        .append_pair("map", NATIONAL_WMS_MAP)
+        .append_pair("SERVICE", "WMS")
+        .append_pair("VERSION", "1.1.1")
+        .append_pair("REQUEST", "GetMap")
+        .append_pair("LAYERS", NATIONAL_WMS_LAYERS)
+        .append_pair("STYLES", "")
+        .append_pair("FORMAT", "image/tiff")
+        .append_pair("SRS", "EPSG:4326")
+        .append_pair("BBOX", &bbox)
+        .append_pair("WIDTH", &width)
+        .append_pair("HEIGHT", &height)
+        .append_pair("TRANSPARENT", "FALSE");
+    Ok(url)
+}
+
+async fn fetch_national_ortho(request: &NationalRequest) -> ApiResult<Vec<u8>> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(NATIONAL_TIMEOUT_SECS))
+        .user_agent("arvo-imagery/0.1")
+        .build()
+        .map_err(|e| ApiError::Internal(e.into()))?;
+    let response = client
+        .get(national_wms_url(request)?)
+        .send()
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "national orthophoto request failed");
+            ApiError::BadRequest("the national imagery service is temporarily unavailable".into())
+        })?;
+    if !response.status().is_success() {
+        tracing::warn!(status = %response.status(), "national orthophoto request failed");
+        return Err(ApiError::BadRequest(
+            "the national imagery service is temporarily unavailable".into(),
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|n| n > NATIONAL_MAX_BYTES)
+    {
+        return Err(ApiError::BadRequest(
+            "the national imagery response is unexpectedly large".into(),
+        ));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "could not read national orthophoto response");
+            ApiError::BadRequest("the national imagery service returned an incomplete image".into())
+        })?
+        .to_vec();
+    if bytes.len() as u64 > NATIONAL_MAX_BYTES
+        || sniff(&bytes[..bytes.len().min(SNIFF_LEN)], KIND_ORTHO).is_err()
+    {
+        return Err(ApiError::BadRequest(
+            "the national imagery service returned an invalid GeoTIFF".into(),
+        ));
+    }
+    Ok(bytes)
+}
+
+/// POST /parcels/{id}/captures/automatic — fetch an analysable orthophoto without asking the
+/// farmer to upload pixels, register it as a prebuilt capture, and queue detection in one action.
+async fn create_automatic(
+    State(st): State<AppState>,
+    user: AuthUser,
+    Path(parcel_id): Path<Uuid>,
+    body: Option<Json<AutomaticBody>>,
+) -> ApiResult<(StatusCode, Json<CaptureRow>)> {
+    user.require(Role::Operator)?;
+    if !cfg!(feature = "imagery") {
+        return Err(ApiError::BadRequest(
+            "imagery processing is not enabled on this server".into(),
+        ));
+    }
+    let Json(body) = body.unwrap_or_default();
+    let parcel: AutomaticParcelRow = sqlx::query_as(
+        "SELECT p.crop,
+                ST_XMin(q.bbox) AS bbox_w, ST_YMin(q.bbox) AS bbox_s,
+                ST_XMax(q.bbox) AS bbox_e, ST_YMax(q.bbox) AS bbox_n
+         FROM parcels p
+         CROSS JOIN LATERAL (
+             SELECT ST_Envelope(ST_Buffer(p.geom::geography, $3)::geometry) AS bbox
+         ) q
+         WHERE p.id = $1 AND p.org_id = $2 AND NOT p.archived",
+    )
+    .bind(parcel_id)
+    .bind(user.org_id)
+    .bind(NATIONAL_CONTEXT_M)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    let unit_type = one_of(
+        body.unit_type
+            .as_deref()
+            .unwrap_or_else(|| inferred_unit_type(parcel.crop.as_deref()))
+            .trim(),
+        &UNIT_TYPES,
+        "unit_type",
+    )?;
+
+    // A retried HTTP request should observe the in-flight capture, not download and queue twice.
+    let existing: Option<Uuid> = sqlx::query_scalar(
+        "SELECT c.id FROM captures c
+         WHERE c.parcel_id = $1 AND c.org_id = $2 AND c.sensor = $3
+           AND c.unit_type = $4::plant_unit
+           AND c.status IN ('ortho', 'detected', 'registered')
+         ORDER BY c.created_at DESC LIMIT 1",
+    )
+    .bind(parcel_id)
+    .bind(user.org_id)
+    .bind(NATIONAL_SENSOR)
+    .bind(unit_type)
+    .fetch_optional(&st.pool)
+    .await?;
+    if let Some(id) = existing {
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(load_capture(&st, user.org_id, id).await?),
+        ));
+    }
+
+    let request = national_request([parcel.bbox_w, parcel.bbox_s, parcel.bbox_e, parcel.bbox_n])?;
+    let image = fetch_national_ortho(&request).await?;
+    let capture_id = Uuid::new_v4();
+    let asset_id = Uuid::new_v4();
+    let key = storage::ortho_key(capture_id);
+    let checksum = hex(Sha256::digest(&image));
+    let store = LocalStore::new(st.cfg.store_dir.clone());
+    let stored_bytes = store.put(&key, &image).await?;
+    let captured_at = NaiveDate::from_ymd_opt(2012, 12, 31)
+        .and_then(|d| d.and_hms_opt(12, 0, 0))
+        .expect("the static national imagery date is valid")
+        .and_utc();
+    let notes = "Public Italy-wide RGB orthophoto (AGEA acquisitions 2009–2012). Source: Ministero dell'Ambiente e della Sicurezza Energetica, Geoportale Nazionale. Attribution required.";
+
+    let db_result: Result<(), sqlx::Error> = async {
+        let mut tx = st.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO captures
+                 (id, org_id, parcel_id, captured_at, source, status, unit_type, sensor,
+                  gsd_cm, bands, flight_ref, notes, bbox, created_by)
+             VALUES ($1,$2,$3,$4,'prebuilt','ortho',$5::plant_unit,$6,$7,$8,$9,$10,
+                     ST_MakeEnvelope($11,$12,$13,$14,4326),$15)",
+        )
+        .bind(capture_id)
+        .bind(user.org_id)
+        .bind(parcel_id)
+        .bind(captured_at)
+        .bind(unit_type)
+        .bind(NATIONAL_SENSOR)
+        .bind(request.gsd_cm)
+        .bind(json!({ "red": 1, "green": 2, "blue": 3 }))
+        .bind(NATIONAL_FLIGHT_REF)
+        .bind(notes)
+        .bind(request.bbox[0])
+        .bind(request.bbox[1])
+        .bind(request.bbox[2])
+        .bind(request.bbox[3])
+        .bind(user.user_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO capture_assets
+                 (id, org_id, capture_id, kind, path, file_name, bytes, content_type, checksum)
+             VALUES ($1,$2,$3,'ortho',$4,'mase_ortofoto_2012.tif',$5,'image/tiff',$6)",
+        )
+        .bind(asset_id)
+        .bind(user.org_id)
+        .bind(capture_id)
+        .bind(&key)
+        .bind(stored_bytes as i64)
+        .bind(&checksum)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO pipeline_jobs (org_id, capture_id, stage, state, attempts, run_after)
+             VALUES ($1,$2,'detect','queued',0,now())",
+        )
+        .bind(user.org_id)
+        .bind(capture_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await
+    }
+    .await;
+    if let Err(error) = db_result {
+        let _ = store.delete(&key).await;
+        return Err(ApiError::Internal(error.into()));
+    }
+
+    audit::record(
+        &st.pool,
+        user.org_id,
+        Some(user.user_id),
+        "capture.create",
+        "capture",
+        capture_id,
+        json!({
+            "parcel_id": parcel_id,
+            "source": "prebuilt",
+            "provider": NATIONAL_SENSOR,
+            "automatic": true,
+            "unit_type": unit_type
+        }),
+    )
+    .await;
+    audit::record(
+        &st.pool,
+        user.org_id,
+        Some(user.user_id),
+        "capture.upload",
+        "capture",
+        capture_id,
+        json!({
+            "asset_id": asset_id,
+            "kind": "ortho",
+            "provider": NATIONAL_SENSOR,
+            "automatic": true,
+            "bytes": stored_bytes,
+            "checksum": checksum
+        }),
+    )
+    .await;
+    audit::record(
+        &st.pool,
+        user.org_id,
+        Some(user.user_id),
+        "capture.process",
+        "capture",
+        capture_id,
+        json!({ "stage": "detect", "automatic": true, "bytes": stored_bytes }),
+    )
+    .await;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(load_capture(&st, user.org_id, capture_id).await?),
+    ))
 }
 
 /// POST /captures — register a flight. Registering does not start work; `process` does.
@@ -1109,14 +1459,6 @@ async fn process(
                     "no ortho uploaded for this capture".into(),
                 ));
             }
-            // Crown delineation is a canopy-height problem: no DSM, no tree/bush detection.
-            if matches!(cap.unit_type.as_str(), "tree" | "bush")
-                && count_assets(&st, user.org_id, id, KIND_DSM).await? == 0
-            {
-                return Err(ApiError::BadRequest(
-                    "a dsm is required for tree/bush captures".into(),
-                ));
-            }
             "detect"
         }
         _ => "detect",
@@ -1261,5 +1603,31 @@ mod tests {
         assert!(validate_bands(Some(json!({ "nir": 0 })), "drone").is_err());
         assert!(validate_bands(Some(json!({ "nir": 17 })), "drone").is_err());
         assert!(validate_bands(Some(json!([1, 2])), "drone").is_err());
+    }
+
+    #[test]
+    fn national_request_keeps_an_italian_field_at_detection_resolution() {
+        let request = national_request([12.48, 41.88, 12.49, 41.89]).unwrap();
+        assert!(request.width <= NATIONAL_MAX_DIM);
+        assert!(request.height <= NATIONAL_MAX_DIM);
+        assert!(request.gsd_cm <= 100.0);
+        let url = national_wms_url(&request).unwrap().to_string();
+        assert!(url.contains("REQUEST=GetMap"));
+        assert!(url.contains("FORMAT=image%2Ftiff"));
+        assert!(url.contains("OI.ORTOIMMAGINI.2012.32%2COI.ORTOIMMAGINI.2012.33"));
+    }
+
+    #[test]
+    fn national_request_rejects_outside_italy_and_overwide_exports() {
+        assert!(national_request([-3.8, 40.3, -3.7, 40.4]).is_err());
+        assert!(national_request([8.0, 40.0, 8.1, 40.1]).is_err());
+    }
+
+    #[test]
+    fn crop_names_select_the_expected_detection_unit() {
+        assert_eq!(inferred_unit_type(Some("vite")), "vine");
+        assert_eq!(inferred_unit_type(Some("WHEAT")), "row_segment");
+        assert_eq!(inferred_unit_type(Some("olive")), "tree");
+        assert_eq!(inferred_unit_type(None), "tree");
     }
 }

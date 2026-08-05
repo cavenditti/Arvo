@@ -18,7 +18,7 @@ COPYFILE_DISABLE=1 tar -czf "${archive}" \
   --exclude='backend/target' \
   --exclude='backend/var' \
   -C "${repo_dir}" \
-  app auth-server backend infra landing
+  app auth-server backend infra landing services/plant-detect
 
 scp -i /Users/carlo/.ssh/id_rsa "${archive}" "root@${server_ip}:/tmp/arvo-release.tgz"
 scp -i /Users/carlo/.ssh/id_rsa \

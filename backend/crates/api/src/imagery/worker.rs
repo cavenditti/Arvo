@@ -28,6 +28,8 @@ const MAX_GRID_PIXELS: usize = 4_000_000;
 
 struct Computed {
     cloud_pct: f64,
+    clear_px: usize,
+    vegetated_px: usize,
     stats: Vec<(&'static str, indices::Stats)>,
 }
 
@@ -73,6 +75,18 @@ pub async fn compute_scene(
         if res.rows_affected() > 0 {
             inserted += 1;
         }
+    }
+    // Never let a mostly-cloudy newest acquisition replace a trustworthy cover estimate.
+    if c.cloud_pct < 40.0 && c.clear_px >= 50 {
+        crate::imagery::crop::record_vegetation(
+            pool,
+            parcel_id,
+            scene.id,
+            scene.acquired_at,
+            c.clear_px,
+            c.vegetated_px,
+        )
+        .await?;
     }
     Ok(inserted)
 }
@@ -185,6 +199,8 @@ fn compute_pixels(
 
     let mut parcel_px = 0usize;
     let mut cloud_px = 0usize;
+    let mut clear_px = 0usize;
+    let mut vegetated_px = 0usize;
     for i in 0..n {
         if !point_in_rings(px[i], py[i], &rings) {
             continue; // outside the parcel polygon
@@ -196,6 +212,10 @@ fn compute_pixels(
         if raster::scl_masked(scl[i]) {
             cloud_px += 1;
             continue; // clouded — excluded from index stats
+        }
+        clear_px += 1;
+        if raster::scl_vegetation(scl[i]) {
+            vegetated_px += 1;
         }
         let g = |b: Option<&[f64]>| b.map(|s| to_reflectance(s[i], boa_offset_applied));
         let (r, gr, n8, ni, re, sw) = (g(red), g(green), g(nir08), g(nir), g(rededge1), g(swir16));
@@ -234,7 +254,12 @@ fn compute_pixels(
     if stats.is_empty() {
         return Ok(None);
     }
-    Ok(Some(Computed { cloud_pct, stats }))
+    Ok(Some(Computed {
+        cloud_pct,
+        clear_px,
+        vegetated_px,
+        stats,
+    }))
 }
 
 /// Read a band clipped to the dataset-CRS bbox and resampled to `out_w × out_h` (row-major).

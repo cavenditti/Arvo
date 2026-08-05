@@ -37,7 +37,13 @@ import {
 import { countAlertEvents } from '@/features/insights/grouping';
 import { deriveFieldStatus, trendFromSeries } from '@/features/insights/status';
 import { NEUTRAL_FILL, ndviColor } from '@/features/parcels/crops';
-import { useIndexSeries, useLatestIndices, useParcels } from '@/features/parcels/hooks';
+import {
+  imageryIsActive,
+  useImageryStatuses,
+  useIndexSeries,
+  useLatestIndices,
+  useParcels,
+} from '@/features/parcels/hooks';
 import { formatHectares } from '@/lib/format';
 import {
   colors,
@@ -112,6 +118,7 @@ export default function MapScreen() {
   );
   const ids = useMemo(() => parcels.map((p) => p.id), [parcels]);
   const latestQ = useLatestIndices(ids);
+  const imageryStatusesQ = useImageryStatuses(ids);
 
   const openAlertsQ = useQuery({
     queryKey: ['alerts', 'open'],
@@ -219,7 +226,10 @@ export default function MapScreen() {
       : (selectedDetail?.score ?? null)
     : null;
   const selectedIsIndex = choropleth !== 'score' && choropleth !== 'none';
-  const selectedDataPending = selected != null && selectedDetail?.score == null;
+  const selectedDataPending =
+    selected != null &&
+    selectedDetail?.score == null &&
+    imageryIsActive(imageryStatusesQ.data?.[selected.id]);
 
   const viewOptions: { key: MapChoropleth; label: string }[] = useMemo(
     () => [
