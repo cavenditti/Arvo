@@ -194,7 +194,9 @@ attach assets; `POST …/process` enqueues the pipeline.
   is never resampled coarser than the detector's 1 m quality gate. A repeated request returns the
   matching in-flight capture. Regional/newer providers may supersede this baseline; the returned
   capture always records provider, acquisition year and effective GSD in `sensor`, `captured_at`,
-  `flight_ref`, `notes` and `gsd_cm`.
+  `flight_ref`, `notes` and `gsd_cm`. Because this national baseline is static, repeating the
+  automatic action reuses the parcel's completed capture instead of downloading and processing
+  the identical orthophoto again; use capture retry for an intentional recomputation.
 - `GET /api/v1/captures?parcel_id=&status=&limit=50` → `[Capture]` (desc by `captured_at`, `limit`
   clamped 1–200; `assets`/`jobs` omitted). `parcel_id` optional — without it, all org captures.
 - `GET /api/v1/captures/{id}` → `Capture` **with** `assets` and `jobs`.
@@ -450,8 +452,13 @@ through the parcel row; cross-tenant → **404**; media tokens live 15 min and c
   No disk cache in P-MVP (the gist index + `ST_AsMVT` meet NFR-P-PERF).
 - `GET /api/v1/parcels/{id}/plants/metric-scale?metric=ndvi&capture=latest` → `MetricScale` — the
   legend/colour-ramp domain for the same tiles (`capture_id: null` when there is no capture yet).
-
-Ortho/DSM raster overlay tiles (FR-P-053) are **not** in P-MVP.
+- `GET /api/v1/tiles/plant-imagery/{parcel_id}/{z}/{x}/{y}.png?capture=latest&token=<media token>`
+  → a 256×256 RGB tile from the selected capture's exact `ortho` asset (imagery builds only).
+  Authentication and parcel scoping are identical to the MVT endpoint. Tiles are transparent
+  outside the raster footprint and cached privately by capture id. The plant map uses this layer
+  for **Satellite** mode so detections are audited against the pixels that produced them, never an
+  unrelated current basemap mosaic. The resolved `MetricScale.capture_id` is passed explicitly to
+  both tile endpoints to prevent vector/raster drift while a newer capture finishes.
 
 ## Per-plant scouting
 

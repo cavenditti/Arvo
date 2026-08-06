@@ -149,8 +149,10 @@ export default function PlantsScreen() {
     [summary],
   );
   const metric = metricChoice?.parcelId === parcelId ? metricChoice.metric : autoMetric;
-  const tileUrl = usePlantTileUrl(parcelId, metric);
   const scaleQ = usePlantMetricScale(parcelId, metric);
+  // Freeze both vector markers and their RGB backdrop to one resolved capture. Leaving either
+  // endpoint on "latest" lets a newly completed flight change one layer a render before the other.
+  const tileUrl = usePlantTileUrl(parcelId, metric, scaleQ.data?.capture_id ?? 'latest');
   const rankingQ = usePlantRanking(parcelId, { metric, limit: PANEL_LIMIT });
   const replantQ = useReplantList(parcelId, { limit: PANEL_LIMIT });
 
@@ -170,7 +172,7 @@ export default function PlantsScreen() {
 
   const observedAt = scale?.observed_at ?? summary?.last_capture?.captured_at ?? null;
   const legendDate = observedAt
-    ? format(parseISO(observedAt), 'd MMM', { locale })
+    ? format(parseISO(observedAt), 'd MMM yyyy', { locale })
     : t('plants.no_capture');
 
   // Plain phrase first, technical term in parentheses (docs/DESIGN.md §14):

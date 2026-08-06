@@ -548,12 +548,14 @@ async fn create_automatic(
         "unit_type",
     )?;
 
-    // A retried HTTP request should observe the in-flight capture, not download and queue twice.
+    // The national baseline is a static acquisition. Reuse a completed result too: repeating the
+    // automatic action must not download, detect and register the identical 2012 raster again.
+    // A caller who intentionally wants to recompute this capture can use the existing retry API.
     let existing: Option<Uuid> = sqlx::query_scalar(
         "SELECT c.id FROM captures c
          WHERE c.parcel_id = $1 AND c.org_id = $2 AND c.sensor = $3
            AND c.unit_type = $4::plant_unit
-           AND c.status IN ('ortho', 'detected', 'registered')
+           AND c.status IN ('ortho', 'detected', 'registered', 'extracted')
          ORDER BY c.created_at DESC LIMIT 1",
     )
     .bind(parcel_id)

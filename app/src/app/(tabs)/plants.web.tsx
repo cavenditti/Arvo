@@ -104,8 +104,8 @@ export default function PlantsWebScreen() {
     [summary],
   );
   const metric = metricChoice?.parcelId === parcelId ? metricChoice.metric : autoMetric;
-  const tileUrl = usePlantTileUrl(parcelId, metric);
   const scaleQ = usePlantMetricScale(parcelId, metric);
+  const tileUrl = usePlantTileUrl(parcelId, metric, scaleQ.data?.capture_id ?? 'latest');
   const rankingQ = usePlantRanking(parcelId, { metric, limit: LIST_LIMIT });
   const replantQ = useReplantList(parcelId, { limit: LIST_LIMIT });
 

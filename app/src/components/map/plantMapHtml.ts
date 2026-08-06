@@ -59,8 +59,7 @@ export interface PlantMapInitMessage {
   chromeTop: number;
   /** Native-only, credential-free correlation id for TestFlight MVT diagnostics. */
   diagnosticId?: string;
-  /** ortho/DSM raster tiles are out of P-MVP scope, so nothing sets this yet — the document
-   *  honours it the day a capture serves them, which keeps that a payload change, not a rewrite */
+  /** capture RGB raster tiles displayed beneath the matching detections in Satellite mode */
   overlay?: PlantMapOverlay | null;
 }
 
@@ -71,6 +70,14 @@ export function buildPlantInit(
   chromeTop = 12,
   diagnosticId?: string,
 ): PlantMapInitMessage {
+  // The MVT and raster endpoints deliberately share parcel/capture/token query parameters. This
+  // keeps Satellite mode on the exact pixels that produced the detections instead of an unrelated
+  // current basemap mosaic. The ordinary Esri layer remains underneath as a resilient fallback.
+  const captureOrtho = props.tileUrlTemplate.includes('/tiles/plants/')
+    ? props.tileUrlTemplate
+        .replace('/tiles/plants/', '/tiles/plant-imagery/')
+        .replace('.mvt', '.png')
+    : null;
   return {
     type: 'init',
     tileUrlTemplate: props.tileUrlTemplate,
@@ -83,6 +90,7 @@ export function buildPlantInit(
     labels,
     chromeTop,
     diagnosticId,
+    overlay: captureOrtho ? { urlTemplate: captureOrtho, opacity: 1 } : null,
   };
 }
 
@@ -270,6 +278,9 @@ ${lib.js}
     if (map && map.getLayer('base-map')) {
       map.setLayoutProperty('base-map', 'visibility', basemap === 'map' ? 'visible' : 'none');
       map.setLayoutProperty('base-satellite', 'visibility', basemap === 'sat' ? 'visible' : 'none');
+      if (map.getLayer('overlay')) {
+        map.setLayoutProperty('overlay', 'visibility', basemap === 'sat' ? 'visible' : 'none');
+      }
     }
     try { window.localStorage.setItem('arvo.plantmap.basemap', basemap); } catch (e) {}
     updateChrome();
@@ -520,7 +531,11 @@ ${lib.js}
     if (ov.bounds && ov.bounds.length === 4) src.bounds = ov.bounds;
     map.addSource('overlay', src);
     map.addLayer({ id: 'overlay', type: 'raster', source: 'overlay',
-      paint: { 'raster-opacity': typeof ov.opacity === 'number' ? ov.opacity : 0.85 } },
+      layout: { visibility: basemap === 'sat' ? 'visible' : 'none' },
+      paint: {
+        'raster-opacity': typeof ov.opacity === 'number' ? ov.opacity : 1,
+        'raster-fade-duration': 0
+      } },
       map.getLayer('parcel-fill') ? 'parcel-fill' : firstPlantLayer());
   }
 
