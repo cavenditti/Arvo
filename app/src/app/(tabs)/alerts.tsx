@@ -57,13 +57,6 @@ export default function AlertsScreen() {
   // header + segmented control speak in EVENTS, not raw signals
   const openEvents = countAlertEvents(openQ.data ?? []);
   const allEvents = countAlertEvents(allQ.data ?? []);
-  // "new" = created in the 24h before the last successful fetch (pure across re-renders)
-  const freshEvents = countAlertEvents(
-    (openQ.data ?? []).filter(
-      (a) => openQ.dataUpdatedAt - new Date(a.created_at).getTime() < DAY_MS,
-    ),
-  );
-
   const parcelNames: Record<string, string> = {};
   for (const p of parcels.data ?? []) parcelNames[p.id] = p.name;
   const parcelName = (id: string | null) => (id ? (parcelNames[id] ?? '') : '');
@@ -104,11 +97,6 @@ export default function AlertsScreen() {
       <View style={styles.header}>
         <Text style={styles.title} maxFontSizeMultiplier={typeScale.maxMult}>
           {t('alerts.title')}
-        </Text>
-        {/* One meta line; the signals-vs-events accounting lives inside each card's
-            "Dettagli tecnici" — the header stays quiet. */}
-        <Text style={styles.subtitle} maxFontSizeMultiplier={typeScale.maxMult}>
-          {t('alerts.header_meta', { open: openEvents, fresh: freshEvents })}
         </Text>
       </View>
 
@@ -206,12 +194,6 @@ const styles = StyleSheet.create({
     fontSize: 28,
     color: colors.text,
     letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontFamily: fonts.body,
-    fontSize: typeScale.caption + 1,
-    color: colors.textMuted,
-    marginTop: 2,
   },
   segment: {
     flexDirection: 'row',

@@ -86,7 +86,6 @@ export default function WeatherScreen() {
 
   const [pickedId, setPickedId] = useState<string | null>(null);
   const selectedId = pickedId ?? parcelList[0]?.id ?? null;
-  const selected = parcelList.find((p) => p.id === selectedId) ?? null;
 
   // selection drives all three queries (disabled while no parcel is resolved)
   const weatherQ = useWeather(selectedId ?? '');
@@ -128,6 +127,10 @@ export default function WeatherScreen() {
   const agro = agroQ.data;
   // consecutive same-kind days collapse into single events (features/weather/merge.ts)
   const advisoryRuns = mergeAdvisoryRuns(advisoriesQ.data);
+  const activeAdvisories = ADVISORY_KINDS.map((kind) => ({
+    kind,
+    run: latestRunByKind(advisoryRuns, kind),
+  })).filter((item): item is { kind: AdvisoryKind; run: AdvisoryRun } => item.run != null);
 
   return (
     <View style={styles.root}>
@@ -138,9 +141,6 @@ export default function WeatherScreen() {
         contentContainerStyle={styles.content}
       >
         <View style={styles.headerRow}>
-          <Text style={styles.subtitle} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
-            {selected?.name ?? '—'}
-          </Text>
           <ParcelSelector parcels={parcelList} selectedId={selectedId} onSelect={setPickedId} />
         </View>
         {/* illustrated 7-day forecast strip */}
@@ -187,11 +187,13 @@ export default function WeatherScreen() {
         )}
 
         {/* advisory cards — one per kind, fed with the latest merged run */}
-        <View style={styles.cardRow}>
-          {ADVISORY_KINDS.map((kind) => (
-            <AdvisoryCard key={kind} kind={kind} run={latestRunByKind(advisoryRuns, kind)} />
-          ))}
-        </View>
+        {activeAdvisories.length > 0 ? (
+          <View style={styles.cardRow}>
+            {activeAdvisories.map(({ kind, run }) => (
+              <AdvisoryCard key={kind} kind={kind} run={run} />
+            ))}
+          </View>
+        ) : null}
 
         {/* ET₀ / water balance + GDD */}
         <View style={styles.cardRow}>
@@ -261,31 +263,10 @@ function ParcelSelector({
 
 // ── advisory card ────────────────────────────────────────────────────────────
 
-function AdvisoryCard({ kind, run }: { kind: AdvisoryKind; run: AdvisoryRun | undefined }) {
+function AdvisoryCard({ kind, run }: { kind: AdvisoryKind; run: AdvisoryRun }) {
   const { t } = useTranslation();
   const label = t(KIND_LABEL[kind].key, { defaultValue: KIND_LABEL[kind].def });
   const glyph = kindGlyph(kind);
-
-  if (!run) {
-    return (
-      <GlyphCard
-        gradient={gradients.paper}
-        glyph={glyph}
-        glyphColor={colors.textFaint}
-        glyphOpacity={0.08}
-        glyphSize={128}
-        style={styles.advCard}
-      >
-        <View style={styles.advInner}>
-          <MonoLabel>{label}</MonoLabel>
-          <Text style={styles.advHeadline} maxFontSizeMultiplier={typeScale.maxMult}>—</Text>
-          <Text style={styles.advMuted} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('weather.no_advisory', { defaultValue: 'No advisory' })}
-          </Text>
-        </View>
-      </GlyphCard>
-    );
-  }
 
   const pill = advisoryPill(run.kind, run.severity);
   const copy = advisoryCopy(run);
@@ -622,12 +603,11 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     gap: spacing.md,
     zIndex: 20,
   },
   flex1: { flex: 1, minWidth: 0 },
-  subtitle: { flex: 1, fontSize: 13, color: colors.textMuted, fontFamily: fonts.body },
 
   // parcel selector
   selectorWrap: { position: 'relative', zIndex: 30 },
@@ -700,7 +680,6 @@ const styles = StyleSheet.create({
   advTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
   advHeadline: { fontSize: 17, fontFamily: fonts.display, color: colors.text },
   advBody: { fontSize: 13, color: colors.textMuted, lineHeight: 19, fontFamily: fonts.body },
-  advMuted: { fontSize: 13, color: colors.textFaint, fontFamily: fonts.body },
 
   // ET card
   etCard: { flexGrow: 1.5, flexBasis: 360, minWidth: 300 },

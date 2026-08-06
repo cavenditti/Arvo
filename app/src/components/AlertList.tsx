@@ -109,7 +109,6 @@ function EventCard({
     .map((a) => a.id);
   const many = actionableIds.length > 1;
 
-  const parcel = typeof event.titleParams.parcel === 'string' ? event.titleParams.parcel : '';
   const latest = parseISO(event.latestAt);
   const ago = isValid(latest)
     ? formatDistanceToNow(latest, { addSuffix: true, locale: dfLocale() })
@@ -140,12 +139,12 @@ function EventCard({
               </View>
             ) : null}
           </View>
-          <MonoLabel style={styles.meta}>{[parcel, ago].filter(Boolean).join(' · ')}</MonoLabel>
+          {ago ? <MonoLabel style={styles.meta}>{ago}</MonoLabel> : null}
         </View>
         <Pill label={t(`severity.${event.severity}`)} fg={sev.fg} bg={sev.bg} />
       </View>
 
-      <Text style={styles.body} maxFontSizeMultiplier={typeScale.maxMult}>
+      <Text style={styles.body} numberOfLines={2} maxFontSizeMultiplier={typeScale.maxMult}>
         {t(event.bodyKey, event.bodyParams)}
       </Text>
 

@@ -415,16 +415,11 @@ export default function ParcelDetailScreen() {
               </View>
             )}
             <View style={styles.flex1}>
-              <View style={styles.titleRow}>
-                <Text style={styles.title} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
-                  {parcel.name}
-                </Text>
-                <StatusChip status={chipStatus} label={t(fieldStatus.chipKey)} />
-              </View>
               <Text style={styles.subtitle} maxFontSizeMultiplier={typeScale.maxMult}>
                 {t(cropLabelKey(parcel.crop))} · {formatArea(parcel.area_ha)} · {farmName}
               </Text>
             </View>
+            <StatusChip status={chipStatus} label={t(fieldStatus.chipKey)} />
             <Pressable
               onPress={toggleEditing}
               hitSlop={8}
@@ -565,9 +560,6 @@ export default function ParcelDetailScreen() {
                   {t('parcel.data_processing_title')}
                 </Text>
               </View>
-              <Text style={styles.processingBody} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('parcel.data_processing_body')}
-              </Text>
             </View>
           ) : null}
 
@@ -586,13 +578,6 @@ export default function ParcelDetailScreen() {
                   )}
                 </Text>
               </View>
-              <Text style={styles.processingBody} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t(
-                  refreshFailed
-                    ? 'parcel.data_refresh_failed_body'
-                    : 'parcel.data_unavailable_body',
-                )}
-              </Text>
               <Pressable
                 style={styles.refreshBtn}
                 onPress={onRefreshImagery}
@@ -633,9 +618,6 @@ export default function ParcelDetailScreen() {
                   <Text style={styles.conditionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
                     {t(fieldStatus.headlineKey)}
                   </Text>
-                  <Text style={styles.conditionBody} maxFontSizeMultiplier={typeScale.maxMult}>
-                    {t('score.short_explanation')}
-                  </Text>
                   <View style={styles.trendSummary}>
                     <Ionicons
                       name={
@@ -654,14 +636,6 @@ export default function ParcelDetailScreen() {
                   </View>
                 </View>
               </View>
-              {/* The full how-it-works paragraph lives behind "Come funziona il punteggio"
-                  in the advanced section — the hero keeps one line, not three. */}
-              <MonoLabel>
-                {t('score.based_on', { count: score.signalCount })}
-                {score.observedAt
-                  ? ` · ${format(parseISO(score.observedAt), 'd MMM', { locale: dfLocale() })}`
-                  : ''}
-              </MonoLabel>
             </View>
           ) : null}
 
@@ -671,9 +645,6 @@ export default function ParcelDetailScreen() {
               <View style={styles.flex1}>
                 <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
                   {t('indices.advanced')}
-                </Text>
-                <Text style={styles.advancedHint} maxFontSizeMultiplier={typeScale.maxMult}>
-                  {t('score.explanation')}
                 </Text>
               </View>
               <Pressable
@@ -693,6 +664,9 @@ export default function ParcelDetailScreen() {
               </Pressable>
             </View>
             {showAdvanced ? <>
+              <Text style={styles.advancedHint} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('score.explanation')}
+              </Text>
               <View style={styles.advancedActions}>
                 <Pressable
                   style={styles.refreshBtn}
@@ -811,18 +785,16 @@ export default function ParcelDetailScreen() {
             </Pressable>
           </View>
 
-          {/* alerts, grouped into events (features/insights/grouping.ts) */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-              {t('parcel.alerts')}
-            </Text>
-            {alertsQ.isLoading ? (
+          {/* Alerts are exceptional: no empty card when the field has nothing to act on. */}
+          {alertsQ.isLoading ? (
+            <View style={styles.section}>
               <ActivityIndicator color={colors.primary} style={styles.pad} />
-            ) : (alertsQ.data?.length ?? 0) === 0 ? (
-              <Text style={styles.muted} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('parcel.no_alerts')}
+            </View>
+          ) : (alertsQ.data?.length ?? 0) > 0 ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+                {t('parcel.alerts')}
               </Text>
-            ) : (
               <AlertList
                 alerts={alertsQ.data ?? []}
                 parcelName={() => p.name}
@@ -830,8 +802,8 @@ export default function ParcelDetailScreen() {
                 onSnooze={(ids, days) => bulkAlerts.mutate({ ids, action: 'snooze', days })}
                 onDismiss={(ids) => bulkAlerts.mutate({ ids, action: 'dismiss' })}
               />
-            )}
-          </View>
+            </View>
+          ) : null}
 
           {/* recent scouting */}
           {observations.length > 0 ? (
@@ -926,12 +898,6 @@ export default function ParcelDetailScreen() {
               </Pressable>
             ) : null}
           </View>
-          {canCapture ? (
-            <Text style={styles.plantHint} maxFontSizeMultiplier={typeScale.maxMult}>
-              {t('plants.scan_hint')}
-            </Text>
-          ) : null}
-
           <Pressable
             style={[styles.reportBtn, sharingReport && styles.disabled]}
             onPress={shareReport}
@@ -990,7 +956,6 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md, backgroundColor: colors.bg },
   flex1: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   heroRow: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, flexWrap: 'wrap' },
   heroValue: { lineHeight: 48, letterSpacing: -1 },
   heroScore: {
@@ -1004,7 +969,6 @@ const styles = StyleSheet.create({
   partialPill: { marginTop: spacing.xs },
   heroSummary: { flex: 1, minWidth: 170, paddingBottom: spacing.xs },
   conditionTitle: { fontFamily: fonts.display, fontSize: 20, color: colors.text },
-  conditionBody: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.textMuted, marginTop: 2 },
   trendSummary: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: spacing.xs },
   heroDeltaHint: { fontSize: typeScale.caption, fontFamily: fonts.bodyMedium, color: colors.textMuted },
   statRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
@@ -1044,7 +1008,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  title: { fontSize: 21, fontFamily: fonts.display, color: colors.text, flexShrink: 1 },
   subtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
   iconBtn: { padding: spacing.sm, minWidth: touch.min, minHeight: touch.min, alignItems: 'center', justifyContent: 'center' },
   mapBox: { borderRadius: radius.md, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
@@ -1061,7 +1024,6 @@ const styles = StyleSheet.create({
   processingTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   processingTitle: { flex: 1, fontFamily: fonts.bodyBold, fontSize: typeScale.body, color: colors.primary },
   unavailableTitle: { color: colors.text },
-  processingBody: { fontFamily: fonts.body, fontSize: typeScale.caption, lineHeight: 18, color: colors.textMuted },
   processingInline: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   sectionHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionTitle: { fontSize: 17, fontFamily: fonts.display, color: colors.text },
@@ -1185,12 +1147,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.card,
     minHeight: touch.min,
-  },
-  plantHint: {
-    color: colors.textMuted,
-    fontFamily: fonts.body,
-    fontSize: 12,
-    lineHeight: 17,
   },
   reportTxt: { color: colors.primary, fontFamily: fonts.bodySemiBold, fontSize: 15 },
   archiveBtn: {

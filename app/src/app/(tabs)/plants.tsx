@@ -310,7 +310,7 @@ export default function PlantsScreen() {
             numberOfLines={1}
             maxFontSizeMultiplier={typeScale.maxMult}
           >
-            {metricOptionLabel(metric)}
+            {t(metricLabelKey(metric))}
           </Text>
           <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
         </InteractivePressable>
@@ -384,152 +384,176 @@ export default function PlantsScreen() {
 
       {/* Native iOS drawer: compact leaves the map usable, large exposes the full plant list. */}
       <PlantListDrawer presented={isFocused} bottomOffset={fallbackDrawerBottom}>
-        <View style={styles.drawerContent}>
-          <View style={styles.legendRow}>
-            <MonoLabel color={colors.textMuted}>
-              {t('plantmap.legend', { metric: t(metricLabelKey(metric)), date: legendDate })}
-            </MonoLabel>
-          </View>
-          <View style={styles.legendScale}>
-            <Text style={styles.legendEdge} maxFontSizeMultiplier={typeScale.maxMult}>
-              {t('plantmap.legend_low')}
-            </Text>
-            <View style={styles.gradientBar}>
-              {ramp.map((c) => (
-                <View key={c} style={[styles.gradientCell, { backgroundColor: c }]} />
-              ))}
+        {(expanded) => (
+          <View style={styles.drawerContent}>
+            <View style={styles.drawerSummary}>
+              <Text style={styles.drawerCount} maxFontSizeMultiplier={typeScale.maxMult}>
+                {summary ? t('plants.count', { count: summary.total }) : '—'}
+              </Text>
+              <MonoLabel color={colors.textMuted}>{legendDate}</MonoLabel>
             </View>
-            <Text style={styles.legendEdge} maxFontSizeMultiplier={typeScale.maxMult}>
-              {t('plantmap.legend_high')}
-            </Text>
-            <View style={styles.flex1} />
-            <MonoValue size={typeScale.caption} weight="600" color={colors.textMuted}>
-              {domain
-                ? `${metricText(metric, domain.p5)} → ${metricText(metric, domain.p95)}`
-                : t('plantmap.no_data')}
-            </MonoValue>
-          </View>
+            <View style={styles.legendScale}>
+              <View
+                style={styles.gradientBar}
+                accessible
+                accessibilityLabel={`${t('plantmap.legend_low')} – ${t('plantmap.legend_high')}`}
+              >
+                {ramp.map((c) => (
+                  <View key={c} style={[styles.gradientCell, { backgroundColor: c }]} />
+                ))}
+              </View>
+              <View style={styles.flex1} />
+              <MonoValue size={typeScale.caption} weight="600" color={colors.textMuted}>
+                {domain
+                  ? `${metricText(metric, domain.p5)} → ${metricText(metric, domain.p95)}`
+                  : t('plantmap.no_data')}
+              </MonoValue>
+            </View>
 
-          <View style={styles.segRow}>
-            <SegButton
-              label={t('plants.ranking_weakest')}
-              active={segment === 'weakest'}
-              onPress={() => setSegment('weakest')}
-            />
-            <SegButton
-              label={t('replant.title')}
-              active={segment === 'replant'}
-              onPress={() => setSegment('replant')}
-            />
-            <View style={styles.flex1} />
-            {summary ? (
-              <MonoLabel>{t('plants.count', { count: summary.total })}</MonoLabel>
+            {expanded ? (
+              <>
+                <View style={styles.segRow}>
+                  <SegButton
+                    label={t('plants.ranking_weakest')}
+                    active={segment === 'weakest'}
+                    onPress={() => setSegment('weakest')}
+                  />
+                  <SegButton
+                    label={t('replant.title')}
+                    active={segment === 'replant'}
+                    onPress={() => setSegment('replant')}
+                  />
+                </View>
+
+                <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+                  {noPlants ? (
+                    <View style={styles.emptyBox}>
+                      <Text style={styles.emptyTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+                        {t('plants.empty_title')}
+                      </Text>
+                      <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+                        {t('plants.empty_body')}
+                      </Text>
+                      <InteractivePressable style={styles.retry} onPress={openCapture}>
+                        <Text style={styles.retryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                          {t('plants.empty_cta')}
+                        </Text>
+                      </InteractivePressable>
+                    </View>
+                  ) : segment === 'weakest' ? (
+                    rankingQ.isLoading ? (
+                      <ActivityIndicator color={colors.primary} style={styles.pad} />
+                    ) : weakest.length === 0 ? (
+                      <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+                        {t('plants.ranking_empty')}
+                      </Text>
+                    ) : (
+                      weakest.map((r) => {
+                        const vs = formatVsBlock(r.vs_block_pct);
+                        const rowName = plantName(r, t('plant.unlabeled'));
+                        const valueText = `${metricText(metric, r.value)}${unit}`;
+                        const displayName = r.label ? rowName : valueText;
+                        const supportingText = [
+                          r.label ? valueText : null,
+                          vs ? `${t('plants.vs_block')} ${vs}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ');
+                        return (
+                          <InteractivePressable
+                            key={r.plant_id}
+                            style={styles.row}
+                            accessibilityLabel={`${rowName} · ${t('plants.open_plant')}`}
+                            onPress={() => openPlant(r.plant_id)}
+                          >
+                            <View
+                              style={[
+                                styles.swatch,
+                                {
+                                  backgroundColor: plantColor(r.status, metric, r.normalized),
+                                },
+                              ]}
+                            >
+                              <Text
+                                style={styles.swatchTxt}
+                                maxFontSizeMultiplier={typeScale.maxMult}
+                              >
+                                {r.rank}
+                              </Text>
+                            </View>
+                            <View style={styles.flex1}>
+                              <Text
+                                style={styles.rowName}
+                                numberOfLines={1}
+                                maxFontSizeMultiplier={typeScale.maxMult}
+                              >
+                                {displayName}
+                              </Text>
+                              {supportingText ? <MonoLabel>{supportingText}</MonoLabel> : null}
+                            </View>
+                            <Ionicons
+                              name="chevron-forward"
+                              size={16}
+                              color={colors.textFaint}
+                            />
+                          </InteractivePressable>
+                        );
+                      })
+                    )
+                  ) : replantQ.isLoading ? (
+                    <ActivityIndicator color={colors.primary} style={styles.pad} />
+                  ) : replant.length === 0 ? (
+                    <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+                      {t('replant.empty')}
+                    </Text>
+                  ) : (
+                    replant.map((e) => {
+                      const tint = REASON_TINT[e.reason];
+                      const rowName = plantName(e, t('plant.unlabeled'));
+                      const reason = t(`replant.reason.${e.reason}`);
+                      const displayName = e.label ? rowName : reason;
+                      return (
+                        <InteractivePressable
+                          key={e.plant_id}
+                          style={styles.row}
+                          accessibilityLabel={`${rowName} · ${t('replant.open_plant')}`}
+                          onPress={() => openPlant(e.plant_id)}
+                        >
+                          <View style={styles.flex1}>
+                            <Text
+                              style={styles.rowName}
+                              numberOfLines={1}
+                              maxFontSizeMultiplier={typeScale.maxMult}
+                            >
+                              {displayName}
+                            </Text>
+                            <MonoLabel>
+                              {e.last_seen_at
+                                ? `${t('replant.last_seen')} ${format(
+                                    parseISO(e.last_seen_at),
+                                    'd MMM',
+                                    { locale },
+                                  )}`
+                                : t('replant.never_seen')}
+                            </MonoLabel>
+                          </View>
+                          {e.label ? (
+                            <Pill label={reason} fg={tint.fg} bg={tint.bg} />
+                          ) : null}
+                          <Ionicons
+                            name="chevron-forward"
+                            size={16}
+                            color={colors.textFaint}
+                          />
+                        </InteractivePressable>
+                      );
+                    })
+                  )}
+                </ScrollView>
+              </>
             ) : null}
           </View>
-
-          <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-            {noPlants ? (
-              <View style={styles.emptyBox}>
-                <Text style={styles.emptyTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-                  {t('plants.empty_title')}
-                </Text>
-                <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
-                  {t('plants.empty_body')}
-                </Text>
-                <InteractivePressable style={styles.retry} onPress={openCapture}>
-                  <Text style={styles.retryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                    {t('plants.empty_cta')}
-                  </Text>
-                </InteractivePressable>
-              </View>
-            ) : segment === 'weakest' ? (
-              rankingQ.isLoading ? (
-                <ActivityIndicator color={colors.primary} style={styles.pad} />
-              ) : weakest.length === 0 ? (
-                <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
-                  {t('plants.ranking_empty')}
-                </Text>
-              ) : (
-                weakest.map((r) => {
-                  const vs = formatVsBlock(r.vs_block_pct);
-                  const rowName = plantName(r, t('plant.unlabeled'));
-                  return (
-                    <InteractivePressable
-                      key={r.plant_id}
-                      style={styles.row}
-                      accessibilityLabel={`${rowName} · ${t('plants.open_plant')}`}
-                      onPress={() => openPlant(r.plant_id)}
-                    >
-                      <View
-                        style={[
-                          styles.swatch,
-                          { backgroundColor: plantColor(r.status, metric, r.normalized) },
-                        ]}
-                      >
-                        <Text style={styles.swatchTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                          {r.rank}
-                        </Text>
-                      </View>
-                      <View style={styles.flex1}>
-                        <Text
-                          style={styles.rowName}
-                          numberOfLines={1}
-                          maxFontSizeMultiplier={typeScale.maxMult}
-                        >
-                          {rowName}
-                        </Text>
-                        <MonoLabel>
-                          {`${metricText(metric, r.value)}${unit}${
-                            vs ? ` · ${t('plants.vs_block')} ${vs}` : ''
-                          }`}
-                        </MonoLabel>
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-                    </InteractivePressable>
-                  );
-                })
-              )
-            ) : replantQ.isLoading ? (
-              <ActivityIndicator color={colors.primary} style={styles.pad} />
-            ) : replant.length === 0 ? (
-              <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('replant.empty')}
-              </Text>
-            ) : (
-              replant.map((e) => {
-                const tint = REASON_TINT[e.reason];
-                const rowName = plantName(e, t('plant.unlabeled'));
-                return (
-                  <InteractivePressable
-                    key={e.plant_id}
-                    style={styles.row}
-                    accessibilityLabel={`${rowName} · ${t('replant.open_plant')}`}
-                    onPress={() => openPlant(e.plant_id)}
-                  >
-                    <View style={styles.flex1}>
-                      <Text
-                        style={styles.rowName}
-                        numberOfLines={1}
-                        maxFontSizeMultiplier={typeScale.maxMult}
-                      >
-                        {rowName}
-                      </Text>
-                      <MonoLabel>
-                        {e.last_seen_at
-                          ? `${t('replant.last_seen')} ${format(parseISO(e.last_seen_at), 'd MMM', {
-                              locale,
-                            })}`
-                          : t('replant.never_seen')}
-                      </MonoLabel>
-                    </View>
-                    <Pill label={t(`replant.reason.${e.reason}`)} fg={tint.fg} bg={tint.bg} />
-                    <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-                  </InteractivePressable>
-                );
-              })
-            )}
-          </ScrollView>
-        </View>
+        )}
       </PlantListDrawer>
 
       <InteractivePressable
@@ -537,7 +561,7 @@ export default function PlantsScreen() {
         onPress={openCapture}
         accessibilityLabel={t('plants.empty_cta')}
       >
-        <Ionicons name="add" size={30} color={colors.onPrimary} />
+        <Ionicons name="scan-outline" size={26} color={colors.onPrimary} />
       </InteractivePressable>
     </View>
   );
@@ -701,11 +725,20 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.sm,
     gap: spacing.sm,
   },
-  legendRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  drawerSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  drawerCount: {
+    color: colors.text,
+    fontFamily: fonts.bodySemiBold,
+    fontSize: typeScale.bodyLg,
+  },
   legendScale: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  legendEdge: { fontSize: typeScale.caption, fontFamily: fonts.body, color: colors.textMuted },
   gradientBar: { flexDirection: 'row', borderRadius: 2, overflow: 'hidden' },
-  gradientCell: { width: 13, height: 10 },
+  gradientCell: { width: 18, height: 8 },
   segRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   segBtn: {
     minHeight: touch.min,

@@ -101,6 +101,8 @@ export default function PlantDetailScreen() {
   const [note, setNote] = useState('');
   // Identity keeps the farmer's facts; codes, indices and coordinates wait behind this.
   const [techOpen, setTechOpen] = useState(false);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
 
   const plantQ = usePlant(plantId);
   // The rest of docs/API-PLANT.md §Plant insights is fetched here rather than through
@@ -236,10 +238,7 @@ export default function PlantDetailScreen() {
           glyphSize={140}
           style={styles.hero}
         >
-          <View style={styles.heroTitleRow}>
-            <Text style={styles.title} numberOfLines={2} maxFontSizeMultiplier={typeScale.maxMult}>
-              {name}
-            </Text>
+          <View style={styles.heroStatusRow}>
             <Pill label={t(`plant.status.${p.status}`)} fg={tone.fg} bg={tone.bg} />
           </View>
           {identityLine ? (
@@ -376,132 +375,147 @@ export default function PlantDetailScreen() {
 
         {/* per-metric series */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('plant.series')}
-          </Text>
-          <View style={styles.chips} accessibilityLabel={t('plant.select_metric')}>
-            {INDEX_NAMES.map((m) => (
-              <MetricChip
-                key={m}
-                label={t(metricLabelKey(m))}
-                active={m === metric}
-                onPress={() => setMetric(m)}
-              />
-            ))}
-          </View>
-          <Text style={styles.hint} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t(`index.${metric}.description`)}
-          </Text>
-          {seriesQ.isLoading ? (
-            <ActivityIndicator color={colors.primary} style={styles.pad} />
-          ) : (
-            <PlantChart series={seriesQ.data?.series ?? []} metric={metric} locale={locale} />
-          )}
+          <InteractivePressable
+            style={styles.sectionDisclosure}
+            accessibilityState={{ expanded: analysisOpen }}
+            accessibilityLabel={t('plant.series')}
+            onPress={() => setAnalysisOpen((value) => !value)}
+          >
+            <Text
+              style={[styles.sectionTitle, styles.flex1]}
+              maxFontSizeMultiplier={typeScale.maxMult}
+            >
+              {t('plant.series')}
+            </Text>
+            <Ionicons
+              name={analysisOpen ? 'chevron-up' : 'chevron-down'}
+              size={17}
+              color={colors.textMuted}
+            />
+          </InteractivePressable>
+          {analysisOpen ? (
+            <>
+              <View style={styles.chips} accessibilityLabel={t('plant.select_metric')}>
+                {INDEX_NAMES.map((m) => (
+                  <MetricChip
+                    key={m}
+                    label={t(metricLabelKey(m))}
+                    active={m === metric}
+                    onPress={() => setMetric(m)}
+                  />
+                ))}
+              </View>
+              {seriesQ.isLoading ? (
+                <ActivityIndicator color={colors.primary} style={styles.pad} />
+              ) : (
+                <PlantChart series={seriesQ.data?.series ?? []} metric={metric} locale={locale} />
+              )}
+            </>
+          ) : null}
         </View>
 
         {/* canopy / height growth curve (FR-P-044) */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t(metricLabelKey(growth))}
-          </Text>
-          <Text style={styles.hint} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t(`plant.metric_desc.${growth}`)}
-          </Text>
-          <View style={styles.chips}>
-            {PHYSICAL_METRICS.map((m) => (
-              <MetricChip
-                key={m}
-                label={t(metricLabelKey(m))}
-                active={m === growth}
-                onPress={() => setGrowth(m)}
-              />
-            ))}
+        {analysisOpen ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t(metricLabelKey(growth))}
+            </Text>
+            <View style={styles.chips}>
+              {PHYSICAL_METRICS.map((m) => (
+                <MetricChip
+                  key={m}
+                  label={t(metricLabelKey(m))}
+                  active={m === growth}
+                  onPress={() => setGrowth(m)}
+                />
+              ))}
+            </View>
+            {growthQ.isLoading ? (
+              <ActivityIndicator color={colors.primary} style={styles.pad} />
+            ) : (
+              <PlantChart series={growthQ.data?.series ?? []} metric={growth} locale={locale} />
+            )}
           </View>
-          {growthQ.isLoading ? (
-            <ActivityIndicator color={colors.primary} style={styles.pad} />
-          ) : (
-            <PlantChart series={growthQ.data?.series ?? []} metric={growth} locale={locale} />
-          )}
-        </View>
+        ) : null}
 
         {/* flight history */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('plant.history')}
-          </Text>
-          {capturesQ.isLoading ? (
-            <ActivityIndicator color={colors.primary} style={styles.pad} />
-          ) : captures.length === 0 ? (
-            <Text style={styles.muted}>{t('plant.no_history')}</Text>
-          ) : (
-            <>
-              <View style={styles.tableHead}>
-                <MonoLabel style={styles.colDate}>{t('plant.capture')}</MonoLabel>
-                {HISTORY_METRICS.map((m) => (
-                  <MonoLabel key={m} style={styles.colValue}>
-                    {t(metricLabelKey(m))}
-                  </MonoLabel>
-                ))}
-              </View>
-              {captures.map((c) => (
-                <View key={c.capture_id} style={styles.tableRow}>
-                  <View style={styles.colDate}>
-                    <MonoValue size={13}>
-                      {format(parseISO(c.captured_at), 'd MMM yy', { locale })}
-                    </MonoValue>
-                    {c.quality != null ? (
-                      <MonoLabel>{`${t('plant.quality')} ${c.quality}%`}</MonoLabel>
-                    ) : null}
-                  </View>
+        {capturesQ.isLoading || captures.length > 0 ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('plant.history')}
+            </Text>
+            {capturesQ.isLoading ? (
+              <ActivityIndicator color={colors.primary} style={styles.pad} />
+            ) : (
+              <>
+                <View style={styles.tableHead}>
+                  <MonoLabel style={styles.colDate}>{t('plant.capture')}</MonoLabel>
                   {HISTORY_METRICS.map((m) => (
-                    <MonoValue key={m} size={13} weight="400" style={styles.colValue}>
-                      {formatMetric(m, c.metrics[m])}
-                    </MonoValue>
+                    <MonoLabel key={m} style={styles.colValue}>
+                      {t(metricLabelKey(m))}
+                    </MonoLabel>
                   ))}
                 </View>
-              ))}
-              {captures[0]?.model_ver ? (
-                <MonoLabel>{`${t('plant.model_ver')} · ${captures[0].model_ver}`}</MonoLabel>
-              ) : null}
-            </>
-          )}
-        </View>
+                {captures.map((c) => (
+                  <View key={c.capture_id} style={styles.tableRow}>
+                    <View style={styles.colDate}>
+                      <MonoValue size={13}>
+                        {format(parseISO(c.captured_at), 'd MMM yy', { locale })}
+                      </MonoValue>
+                      {c.quality != null ? (
+                        <MonoLabel>{`${t('plant.quality')} ${c.quality}%`}</MonoLabel>
+                      ) : null}
+                    </View>
+                    {HISTORY_METRICS.map((m) => (
+                      <MonoValue key={m} size={13} weight="400" style={styles.colValue}>
+                        {formatMetric(m, c.metrics[m])}
+                      </MonoValue>
+                    ))}
+                  </View>
+                ))}
+                {captures[0]?.model_ver ? (
+                  <MonoLabel>{`${t('plant.model_ver')} · ${captures[0].model_ver}`}</MonoLabel>
+                ) : null}
+              </>
+            )}
+          </View>
+        ) : null}
 
         {/* plant alerts — PlantAlert is per-plant, not an org Alert event, so these render as a
             small local card list in AlertList's visual language instead of going through
             groupAlerts (which would fold distinct plant signals into one event). */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('plant.alerts')}
-          </Text>
-          {alertsQ.isLoading ? (
-            <ActivityIndicator color={colors.primary} style={styles.pad} />
-          ) : alerts.length === 0 ? (
-            <Text style={styles.muted}>{t('plant.no_alerts')}</Text>
-          ) : (
-            <View style={styles.alertList}>
-              {alerts.map((a) => (
-                <PlantAlertCard
-                  key={a.id}
-                  alert={a}
-                  onAction={(action) => alertAction.mutate({ id: a.id, action })}
-                />
-              ))}
-            </View>
-          )}
-        </View>
+        {alertsQ.isLoading || alerts.length > 0 ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('plant.alerts')}
+            </Text>
+            {alertsQ.isLoading ? (
+              <ActivityIndicator color={colors.primary} style={styles.pad} />
+            ) : (
+              <View style={styles.alertList}>
+                {alerts.map((a) => (
+                  <PlantAlertCard
+                    key={a.id}
+                    alert={a}
+                    onAction={(action) => alertAction.mutate({ id: a.id, action })}
+                  />
+                ))}
+              </View>
+            )}
+          </View>
+        ) : null}
 
         {/* scouting pinned to this plant */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('plant.scouting')}
-          </Text>
-          {observations.length === 0 ? (
-            <Text style={styles.muted}>{t('plant.no_observations')}</Text>
-          ) : (
-            observations.map((o) => <ObsRow key={o.id} o={o} locale={locale} token={mediaToken} />)
-          )}
-        </View>
+        {observations.length > 0 ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('plant.scouting')}
+            </Text>
+            {observations.map((o) => (
+              <ObsRow key={o.id} o={o} locale={locale} token={mediaToken} />
+            ))}
+          </View>
+        ) : null}
 
         <InteractivePressable
           accessibilityLabel={t('plant.add_note')}
@@ -523,50 +537,65 @@ export default function PlantDetailScreen() {
         {/* status lifecycle */}
         {TRANSITIONS[p.status].length > 0 ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-              {t('plant.actions')}
-            </Text>
-            <Text style={styles.fieldLabel} maxFontSizeMultiplier={typeScale.maxMult}>
-              {t('plant.status_note')}
-            </Text>
-            <TextInput
-              style={styles.input}
-              value={note}
-              onChangeText={setNote}
-              placeholder={t('plant.status_note_ph')}
-              placeholderTextColor={colors.textFaint}
-              accessibilityLabel={t('plant.status_note')}
-              maxFontSizeMultiplier={typeScale.maxMult}
-              multiline
-            />
-            {TRANSITIONS[p.status].map((next) => (
-              <InteractivePressable
-                key={next}
-                style={styles.actionBtn}
-                disabled={statusMut.isPending}
-                accessibilityLabel={t(MARK_KEY[next])}
-                accessibilityState={{ disabled: statusMut.isPending }}
-                onPress={() => askStatus(next)}
+            <InteractivePressable
+              style={styles.sectionDisclosure}
+              accessibilityState={{ expanded: actionsOpen }}
+              accessibilityLabel={t('plant.actions')}
+              onPress={() => setActionsOpen((value) => !value)}
+            >
+              <Text
+                style={[styles.sectionTitle, styles.flex1]}
+                maxFontSizeMultiplier={typeScale.maxMult}
               >
-                <Ionicons
-                  name={statusIcon(next)}
-                  size={17}
-                  color={next === 'removed' ? colors.danger : colors.primary}
-                />
-                <Text
-                  style={[styles.actionTxt, next === 'removed' && styles.dangerTxt]}
-                  maxFontSizeMultiplier={typeScale.maxMult}
-                >
-                  {t(MARK_KEY[next])}
+                {t('plant.actions')}
+              </Text>
+              <Ionicons
+                name={actionsOpen ? 'chevron-up' : 'chevron-down'}
+                size={17}
+                color={colors.textMuted}
+              />
+            </InteractivePressable>
+            {actionsOpen ? (
+              <>
+                <Text style={styles.fieldLabel} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('plant.status_note')}
                 </Text>
-              </InteractivePressable>
-            ))}
+                <TextInput
+                  style={styles.input}
+                  value={note}
+                  onChangeText={setNote}
+                  placeholder={t('plant.status_note_ph')}
+                  placeholderTextColor={colors.textFaint}
+                  accessibilityLabel={t('plant.status_note')}
+                  maxFontSizeMultiplier={typeScale.maxMult}
+                  multiline
+                />
+                {TRANSITIONS[p.status].map((next) => (
+                  <InteractivePressable
+                    key={next}
+                    style={styles.actionBtn}
+                    disabled={statusMut.isPending}
+                    accessibilityLabel={t(MARK_KEY[next])}
+                    accessibilityState={{ disabled: statusMut.isPending }}
+                    onPress={() => askStatus(next)}
+                  >
+                    <Ionicons
+                      name={statusIcon(next)}
+                      size={17}
+                      color={next === 'removed' ? colors.danger : colors.primary}
+                    />
+                    <Text
+                      style={[styles.actionTxt, next === 'removed' && styles.dangerTxt]}
+                      maxFontSizeMultiplier={typeScale.maxMult}
+                    >
+                      {t(MARK_KEY[next])}
+                    </Text>
+                  </InteractivePressable>
+                ))}
+              </>
+            ) : null}
           </View>
         ) : null}
-
-        <Text style={styles.disclaimer} maxFontSizeMultiplier={typeScale.maxMult}>
-          {t('common.decision_support')}
-        </Text>
       </ScrollView>
     </>
   );
@@ -1056,8 +1085,7 @@ const styles = StyleSheet.create({
 
   // hero
   hero: { borderRadius: radius.lg, padding: spacing.md, gap: 6 },
-  heroTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' },
-  title: { flexShrink: 1, fontSize: 22, fontFamily: fonts.display, color: colors.text },
+  heroStatusRow: { flexDirection: 'row', justifyContent: 'flex-end' },
   subtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
   heroReading: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, marginTop: spacing.xs },
   heroValue: { lineHeight: 44, letterSpacing: -1 },
@@ -1073,6 +1101,12 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   sectionTitle: { fontSize: 17, fontFamily: fonts.display, color: colors.text },
+  sectionDisclosure: {
+    minHeight: touch.chip,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
   hint: { fontSize: 12.5, lineHeight: 18, fontFamily: fonts.body, color: colors.textMuted },
 
   // identity fields
@@ -1275,11 +1309,4 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   primaryTxt: { color: colors.onPrimary, fontFamily: fonts.bodyBold, fontSize: 16 },
-  disclaimer: {
-    color: colors.textFaint,
-    fontFamily: fonts.body,
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-  },
 });

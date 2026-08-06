@@ -1,6 +1,6 @@
 // OWNER: fe-plant-map — Native iOS bottom drawer for plant rankings. SwiftUI owns the sheet
 // geometry and drag interaction; React Native owns the existing Terra content inside it.
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { StyleSheet, useColorScheme, useWindowDimensions, View } from 'react-native';
 
 import { BottomSheet, Group, Host, RNHostView } from '@expo/ui/swift-ui';
@@ -15,13 +15,13 @@ import {
 
 import { GlassSurface, hasNativeLiquidGlass } from '@/components/ui';
 
-export const PLANT_LIST_DRAWER_COMPACT_HEIGHT = 300;
+export const PLANT_LIST_DRAWER_COMPACT_HEIGHT = 150;
 
 const COMPACT_DETENT: PresentationDetent = { height: PLANT_LIST_DRAWER_COMPACT_HEIGHT };
 const DRAWER_DETENTS: PresentationDetent[] = [COMPACT_DETENT, 'large'];
 
 type PlantListDrawerProps = {
-  children: ReactNode;
+  children: (expanded: boolean) => ReactNode;
   presented: boolean;
   /** Used by the cross-platform fallback; native iOS sheets always attach to the screen bottom. */
   bottomOffset?: number;
@@ -31,10 +31,15 @@ export default function PlantListDrawer({ children, presented }: PlantListDrawer
   const { width } = useWindowDimensions();
   const colorScheme = useColorScheme();
   const liquidGlass = hasNativeLiquidGlass();
+  const [selectedDetent, setSelectedDetent] = useState<PresentationDetent>(COMPACT_DETENT);
+  const expanded = selectedDetent === 'large';
 
   const modifiers = useMemo(
     () => [
-      presentationDetents(DRAWER_DETENTS),
+      presentationDetents(DRAWER_DETENTS, {
+        selection: selectedDetent,
+        onSelectionChange: setSelectedDetent,
+      }),
       presentationDragIndicator('visible'),
       interactiveDismissDisabled(true),
       presentationBackgroundInteraction({ type: 'enabledUpThrough', detent: COMPACT_DETENT }),
@@ -44,7 +49,7 @@ export default function PlantListDrawer({ children, presented }: PlantListDrawer
         liquidGlass ? '#00000000' : colorScheme === 'dark' ? '#181D18' : '#FBFAF7',
       ),
     ],
-    [colorScheme, liquidGlass],
+    [colorScheme, liquidGlass, selectedDetent],
   );
 
   return (
@@ -54,12 +59,13 @@ export default function PlantListDrawer({ children, presented }: PlantListDrawer
         onIsPresentedChange={() => {
           // The drawer is deliberately persistent while this route is focused.
         }}
+        onDismiss={() => setSelectedDetent(COMPACT_DETENT)}
       >
         <Group modifiers={modifiers}>
           <RNHostView>
             <View style={styles.contentHost}>
               <GlassSurface style={styles.surface} fallbackStyle={styles.fallbackSurface}>
-                {children}
+                {children(expanded)}
               </GlassSurface>
             </View>
           </RNHostView>

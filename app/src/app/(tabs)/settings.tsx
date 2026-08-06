@@ -1,9 +1,8 @@
 // OWNER: push-app — Profilo: account (+security), organization + switcher, notifications
-// (PrimeCard → toggle, docs/UX-REVAMP.md §push-app), language, assistance/legal, about,
-// coming-soon teaser, logout. Push wiring lives in @/notifications; this screen only decides
+// (PrimeCard → toggle, docs/UX-REVAMP.md §push-app), language, assistance/legal and logout.
+// Unimplemented preferences and roadmap teasers stay out of the primary interface. Push wiring lives in @/notifications; this screen only decides
 // when to prime and renders honest state (unavailable/denied captions, disabled future prefs).
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useQuery } from '@tanstack/react-query';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
@@ -18,8 +17,6 @@ import {
   View,
 } from 'react-native';
 
-import { api } from '@/api/client';
-import type { Meta } from '@/api/types';
 import { useAuth } from '@/auth/AuthContext';
 import { setLang, type Lang } from '@/auth/storage';
 import PrimeCard from '@/components/PrimeCard';
@@ -88,44 +85,28 @@ function NavRow({
  */
 function ToggleRow({
   label,
-  caption,
   value,
-  disabled,
   onChange,
 }: {
   label: string;
-  caption?: string;
   value: boolean;
-  disabled?: boolean;
-  onChange?: (next: boolean) => void;
+  onChange: (next: boolean) => void;
 }) {
   return (
     <InteractivePressable
       accessibilityRole="switch"
       accessibilityLabel={label}
-      accessibilityState={{ checked: value, disabled: disabled === true }}
-      disabled={disabled}
-      onPress={() => onChange?.(!value)}
+      accessibilityState={{ checked: value }}
+      onPress={() => onChange(!value)}
       style={styles.toggleRow}
       pressedStyle={styles.rowPressed}
     >
-      <View style={styles.toggleTextBlock}>
-        <Text
-          style={[styles.toggleLabel, disabled && styles.toggleLabelDisabled]}
-          maxFontSizeMultiplier={typeScale.maxMult}
-        >
-          {label}
-        </Text>
-        {caption != null && (
-          <Text style={styles.toggleCaption} maxFontSizeMultiplier={typeScale.maxMult}>
-            {caption}
-          </Text>
-        )}
-      </View>
+      <Text style={styles.toggleLabel} maxFontSizeMultiplier={typeScale.maxMult}>
+        {label}
+      </Text>
       <View pointerEvents="none">
         <Switch
           value={value}
-          disabled={disabled}
           trackColor={{ false: colors.border, true: colors.primary }}
           ios_backgroundColor={colors.border}
         />
@@ -147,10 +128,8 @@ export default function SettingsScreen() {
   const [permDetermined, setPermDetermined] = useState<boolean | null>(null);
   const prevPushStatus = useRef(pushStatus);
 
-  const meta = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/meta') });
   const lang: Lang = i18n.language === 'en' ? 'en' : 'it';
   const appVersion = Constants.expoConfig?.version ?? '—';
-  const imageryOn = meta.data?.features.imagery ?? false;
 
   useEffect(() => {
     setupNotifications();
@@ -215,7 +194,6 @@ export default function SettingsScreen() {
   }
 
   const roleLabel = role ? t(`roles.${role}`) : '—';
-  const comingSoon = t('settings.coming_soon', { defaultValue: 'In arrivo' });
   // Prime only when notifications are off AND the OS dialog was never shown; once the user
   // has answered the system prompt (either way) the quiet toggle row is the honest UI.
   const notificationsResolved = prefsReady && permDetermined != null;
@@ -340,20 +318,6 @@ export default function SettingsScreen() {
                   </InteractivePressable>
                 </>
               )}
-              <View style={styles.rowDivider} />
-              {/* Stored prefs without backend behavior yet — shown disabled, never faked. */}
-              <ToggleRow
-                label={t('settings.notifications_severe_only')}
-                caption={comingSoon}
-                value={prefs.severeOnly}
-                disabled
-              />
-              <ToggleRow
-                label={t('settings.notifications_digest')}
-                caption={comingSoon}
-                value={prefs.dailyDigest}
-                disabled
-              />
             </>
           )}
         </Card>
@@ -387,60 +351,18 @@ export default function SettingsScreen() {
       <Card title={t('settings.assistance', { defaultValue: 'Assistenza' })}>
         <NavRow icon="mail-outline" label={t('settings.help')} onPress={openHelpEmail} />
         <View style={styles.rowDivider} />
-        <Text style={styles.subLabel} maxFontSizeMultiplier={typeScale.maxMult}>
-          {t('settings.legal')}
-        </Text>
         <NavRow
           icon="shield-checkmark-outline"
           label={t('auth.legal_privacy')}
           onPress={() => router.push('/legal/privacy')}
         />
+        <View style={styles.rowDivider} />
         <NavRow
           icon="document-text-outline"
           label={t('auth.legal_terms')}
           onPress={() => router.push('/legal/terms')}
         />
       </Card>
-
-      <Card title={t('settings.about')}>
-        <View style={styles.aboutRow}>
-          <Text style={styles.muted} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('about.version')}
-          </Text>
-          <Text style={styles.aboutValue} maxFontSizeMultiplier={typeScale.maxMult}>
-            {appVersion}
-          </Text>
-        </View>
-        <View style={styles.aboutRow}>
-          <Text style={styles.muted} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('about.imagery')}
-          </Text>
-          <View style={[styles.badge, imageryOn ? styles.badgeOn : styles.badgeOff]}>
-            <Text
-              style={[styles.badgeText, imageryOn ? styles.badgeTextOn : styles.badgeTextOff]}
-              maxFontSizeMultiplier={typeScale.maxMult}
-            >
-              {imageryOn ? t('common.on') : t('common.off')}
-            </Text>
-          </View>
-        </View>
-        <Text style={styles.disclaimer} maxFontSizeMultiplier={typeScale.maxMult}>
-          {t('common.decision_support')}
-        </Text>
-      </Card>
-
-      {/* Deliberate product teaser (docs/BUSINESS.md roadmap) — quiet, non-interactive. */}
-      <View style={styles.comingCard}>
-        <Text style={styles.comingTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-          {t('settings.coming_soon_quaderno')}
-        </Text>
-        <Text style={styles.comingBody} maxFontSizeMultiplier={typeScale.maxMult}>
-          {t('settings.coming_soon_quaderno_body', {
-            defaultValue:
-              'Trattamenti, concimazioni e registri pronti per i controlli, direttamente dal telefono.',
-          })}
-        </Text>
-      </View>
 
       <InteractivePressable
         accessibilityLabel={t('settings.logout')}
@@ -454,6 +376,9 @@ export default function SettingsScreen() {
           {t('settings.logout')}
         </Text>
       </InteractivePressable>
+      <Text style={styles.versionFooter} maxFontSizeMultiplier={typeScale.maxMult}>
+        Arvo {appVersion}
+      </Text>
     </ScrollView>
   );
 }
@@ -536,10 +461,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     borderRadius: radius.md,
   },
-  toggleTextBlock: { flex: 1, gap: 2 },
-  toggleLabel: { fontSize: typeScale.bodyLg, fontFamily: fonts.bodyMedium, color: colors.text },
-  toggleLabelDisabled: { color: colors.textMuted },
-  toggleCaption: { fontSize: typeScale.caption, fontFamily: fonts.body, color: colors.textFaint },
+  toggleLabel: {
+    flex: 1,
+    fontSize: typeScale.bodyLg,
+    fontFamily: fonts.bodyMedium,
+    color: colors.text,
+  },
   pushHint: {
     fontSize: typeScale.body,
     fontFamily: fonts.body,
@@ -568,35 +495,6 @@ const styles = StyleSheet.create({
   langChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   langText: { fontSize: typeScale.bodyLg, fontFamily: fonts.bodySemiBold, color: colors.text },
   langTextActive: { color: colors.onPrimary },
-  aboutRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.xs,
-  },
-  aboutValue: { fontSize: typeScale.body, fontFamily: fonts.monoSemiBold, color: colors.text },
-  badge: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm },
-  badgeOn: { backgroundColor: colors.primarySoft },
-  badgeOff: { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border },
-  badgeText: { fontSize: typeScale.caption, fontFamily: fonts.bodyBold },
-  badgeTextOn: { color: colors.success },
-  badgeTextOff: { color: colors.textMuted },
-  disclaimer: {
-    fontSize: typeScale.caption,
-    fontFamily: fonts.body,
-    color: colors.textFaint,
-    marginTop: spacing.sm,
-  },
-  comingCard: {
-    backgroundColor: colors.cardAlt,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    padding: spacing.md,
-    gap: spacing.xs,
-  },
-  comingTitle: { fontSize: typeScale.body, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
-  comingBody: { fontSize: typeScale.body, fontFamily: fonts.body, color: colors.textFaint },
   logout: {
     minHeight: 52,
     flexDirection: 'row',
@@ -609,4 +507,10 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   logoutText: { fontSize: typeScale.bodyLg, fontFamily: fonts.bodyBold, color: colors.danger },
+  versionFooter: {
+    color: colors.textFaint,
+    fontFamily: fonts.mono,
+    fontSize: typeScale.caption,
+    textAlign: 'center',
+  },
 });

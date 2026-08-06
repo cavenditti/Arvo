@@ -26,7 +26,7 @@ import NativeSheet from '@/components/NativeSheet';
 import { StaleBanner, useOnlineStatus } from '@/components/StaleBanner';
 import { showToast } from '@/components/Toast';
 import type { ParcelFeature } from '@/components/types';
-import { GlassSurface, InteractivePressable, MonoLabel, MonoValue, StatusChip, TintCard } from '@/components/ui';
+import { GlassSurface, InteractivePressable, MonoValue, StatusChip } from '@/components/ui';
 import {
   INDEX_DOMAIN,
   arvoScoreDetail,
@@ -36,7 +36,7 @@ import {
 } from '@/features/insights/format';
 import { countAlertEvents } from '@/features/insights/grouping';
 import { deriveFieldStatus, trendFromSeries } from '@/features/insights/status';
-import { NEUTRAL_FILL, ndviColor } from '@/features/parcels/crops';
+import { NEUTRAL_FILL } from '@/features/parcels/crops';
 import {
   imageryIsActive,
   useImageryStatuses,
@@ -48,7 +48,6 @@ import { formatHectares } from '@/lib/format';
 import {
   colors,
   fonts,
-  gradients,
   navigationMetrics,
   radius,
   spacing,
@@ -56,15 +55,6 @@ import {
   type as typeScale,
   type Status,
 } from '@/theme';
-
-// Legend value labels are numeric ranges except the no-data slot, translated at render.
-const LEGEND: { color: string; label: string | null }[] = [
-  { color: ndviColor(0.2), label: '< 0.3' },
-  { color: ndviColor(0.4), label: '0.3–0.5' },
-  { color: ndviColor(0.6), label: '0.5–0.65' },
-  { color: ndviColor(0.8), label: '≥ 0.65' },
-  { color: NEUTRAL_FILL, label: null },
-];
 
 // What paints the fields: the Arvo score (default), nothing (boundaries only — the natural
 // companion of the satellite basemap), or one of the five indices.
@@ -333,62 +323,17 @@ export default function MapScreen() {
           fallbackStyle={[styles.legend, { bottom: bottomOverlayOffset }]}
           pointerEvents="none"
         >
-          <Text style={styles.legendTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-            {!legendIndex
-              ? t('map.score_legend')
-              : legendIndex === 'ndvi'
-              ? t('map.ndvi_legend')
-              : t('map.index_legend', {
-                  defaultValue: '{{index}} (latest)',
-                  index: legendIndex.toUpperCase(),
-                })}
-          </Text>
-          {!legendIndex ? (
-            <View style={styles.legendGradientRow}>
-              <Text style={styles.legendLabel} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('map.score_low')}
-              </Text>
-              <View style={styles.gradientBar}>
-                {gradientStops.map((c, i) => (
-                  <View key={i} style={[styles.gradientCell, { backgroundColor: c }]} />
-                ))}
-              </View>
-              <Text style={styles.legendLabel} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('map.score_high')}
-              </Text>
-            </View>
-          ) : legendIndex === 'ndvi' ? (
-            <View style={styles.legendRow}>
-              {LEGEND.map((l) => (
-                <View key={l.color} style={styles.legendItem}>
-                  <View style={[styles.swatch, { backgroundColor: l.color }]} />
-                  <Text style={styles.legendLabel} maxFontSizeMultiplier={typeScale.maxMult}>
-                    {l.label ?? t('map.no_data')}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ) : (
-            <View style={styles.legendGradientRow}>
-              <MonoValue size={10} weight="600" color={colors.textMuted}>
-                {domainMin.toFixed(1)}
-              </MonoValue>
-              <View style={styles.gradientBar}>
-                {gradientStops.map((c, i) => (
-                  <View key={i} style={[styles.gradientCell, { backgroundColor: c }]} />
-                ))}
-              </View>
-              <MonoValue size={10} weight="600" color={colors.textMuted}>
-                {domainMax.toFixed(1)}
-              </MonoValue>
-              <View style={styles.legendItem}>
-                <View style={[styles.swatch, { backgroundColor: NEUTRAL_FILL }]} />
-                <Text style={styles.legendLabel} maxFontSizeMultiplier={typeScale.maxMult}>
-                  {t('map.no_data')}
-                </Text>
-              </View>
-            </View>
-          )}
+          <MonoValue size={10} weight="600" color={colors.textMuted}>
+            {legendIndex ? domainMin.toFixed(1) : '0'}
+          </MonoValue>
+          <View style={styles.gradientBar}>
+            {gradientStops.map((c, i) => (
+              <View key={i} style={[styles.gradientCell, { backgroundColor: c }]} />
+            ))}
+          </View>
+          <MonoValue size={10} weight="600" color={colors.textMuted}>
+            {legendIndex ? domainMax.toFixed(1) : '100'}
+          </MonoValue>
         </GlassSurface>
       ) : null}
 
@@ -398,48 +343,51 @@ export default function MapScreen() {
           fallbackStyle={[styles.selCard, { bottom: bottomOverlayOffset }]}
         >
           <View style={styles.selRow}>
-            <View
-              style={[
-                styles.scoreBadge,
-                {
-                  backgroundColor: selectedIsIndex
-                    ? indexColor(choropleth as IndexName, selectedMean)
-                    : scoreColor(selectedMean),
-                },
-              ]}
+            <InteractivePressable
+              style={styles.selMain}
+              onPress={() => router.push(`/parcel/${selected.id}`)}
+              accessibilityLabel={`${selected.name} · ${t('map.open_detail')}`}
             >
-              <Text style={styles.scoreBadgeValue} maxFontSizeMultiplier={typeScale.maxMult}>
-                {selectedDataPending
-                  ? ''
-                  : selectedMean == null
-                    ? '—'
-                    : selectedIsIndex
-                      ? selectedMean.toFixed(2)
-                      : Math.round(selectedMean)}
-              </Text>
-              {selectedDataPending ? (
-                <ActivityIndicator size="small" color={colors.onPrimary} />
+              <View
+                style={[
+                  styles.scoreBadge,
+                  {
+                    backgroundColor: selectedIsIndex
+                      ? indexColor(choropleth as IndexName, selectedMean)
+                      : scoreColor(selectedMean),
+                  },
+                ]}
+              >
+                <Text style={styles.scoreBadgeValue} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {selectedDataPending
+                    ? ''
+                    : selectedMean == null
+                      ? '—'
+                      : selectedIsIndex
+                        ? selectedMean.toFixed(2)
+                        : Math.round(selectedMean)}
+                </Text>
+                {selectedDataPending ? (
+                  <ActivityIndicator size="small" color={colors.onPrimary} />
+                ) : null}
+              </View>
+              <View style={styles.selInfo}>
+                <Text style={styles.selName} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {selected.name}
+                </Text>
+                <Text style={styles.selMeta} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {selectedDataPending
+                    ? t('parcel.data_processing_short')
+                    : [cropLabel(selected.crop), formatHectares(selected.area_ha)]
+                        .filter(Boolean)
+                        .join(' · ')}
+                </Text>
+              </View>
+              {fieldStatus && !selectedDataPending ? (
+                <StatusChip status={chipStatus} label={t(fieldStatus.chipKey)} />
               ) : null}
-            </View>
-            <View style={styles.selInfo}>
-              <Text style={styles.selName} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
-                {selected.name}
-              </Text>
-              <Text style={styles.selMeta} numberOfLines={1} maxFontSizeMultiplier={typeScale.maxMult}>
-                {selectedDataPending
-                  ? t('parcel.data_processing_short')
-                  : [
-                      cropLabel(selected.crop),
-                      selected.area_ha != null ? formatHectares(selected.area_ha) : null,
-                      fieldStatus?.partial ? t('status.partial') : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-              </Text>
-            </View>
-            {fieldStatus && !selectedDataPending ? (
-              <StatusChip status={chipStatus} label={t(fieldStatus.chipKey)} />
-            ) : null}
+              <Ionicons name="chevron-forward" size={17} color={colors.textFaint} />
+            </InteractivePressable>
             <InteractivePressable
               onPress={() => setSelectedId(null)}
               hitSlop={10}
@@ -448,29 +396,6 @@ export default function MapScreen() {
               hoverStyle={styles.iconButtonHover}
             >
               <Ionicons name="close" size={18} color={colors.textMuted} />
-            </InteractivePressable>
-          </View>
-          <View style={styles.selButtons}>
-            <InteractivePressable
-              style={styles.detailBtn}
-              onPress={() => router.push(`/parcel/${selected.id}`)}
-              accessibilityLabel={t('map.open_detail')}
-            >
-              <TintCard gradient={gradients.forest} style={styles.detailBtnInner}>
-                <Text style={styles.detailBtnTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                  {t('map.open_detail')}
-                </Text>
-              </TintCard>
-            </InteractivePressable>
-            <InteractivePressable
-              style={styles.scoutBtn}
-              hoverStyle={styles.scoutBtnHover}
-              onPress={() => router.push(`/observation/new?parcelId=${selected.id}&mode=note`)}
-              accessibilityLabel={t('menu.new_note')}
-            >
-              <Text style={styles.scoutBtnTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('menu.new_note')}
-              </Text>
             </InteractivePressable>
           </View>
         </GlassSurface>
@@ -501,10 +426,7 @@ export default function MapScreen() {
               onPress={() => setPickerOpen(true)}
               accessibilityLabel={t('map.layers')}
             >
-              <Ionicons name="layers-outline" size={14} color={colors.text} />
-              <MonoLabel color={colors.text}>
-                {t('map.layers')}
-              </MonoLabel>
+              <Ionicons name="layers-outline" size={20} color={colors.text} />
             </InteractivePressable>
           </View>
 
@@ -704,12 +626,11 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
   topChip: {
+    width: touch.min,
     minHeight: touch.min,
-    paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
     backgroundColor: colors.card,
     borderRadius: radius.pill,
     borderWidth: 1,
@@ -824,6 +745,9 @@ const styles = StyleSheet.create({
   legend: {
     position: 'absolute',
     left: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
@@ -831,17 +755,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  legendTitle: {
-    fontSize: 11,
-    fontFamily: fonts.bodySemiBold,
-    color: colors.text,
-    marginBottom: 2,
-  },
-  legendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, maxWidth: 230 },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  swatch: { width: 10, height: 10, borderRadius: 2 },
-  legendLabel: { fontSize: 10, fontFamily: fonts.mono, color: colors.textMuted },
-  legendGradientRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   gradientBar: { flexDirection: 'row', borderRadius: 2, overflow: 'hidden' },
   gradientCell: { width: 13, height: 10 },
   selCard: {
@@ -853,7 +766,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     padding: spacing.md,
-    gap: spacing.md,
+    gap: spacing.sm,
     shadowColor: '#000',
     shadowOpacity: 0.15,
     shadowRadius: 12,
@@ -861,6 +774,7 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   selRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  selMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   scoreBadge: {
     width: 44,
     height: 44,
@@ -872,29 +786,6 @@ const styles = StyleSheet.create({
   selInfo: { flex: 1 },
   selName: { fontSize: typeScale.bodyLg, fontFamily: fonts.display, color: colors.text },
   selMeta: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
-  selButtons: { flexDirection: 'row', gap: spacing.sm },
-  detailBtn: { flex: 1 },
-  detailBtnInner: {
-    minHeight: touch.min,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.sm,
-    borderColor: 'transparent',
-  },
-  detailBtnTxt: { color: colors.onPrimary, fontSize: typeScale.body, fontFamily: fonts.bodyBold },
-  scoutBtn: {
-    minHeight: touch.min,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-  },
-  scoutBtnHover: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
-  scoutBtnTxt: { color: colors.text, fontSize: typeScale.body, fontFamily: fonts.bodySemiBold },
   iconButton: { padding: 6, borderRadius: radius.sm },
   iconButtonHover: { backgroundColor: colors.cardAlt },
   sheet: {

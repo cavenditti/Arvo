@@ -1,14 +1,14 @@
 // OWNER: fe-plant-map — Non-iOS fallback for the native plant-ranking bottom drawer.
-import type { ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useState, type ReactNode } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { GlassSurface } from '@/components/ui';
 import { colors, radius, spacing } from '@/theme';
 
-export const PLANT_LIST_DRAWER_COMPACT_HEIGHT = 300;
+export const PLANT_LIST_DRAWER_COMPACT_HEIGHT = 150;
 
 type PlantListDrawerProps = {
-  children: ReactNode;
+  children: (expanded: boolean) => ReactNode;
   presented: boolean;
   bottomOffset?: number;
 };
@@ -18,15 +18,23 @@ export default function PlantListDrawer({
   presented,
   bottomOffset = 0,
 }: PlantListDrawerProps) {
+  const [expanded, setExpanded] = useState(false);
   if (!presented) return null;
 
   return (
     <GlassSurface
-      style={[styles.drawer, { bottom: bottomOffset }]}
+      style={[styles.drawer, expanded && styles.drawerExpanded, { bottom: bottomOffset }]}
       fallbackStyle={[styles.drawer, styles.fallback]}
     >
-      <View style={styles.grabber} />
-      <View style={styles.content}>{children}</View>
+      <Pressable
+        onPress={() => setExpanded((value) => !value)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        style={styles.grabberTouch}
+      >
+        <View style={styles.grabber} />
+      </Pressable>
+      <View style={styles.content}>{children(expanded)}</View>
     </GlassSurface>
   );
 }
@@ -43,19 +51,23 @@ const styles = StyleSheet.create({
     zIndex: 20,
     elevation: 12,
   },
+  drawerExpanded: { height: '80%' },
   fallback: {
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
   },
   grabber: {
-    alignSelf: 'center',
     width: 36,
     height: 5,
-    marginTop: spacing.sm,
-    marginBottom: spacing.xs,
     borderRadius: radius.pill,
     backgroundColor: colors.textFaint,
+  },
+  grabberTouch: {
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.xs,
   },
   content: { flex: 1 },
 });

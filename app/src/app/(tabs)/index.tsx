@@ -177,9 +177,6 @@ export default function Dashboard() {
               {t('parcel.data_processing_title')}
             </Text>
           </View>
-          <Text style={styles.firstValueBody} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('parcel.data_processing_body')}
-          </Text>
         </TintCard>
       ) : null}
 
@@ -276,13 +273,11 @@ export default function Dashboard() {
 /**
  * Worst/latest grouped event, in plain language: title carries the parcel name via
  * titleParams; plant IDs and index values stay behind the alerts tab's technical
- * disclosure. `body_single` is the raw detector message (may lead with NDVI) — skipped
- * here so the banner never shows jargon.
+ * disclosure. The dashboard is only a pointer to the event, never its explanation.
  */
 function AttentionBanner({ event, onPress }: { event: AlertEvent; onPress: () => void }) {
   const { t } = useTranslation();
   const tint = severityTint[event.severity] ?? severityTint.info;
-  const showBody = event.bodyKey !== 'alerts_group.body_single';
   return (
     <Pressable
       onPress={onPress}
@@ -291,16 +286,13 @@ function AttentionBanner({ event, onPress }: { event: AlertEvent; onPress: () =>
     >
       <TintCard gradient={severityGradient(event.severity)} style={styles.banner}>
         <GlyphBadge glyph={kindGlyph(event.kind)} fg={tint.fg} bg={tint.bg} size={26} />
-        <View style={styles.flex1}>
-          <Text style={styles.bannerTitle} numberOfLines={2} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t(event.titleKey, event.titleParams)}
-          </Text>
-          {showBody ? (
-            <Text style={styles.bannerBody} numberOfLines={2} maxFontSizeMultiplier={typeScale.maxMult}>
-              {t(event.bodyKey, event.bodyParams)}
-            </Text>
-          ) : null}
-        </View>
+        <Text
+          style={[styles.bannerTitle, styles.flex1]}
+          numberOfLines={2}
+          maxFontSizeMultiplier={typeScale.maxMult}
+        >
+          {t(event.titleKey, event.titleParams)}
+        </Text>
         <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
       </TintCard>
     </Pressable>
@@ -336,15 +328,6 @@ function ParcelRow({
   const chipStatus: Status = fs.level === 'ok' ? 'healthy' : fs.level;
   const chipLabel = t(fs.chipKey);
   const trendLabel = t(trend.labelKey);
-
-  const trendIcon =
-    trend.direction === 'up' ? 'trending-up' : trend.direction === 'down' ? 'trending-down' : 'remove';
-  const trendColor =
-    trend.direction === 'down'
-      ? colors.accent
-      : trend.direction === 'up'
-        ? colors.success
-        : colors.textMuted;
 
   const a11yLabel =
     score != null
@@ -390,7 +373,6 @@ function ParcelRow({
           </Text>
           {dataPending ? (
             <View style={styles.processingLine}>
-              <ActivityIndicator size="small" color={colors.primary} />
               <Text
                 style={styles.processingText}
                 maxFontSizeMultiplier={typeScale.maxMult}
@@ -421,28 +403,10 @@ function ParcelRow({
           ) : null}
         </View>
         <View style={styles.rowRight}>
-          {dataPending ? (
-            <View style={styles.processingChip}>
-              <Text style={styles.processingChipText} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('parcel.data_processing_chip')}
-              </Text>
-            </View>
-          ) : dataUnavailable ? (
-            <View style={[styles.processingChip, styles.unavailableChip]}>
-              <Text
-                style={[styles.processingChipText, styles.unavailableChipText]}
-                maxFontSizeMultiplier={typeScale.maxMult}
-              >
-                {t('parcel.data_unavailable_chip')}
-              </Text>
-            </View>
+          {dataPending || dataUnavailable ? (
+            <Ionicons name="chevron-forward" size={17} color={colors.textFaint} />
           ) : (
-            <>
-              <StatusChip status={chipStatus} label={chipLabel} />
-              <View style={styles.trendRow}>
-                <Ionicons name={trendIcon} size={16} color={trendColor} />
-              </View>
-            </>
+            <StatusChip status={chipStatus} label={chipLabel} />
           )}
         </View>
       </Card>
@@ -496,10 +460,8 @@ const styles = StyleSheet.create({
     minHeight: touch.min,
   },
   bannerTitle: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.text },
-  bannerBody: { fontFamily: fonts.body, fontSize: typeScale.caption, color: colors.textMuted, marginTop: 1 },
   firstValue: { padding: spacing.md, gap: 2 },
   firstValueTitle: { fontFamily: fonts.bodyBold, fontSize: typeScale.body, color: colors.text },
-  firstValueBody: { fontFamily: fonts.body, fontSize: typeScale.caption, color: colors.textMuted },
   processingTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   listMeta: {
     fontFamily: fonts.bodyMedium,
@@ -541,19 +503,6 @@ const styles = StyleSheet.create({
     color: colors.primary,
   },
   unavailableText: { color: colors.textMuted },
-  processingChip: {
-    borderRadius: radius.pill,
-    backgroundColor: colors.primarySoft,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  processingChipText: {
-    fontFamily: fonts.bodySemiBold,
-    fontSize: typeScale.caption,
-    color: colors.primary,
-  },
-  unavailableChip: { backgroundColor: colors.cardAlt },
-  unavailableChipText: { color: colors.textMuted },
   rowRight: { alignItems: 'flex-end', gap: 6 },
   scoreBadge: {
     width: 46,
@@ -565,7 +514,6 @@ const styles = StyleSheet.create({
     borderColor: colors.card,
   },
   scoreValue: { fontFamily: fonts.monoSemiBold, fontSize: 14, color: '#FFFFFF' },
-  trendRow: { alignItems: 'center' },
   skeletonGroup: { gap: spacing.sm },
   skeletonCircle: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.border },
   skeletonBar: { height: 12, borderRadius: radius.sm, backgroundColor: colors.border },
