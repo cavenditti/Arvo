@@ -96,8 +96,10 @@ export function plantColor(
 }
 
 /**
- * Every colour the MapLibre document paints with. That HTML string is a dumb renderer: theme
- * tokens are resolved here and travel inside the init payload, so Terra stays in one place.
+ * Every colour the MapLibre document paints with. These values cross a JSON bridge into a web
+ * document, so they must be plain CSS strings. Do not pass the adaptive tokens from `@/theme`
+ * here: on iOS those are `DynamicColorIOS` objects and MapLibre interprets the serialized object
+ * as a malformed style expression, rejecting the plant layers before it requests their tiles.
  */
 export interface PlantMapPalette {
   /** ramp stops, low → high; becomes the circle layer's `interpolate` output */
@@ -121,13 +123,13 @@ export interface PlantMapPalette {
 export function mapPalette(metric: PlantMetric): PlantMapPalette {
   return {
     ramp: rampForMetric(metric),
-    noData: NO_DATA_COLOR,
+    noData: '#8A8F86',
     muted: '#D5D3CA',
-    mutedStroke: colors.accent,
-    halo: colors.card,
-    selected: colors.primaryDark,
-    alert: colors.accent,
-    parcelLine: colors.primaryDark,
+    mutedStroke: '#A5432B',
+    halo: '#FBFAF7',
+    selected: '#1F4430',
+    alert: '#A5432B',
+    parcelLine: '#1F4430',
     parcelFill: 'rgba(35, 75, 52, 0.06)',
   };
 }
