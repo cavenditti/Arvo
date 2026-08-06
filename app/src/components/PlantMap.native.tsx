@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
-import { API_URL } from '@/api/client';
+import { API_URL, api } from '@/api/client';
 
 import { buildPlantInit, plantMapHtml } from './map/plantMapHtml';
 import type { PlantMapProps } from './types';
@@ -26,6 +26,7 @@ export default function PlantMap(props: PlantMapProps) {
   const ref = useRef<WebView>(null);
   const readyRef = useRef(false);
   const lastSent = useRef('');
+  const fallbackRequestRef = useRef('');
 
   // This route uses a translucent iOS header and draws the WebView underneath it. Keep map-owned
   // chrome below the navigation bar and aligned with the React metric selector.
@@ -46,13 +47,44 @@ export default function PlantMap(props: PlantMapProps) {
       mapChromeTop,
     ),
   );
+  const payloadKey = `${props.parcelId}:${props.metric}:${props.tileUrlTemplate}`;
+  const activePayloadKeyRef = useRef(payloadKey);
+
+  useEffect(() => {
+    activePayloadKeyRef.current = payloadKey;
+  }, [payloadKey]);
 
   const send = useCallback(() => {
     if (readyRef.current && ref.current && lastSent.current !== payloadStr) {
       lastSent.current = payloadStr;
+      fallbackRequestRef.current = '';
       ref.current.injectJavaScript(`window.__updatePlants(${payloadStr}); true;`);
     }
   }, [payloadStr]);
+
+  // MVT remains the primary path for large orchards. If MapLibre cannot load or render its
+  // current vector source, use the existing authenticated GeoJSON export as a native-fetched
+  // fallback. This request goes through the ordinary Bearer client (including its token refresh),
+  // so it does not depend on WebView CORS or query-token handling.
+  const loadFallback = useCallback(async () => {
+    const key = payloadKey;
+    if (fallbackRequestRef.current === key) return;
+    fallbackRequestRef.current = key;
+    try {
+      const encodedParcel = encodeURIComponent(props.parcelId);
+      const encodedMetric = encodeURIComponent(props.metric);
+      const raw = await api.get<string | { type: string; features: unknown[] }>(
+        `/plants/export.geojson?parcel_id=${encodedParcel}&metric=${encodedMetric}&capture=latest`,
+      );
+      const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (activePayloadKeyRef.current !== key || !ref.current) return;
+      ref.current.injectJavaScript(`window.__setPlantFallback(${JSON.stringify(data)}); true;`);
+    } catch {
+      if (activePayloadKeyRef.current !== key) return;
+      fallbackRequestRef.current = '';
+      ref.current?.injectJavaScript('window.__plantFallbackError(); true;');
+    }
+  }, [payloadKey, props.metric, props.parcelId]);
 
   useEffect(() => {
     send();
@@ -67,7 +99,10 @@ export default function PlantMap(props: PlantMapProps) {
           // A fresh document announcing ready (first boot OR a WebView content-process reload)
           // has no map state — clear the dedupe so the init is always re-sent.
           lastSent.current = '';
+          fallbackRequestRef.current = '';
           send();
+        } else if (msg.type === 'plantSource' && msg.state !== 'ready') {
+          void loadFallback();
         } else if ((msg.type === 'plant' || msg.type === 'selectPlant') && msg.id) {
           onSelectPlant?.(msg.id);
         }
@@ -75,7 +110,7 @@ export default function PlantMap(props: PlantMapProps) {
         // ignore malformed bridge messages
       }
     },
-    [send, onSelectPlant],
+    [send, loadFallback, onSelectPlant],
   );
 
   return (
