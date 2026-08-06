@@ -304,7 +304,6 @@ fn log_tile_diagnostic(
         return;
     };
     tracing::info!(
-        target: "plant_map_diagnostic",
         %diagnostic_id,
         org_id = %user.org_id,
         user_id = %user.user_id,
@@ -420,7 +419,6 @@ async fn plant_map_diagnostic(
     let error_message = redact_diagnostic_message(report.event.error_message.as_deref());
 
     tracing::info!(
-        target: "plant_map_diagnostic",
         %diagnostic_id,
         org_id = %user.org_id,
         user_id = %user.user_id,
