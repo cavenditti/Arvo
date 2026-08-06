@@ -57,6 +57,8 @@ export interface PlantMapInitMessage {
   labels: PlantMapLabels;
   /** top edge for map-owned controls; native places it below the translucent navigation chrome */
   chromeTop: number;
+  /** Native-only, credential-free correlation id for TestFlight MVT diagnostics. */
+  diagnosticId?: string;
   /** ortho/DSM raster tiles are out of P-MVP scope, so nothing sets this yet — the document
    *  honours it the day a capture serves them, which keeps that a payload change, not a rewrite */
   overlay?: PlantMapOverlay | null;
@@ -67,6 +69,7 @@ export function buildPlantInit(
   props: PlantMapProps,
   labels: PlantMapLabels,
   chromeTop = 12,
+  diagnosticId?: string,
 ): PlantMapInitMessage {
   return {
     type: 'init',
@@ -79,6 +82,7 @@ export function buildPlantInit(
     selectedPlantId: props.selectedPlantId ?? null,
     labels,
     chromeTop,
+    diagnosticId,
   };
 }
 
@@ -145,15 +149,14 @@ ${lib.js}
   var MIN_TILE_Z = 10;      // the API rejects z < 10 (docs/API-PLANT.md §Plant vector tiles)
   var SRC = 'plants';       // source id AND source-layer: the MVT carries one layer, 'plants'
   var HEAT = 'plants-heat', ALERT = 'plants-alert', CIRCLES = 'plants-circles', SEL = 'plants-selected';
-  var FALLBACK_SRC = 'plants-fallback', FALLBACK_CIRCLES = 'plants-fallback-circles';
-  var FALLBACK_SEL = 'plants-fallback-selected';
   var RAMP = ['#A5432B', '#B26A3F', '#C7A34E', '#B8BF5C', '#7BA653', '#3F7D45'];
   var t0 = Date.now();
 
   var map = null, styleReady = false, init = null, gotInit = false, cursorBound = false;
   var basemap = 'map';
   var tileKey = null, paintKey = null, overlayKey = null, camKey = null, selectedId = null;
-  var sourceReportKey = null, fallbackActive = false;
+  var sourceSnapshotKey = null, diagnosticCount = 0, tileRequests = 0, tileEvents = 0;
+  var diagnosticSeen = {};
 
   function post(msg){
     var s = JSON.stringify(msg);
@@ -162,6 +165,53 @@ ${lib.js}
     } else if (window.parent && window.parent !== window) {
       window.parent.postMessage(s, '*');
     }
+  }
+
+  // Only this fixed schema crosses the bridge. In particular, no URL is ever posted: the MVT
+  // template contains a short-lived media token. The native host attaches app/device metadata and
+  // sends each event to the authenticated diagnostic endpoint.
+  function diagnostic(name, fields, dedupeKey){
+    if (!init || !init.diagnosticId || diagnosticCount >= 40) return;
+    var key = dedupeKey ? name + ':' + dedupeKey : null;
+    if (key && diagnosticSeen[key]) return;
+    if (key) diagnosticSeen[key] = true;
+    diagnosticCount += 1;
+    var msg = {
+      type: 'plantDiagnostic',
+      diagnosticId: init.diagnosticId,
+      name: name,
+      elapsed_ms: Math.max(0, Date.now() - t0)
+    };
+    if (fields) Object.keys(fields).forEach(function(k){ msg[k] = fields[k]; });
+    post(msg);
+  }
+
+  function safeError(value){
+    var text = value == null ? '' : String(value);
+    return text
+      .replace(/([?&]token=)[^&#\\s]+/gi, '$1[redacted]')
+      .replace(/(authorization=)[^&#\\s]+/gi, '$1[redacted]')
+      .slice(0, 480);
+  }
+
+  function canonicalTile(value){
+    var c = value && value.canonical ? value.canonical : value;
+    return c && typeof c.z === 'number' && typeof c.x === 'number' && typeof c.y === 'number'
+      ? c.z + '/' + c.x + '/' + c.y
+      : null;
+  }
+
+  function tileFromUrl(url){
+    var tail = String(url || '').split('?')[0].split('/tiles/plants/')[1];
+    if (!tail) return null;
+    var parts = tail.split('/');
+    if (parts.length < 4) return null;
+    var z = parts[1], x = parts[2], y = parts[3];
+    if (y.toLowerCase().slice(-4) === '.mvt') y = y.slice(0, -4);
+    var numeric = [z, x, y].every(function(value){
+      return value !== '' && isFinite(Number(value)) && Number(value) >= 0;
+    });
+    return numeric ? z + '/' + x + '/' + y : null;
   }
 
   function labels(){ return (init && init.labels) || {}; }
@@ -232,28 +282,69 @@ ${lib.js}
 
   function boot(){
     if (typeof maplibregl === 'undefined') {
-      if (Date.now() - t0 > CDN_TIMEOUT_MS) { note(labels().error || ''); return; }
+      if (Date.now() - t0 > CDN_TIMEOUT_MS) {
+        diagnostic('library-timeout', { origin: String(location.origin || '') }, 'timeout');
+        note(labels().error || '');
+        return;
+      }
       setTimeout(boot, 60);
       return;
     }
     map = new maplibregl.Map({
       container: 'map', style: baseStyle(), center: [12.5, 41.9], zoom: 5, maxZoom: 22,
       attributionControl: { compact: true }, dragRotate: false, pitchWithRotate: false,
-      fadeDuration: 0   // field devices: tile budget over crossfade
+      fadeDuration: 0,  // field devices: tile budget over crossfade
+      transformRequest: function(url, resourceType){
+        if (resourceType === 'Tile' && String(url).indexOf('/tiles/plants/') >= 0) {
+          tileRequests += 1;
+          var tile = tileFromUrl(url);
+          diagnostic('tile-request', {
+            tile: tile,
+            tile_requests: tileRequests
+          }, tile || String(tileRequests));
+        }
+        return { url: url };
+      }
     });
     map.touchZoomRotate.disableRotation();
     map.on('load', function(){
       styleReady = true;
       map.resize();           // the container is often laid out after the WebView boots
+      diagnostic('map-load', {
+        zoom: map.getZoom(),
+        origin: String(location.origin || ''),
+        canvas_width: map.getCanvas().width,
+        canvas_height: map.getCanvas().height
+      }, 'loaded');
       if (init) apply(init);
     });
     map.on('idle', function(){ refreshNote(); inspectPlantSource(); });
     map.on('moveend', refreshNote);
-    // Non-404 vector-tile failures bubble to the map with sourceId. Never send the error itself:
-    // it may contain the query-token URL. Native only needs a signal to activate its authenticated
-    // GeoJSON fallback.
+    map.on('sourcedata', function(e){
+      if (!e || e.sourceId !== SRC) return;
+      tileEvents += 1;
+      var tile = canonicalTile(e.coord) || canonicalTile(e.tile && e.tile.tileID);
+      diagnostic('source-data', {
+        source_id: SRC,
+        source_data_type: e.sourceDataType ? String(e.sourceDataType) : null,
+        source_loaded: !!e.isSourceLoaded,
+        tile: tile,
+        tile_events: tileEvents
+      }, String(e.sourceDataType || 'data') + ':' + String(tile || '') + ':' + String(!!e.isSourceLoaded));
+    });
+    // MapLibre errors sometimes include the requested URL. Redact it before crossing the bridge;
+    // the server repeats the redaction as defence in depth.
     map.on('error', function(e){
-      if (e && e.sourceId === SRC) reportPlantSource('error');
+      if (e && e.sourceId && e.sourceId !== SRC) return;
+      var error = e && e.error ? e.error : e;
+      diagnostic('source-error', {
+        source_id: e && e.sourceId ? String(e.sourceId) : null,
+        tile: canonicalTile(e && e.tile && e.tile.tileID),
+        error_name: error && error.name ? String(error.name) : 'Error',
+        error_message: safeError(error && error.message ? error.message : error),
+        http_status: error && typeof error.status === 'number' ? error.status : null
+      });
+      if (e && e.sourceId === SRC) note(labels().error || '');
     });
     map.on('click', onClick);
     window.addEventListener('resize', function(){ map.resize(); });
@@ -317,7 +408,7 @@ ${lib.js}
   // ── layers ─────────────────────────────────────────────────────────────────
 
   function firstPlantLayer(){
-    var ids = [HEAT, ALERT, CIRCLES, SEL, FALLBACK_CIRCLES, FALLBACK_SEL];
+    var ids = [HEAT, ALERT, CIRCLES, SEL];
     for (var i = 0; i < ids.length; i++) if (map.getLayer(ids[i])) return ids[i];
     return undefined;
   }
@@ -325,14 +416,6 @@ ${lib.js}
   function removePlantLayers(){
     [SEL, CIRCLES, ALERT, HEAT].forEach(function(id){ if (map.getLayer(id)) map.removeLayer(id); });
     if (map.getSource(SRC)) map.removeSource(SRC);
-  }
-
-  function removeFallbackLayers(){
-    [FALLBACK_SEL, FALLBACK_CIRCLES].forEach(function(id){
-      if (map.getLayer(id)) map.removeLayer(id);
-    });
-    if (map.getSource(FALLBACK_SRC)) map.removeSource(FALLBACK_SRC);
-    fallbackActive = false;
   }
 
   function addPlantLayers(p, pal){
@@ -378,30 +461,35 @@ ${lib.js}
     }
     if (map.getLayer(ALERT)) map.setPaintProperty(ALERT, 'circle-stroke-color', pal.alert || '#A5432B');
     if (map.getLayer(SEL)) map.setPaintProperty(SEL, 'circle-stroke-color', pal.selected || '#1F4430');
-    if (map.getLayer(FALLBACK_CIRCLES)) {
-      var fp = circlePaint(p, pal);
-      map.setPaintProperty(FALLBACK_CIRCLES, 'circle-color', fp['circle-color']);
-      map.setPaintProperty(FALLBACK_CIRCLES, 'circle-stroke-color', fp['circle-stroke-color']);
-    }
-    if (map.getLayer(FALLBACK_SEL)) {
-      map.setPaintProperty(FALLBACK_SEL, 'circle-stroke-color', pal.selected || '#1F4430');
-    }
   }
 
   function setPlants(p, pal){
     var url = p.tileUrlTemplate || '';
     if (!url) return;
+    if (p.diagnosticId) {
+      url += (url.indexOf('?') >= 0 ? '&' : '?') +
+        'diagnostic_id=' + encodeURIComponent(String(p.diagnosticId));
+    }
     var pk = JSON.stringify([p.metric, p.scale || null, pal]);
     if (url !== tileKey) {
       // the metric/capture/token live in the template, so a new URL means new data: rebuild.
       // maxzoom 18 lets MapLibre overzoom the deepest tile instead of re-requesting past it.
       removePlantLayers();
-      removeFallbackLayers();
-      sourceReportKey = null;
+      sourceSnapshotKey = null;
+      tileRequests = 0;
+      tileEvents = 0;
       map.addSource(SRC, { type: 'vector', tiles: [url], minzoom: MIN_TILE_Z, maxzoom: 18 });
       addPlantLayers(p, pal);
       tileKey = url;
       paintKey = pk;
+      diagnostic('source-added', {
+        source_id: SRC,
+        source_loaded: false,
+        circle_layer: !!map.getLayer(CIRCLES),
+        heat_layer: !!map.getLayer(HEAT)
+      }, String(p.metric || ''));
+      setTimeout(inspectPlantSource, 1500);
+      setTimeout(inspectPlantSource, 5000);
       return;
     }
     if (pk !== paintKey) { repaint(p, pal); paintKey = pk; }
@@ -439,7 +527,6 @@ ${lib.js}
   function setSelected(id){
     selectedId = id || null;
     if (map.getLayer(SEL)) map.setFilter(SEL, selFilter());
-    if (map.getLayer(FALLBACK_SEL)) map.setFilter(FALLBACK_SEL, selFilter());
   }
 
   // ── camera ─────────────────────────────────────────────────────────────────
@@ -479,57 +566,48 @@ ${lib.js}
 
   // ── notes + interaction ────────────────────────────────────────────────────
 
-  function reportPlantSource(state){
-    var key = String(tileKey || '') + ':' + state;
-    if (key === sourceReportKey) return;
-    sourceReportKey = key;
-    post({ type: 'plantSource', state: state });
-  }
-
   function inspectPlantSource(){
-    if (!map || !init || fallbackActive || map.getZoom() < MIN_TILE_Z) return;
-    if (!map.getSource(SRC) || !map.isSourceLoaded(SRC)) return;
+    if (!map || !init) return;
+    var source = map.getSource(SRC);
+    var sourceLoaded = !!source && map.isSourceLoaded(SRC);
     var sourceFeatures = [];
-    try { sourceFeatures = map.querySourceFeatures(SRC, { sourceLayer: SRC }); } catch (e) {}
-    if (!sourceFeatures.length) { reportPlantSource('empty'); return; }
-    // At the parcel-fit zoom the circle layer must produce something visible. A populated source
-    // with no rendered circles is still a broken map from the grower's perspective, so use the
-    // same fallback as a failed tile request.
-    if (map.getZoom() >= 14) {
-      var rendered = [];
-      try { rendered = map.queryRenderedFeatures({ layers: [CIRCLES] }); } catch (e) {}
-      if (!rendered.length) { reportPlantSource('hidden'); return; }
+    var rendered = [], heat = [];
+    if (source) {
+      try { sourceFeatures = map.querySourceFeatures(SRC, { sourceLayer: SRC }); } catch (e) {}
     }
-    reportPlantSource('ready');
+    if (map.getLayer(CIRCLES)) {
+      try { rendered = map.queryRenderedFeatures({ layers: [CIRCLES] }); } catch (e) {}
+    }
+    if (map.getLayer(HEAT)) {
+      try { heat = map.queryRenderedFeatures({ layers: [HEAT] }); } catch (e) {}
+    }
+    var zoom = map.getZoom();
+    var state = zoom < MIN_TILE_Z ? 'below-min-zoom'
+      : !source ? 'source-missing'
+      : !sourceLoaded ? 'loading'
+      : !sourceFeatures.length ? 'empty'
+      : (zoom >= 14 && !rendered.length) ? 'not-rendered'
+      : 'ready';
+    var snapshot = {
+      state: state,
+      zoom: zoom,
+      source_loaded: sourceLoaded,
+      source_features: sourceFeatures.length,
+      rendered_features: rendered.length,
+      heat_features: heat.length,
+      tile_requests: tileRequests,
+      tile_events: tileEvents,
+      circle_layer: !!map.getLayer(CIRCLES),
+      heat_layer: !!map.getLayer(HEAT),
+      canvas_width: map.getCanvas().width,
+      canvas_height: map.getCanvas().height,
+      origin: String(location.origin || '')
+    };
+    var key = JSON.stringify(snapshot);
+    if (key === sourceSnapshotKey) return;
+    sourceSnapshotKey = key;
+    diagnostic('source-snapshot', snapshot);
   }
-
-  window.__setPlantFallback = function(data){
-    if (!map || !styleReady || !init || !data || !Array.isArray(data.features)) return;
-    removeFallbackLayers();
-    if (!data.features.length) { note(labels().error || ''); return; }
-    var pal = init.palette || {};
-    map.addSource(FALLBACK_SRC, { type: 'geojson', data: data });
-    var cp = circlePaint(init, pal);
-    // The fallback is deliberately unmistakable: it activates only when the vector layer is not
-    // visible, and uses a larger radius/halo while preserving the chosen metric's colour scale.
-    cp['circle-radius'] = ['interpolate', ['linear'], ['zoom'], 10, 3.5, 14, 5, 16, 7, 18, 10, 20, 15];
-    cp['circle-opacity'] = 1;
-    cp['circle-stroke-width'] = ['interpolate', ['linear'], ['zoom'], 10, 1.2, 16, 1.8, 20, 2.5];
-    cp['circle-stroke-opacity'] = 1;
-    map.addLayer({ id: FALLBACK_CIRCLES, type: 'circle', source: FALLBACK_SRC,
-      minzoom: MIN_TILE_Z, paint: cp });
-    map.addLayer({ id: FALLBACK_SEL, type: 'circle', source: FALLBACK_SRC,
-      minzoom: MIN_TILE_Z, filter: selFilter(), paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 5, 16, 10, 18, 14, 20, 22],
-        'circle-color': 'rgba(0,0,0,0)',
-        'circle-stroke-color': pal.selected || '#1F4430',
-        'circle-stroke-width': 2.5
-      } });
-    fallbackActive = true;
-    note('');
-  };
-
-  window.__plantFallbackError = function(){ note(labels().error || ''); };
 
   function refreshNote(){
     if (!map || !init) return;
@@ -545,13 +623,10 @@ ${lib.js}
   }
 
   function onClick(e){
-    var layers = [];
-    if (map.getLayer(CIRCLES)) layers.push(CIRCLES);
-    if (map.getLayer(FALLBACK_CIRCLES)) layers.push(FALLBACK_CIRCLES);
-    if (!layers.length) return;
+    if (!map.getLayer(CIRCLES)) return;
     var pad = 10;   // field-sized hit box: a plant is ~4 px across at parcel zoom
     var box = [[e.point.x - pad, e.point.y - pad], [e.point.x + pad, e.point.y + pad]];
-    var fs = map.queryRenderedFeatures(box, { layers: layers });
+    var fs = map.queryRenderedFeatures(box, { layers: [CIRCLES] });
     if (!fs.length) return;
     var best = null, bestD = Infinity;
     for (var i = 0; i < fs.length; i++) {
@@ -578,6 +653,14 @@ ${lib.js}
   window.__updatePlants = function(p){
     gotInit = true;   // both bridges (postMessage and injected JS) land here — stop re-announcing
     init = p;
+    diagnosticSeen = {};
+    diagnosticCount = 0;
+    diagnostic('init-received', {
+      source_id: SRC,
+      origin: String(location.origin || ''),
+      canvas_width: document.getElementById('map').clientWidth,
+      canvas_height: document.getElementById('map').clientHeight
+    }, 'init');
     if (styleReady) apply(p);
     else note(labels().loading || '');
   };

@@ -16,7 +16,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -60,6 +60,7 @@ pub fn router() -> Router<AppState> {
         // sibling, not a conflict — matchit backtracks past the static `plants` segment.
         .route("/tiles/plants/{parcel_id}/{z}/{x}/{y}", get(tile))
         .route("/parcels/{id}/plants/metric-scale", get(metric_scale))
+        .route("/diagnostics/plant-map", post(plant_map_diagnostic))
 }
 
 #[derive(Deserialize)]
@@ -67,6 +68,9 @@ struct TileQuery {
     token: Option<String>,
     metric: Option<String>,
     capture: Option<String>,
+    /// Short client-generated correlation id. It contains no credentials and is logged only
+    /// after authentication, so a TestFlight WebView trace can be joined to the exact MVT calls.
+    diagnostic_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -195,6 +199,7 @@ async fn tile(
     // Bearer header OR a short-lived media token in `?token=`; a session JWT in the query string
     // is rejected (401) so long-lived credentials never ride in access logs or referrers.
     let user = security::authenticate_bearer_or_media(&state, &headers, q.token.as_deref()).await?;
+    let diagnostic_id = normalize_diagnostic_id(q.diagnostic_id.as_deref())?;
     let metric = normalize_metric(q.metric.as_deref())?;
     let capture = parse_capture(q.capture.as_deref())?;
 
@@ -213,6 +218,20 @@ async fn tile(
     // Coordinates outside the zoom's grid address no ground: an empty tile, never an error.
     let n = 1u32 << z;
     if x >= n || y >= n {
+        log_tile_diagnostic(
+            diagnostic_id,
+            &user,
+            parcel_id,
+            metric,
+            capture,
+            z,
+            x,
+            y,
+            0,
+            0,
+            0,
+            "outside_grid",
+        );
         return Ok(empty_tile());
     }
 
@@ -227,6 +246,23 @@ async fn tile(
         .bind(MAX_FEATURES)
         .fetch_one(&state.pool)
         .await?;
+
+    let bytes = row.mvt.as_ref().map_or(0, Vec::len);
+    let outcome = if row.drawn > 0 { "tile" } else { "empty" };
+    log_tile_diagnostic(
+        diagnostic_id,
+        &user,
+        parcel_id,
+        metric,
+        capture,
+        z,
+        x,
+        y,
+        row.candidates,
+        row.drawn,
+        bytes,
+        outcome,
+    );
 
     let Some(mvt) = row.mvt.filter(|_| row.drawn > 0) else {
         return Ok(empty_tile());
@@ -249,6 +285,43 @@ async fn tile(
     Ok(res)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn log_tile_diagnostic(
+    diagnostic_id: Option<&str>,
+    user: &AuthUser,
+    parcel_id: Uuid,
+    metric: &str,
+    capture: Option<Uuid>,
+    z: u32,
+    x: u32,
+    y: u32,
+    candidates: i64,
+    drawn: i64,
+    bytes: usize,
+    outcome: &str,
+) {
+    let Some(diagnostic_id) = diagnostic_id else {
+        return;
+    };
+    tracing::info!(
+        target: "plant_map_diagnostic",
+        %diagnostic_id,
+        org_id = %user.org_id,
+        user_id = %user.user_id,
+        %parcel_id,
+        %metric,
+        capture_id = ?capture,
+        z,
+        x,
+        y,
+        candidates,
+        drawn,
+        bytes,
+        %outcome,
+        "plant map tile"
+    );
+}
+
 /// 204, not 404: MapLibre reads an empty tile as "nothing here", a 404 as a broken source.
 fn empty_tile() -> Response {
     (
@@ -256,6 +329,171 @@ fn empty_tile() -> Response {
         [(header::CACHE_CONTROL, CACHE_CONTROL)],
     )
         .into_response()
+}
+
+// --- TestFlight diagnostics ------------------------------------------------
+
+/// A deliberately narrow diagnostic schema. Arbitrary JSON and URLs are not accepted: this keeps
+/// media tokens and user-authored content out of server logs while retaining everything needed to
+/// separate a request, decode, source-layer, paint, camera, or WebView failure.
+#[derive(Deserialize)]
+struct PlantMapDiagnostic {
+    diagnostic_id: String,
+    parcel_id: Uuid,
+    metric: String,
+    platform: Option<String>,
+    os_version: Option<String>,
+    device_model: Option<String>,
+    app_version: Option<String>,
+    build_number: Option<String>,
+    event: PlantMapDiagnosticEvent,
+}
+
+#[derive(Deserialize)]
+struct PlantMapDiagnosticEvent {
+    name: String,
+    elapsed_ms: Option<u64>,
+    state: Option<String>,
+    zoom: Option<f64>,
+    source_loaded: Option<bool>,
+    source_features: Option<u32>,
+    rendered_features: Option<u32>,
+    heat_features: Option<u32>,
+    tile_requests: Option<u32>,
+    tile_events: Option<u32>,
+    tile: Option<String>,
+    source_data_type: Option<String>,
+    source_id: Option<String>,
+    circle_layer: Option<bool>,
+    heat_layer: Option<bool>,
+    canvas_width: Option<u32>,
+    canvas_height: Option<u32>,
+    origin: Option<String>,
+    error_name: Option<String>,
+    error_message: Option<String>,
+    http_status: Option<u16>,
+}
+
+const DIAGNOSTIC_EVENTS: [&str; 13] = [
+    "webview-load-start",
+    "webview-load-end",
+    "webview-error",
+    "webview-http-error",
+    "webview-process-terminated",
+    "library-timeout",
+    "init-received",
+    "map-load",
+    "source-added",
+    "tile-request",
+    "source-data",
+    "source-error",
+    "source-snapshot",
+];
+
+async fn plant_map_diagnostic(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(report): Json<PlantMapDiagnostic>,
+) -> ApiResult<StatusCode> {
+    assert_owned(&state.pool, user.org_id, report.parcel_id).await?;
+    let diagnostic_id = normalize_diagnostic_id(Some(&report.diagnostic_id))?
+        .ok_or_else(|| ApiError::BadRequest("diagnostic id is required".into()))?;
+    let metric = normalize_metric(Some(&report.metric))?;
+    if !DIAGNOSTIC_EVENTS.contains(&report.event.name.as_str()) {
+        return Err(ApiError::BadRequest("unknown diagnostic event".into()));
+    }
+    if report.event.zoom.is_some_and(|zoom| !zoom.is_finite()) {
+        return Err(ApiError::BadRequest("invalid diagnostic zoom".into()));
+    }
+
+    let platform = diagnostic_label(report.platform.as_deref(), 32);
+    let os_version = diagnostic_label(report.os_version.as_deref(), 64);
+    let device_model = diagnostic_label(report.device_model.as_deref(), 80);
+    let app_version = diagnostic_label(report.app_version.as_deref(), 32);
+    let build_number = diagnostic_label(report.build_number.as_deref(), 32);
+    let event_state = diagnostic_label(report.event.state.as_deref(), 32);
+    let tile = diagnostic_label(report.event.tile.as_deref(), 64);
+    let source_data_type = diagnostic_label(report.event.source_data_type.as_deref(), 32);
+    let source_id = diagnostic_label(report.event.source_id.as_deref(), 32);
+    let origin = diagnostic_label(report.event.origin.as_deref(), 160);
+    let error_name = diagnostic_label(report.event.error_name.as_deref(), 80);
+    let error_message = redact_diagnostic_message(report.event.error_message.as_deref());
+
+    tracing::info!(
+        target: "plant_map_diagnostic",
+        %diagnostic_id,
+        org_id = %user.org_id,
+        user_id = %user.user_id,
+        parcel_id = %report.parcel_id,
+        %metric,
+        event = %report.event.name,
+        state = ?event_state,
+        elapsed_ms = ?report.event.elapsed_ms,
+        zoom = ?report.event.zoom,
+        source_loaded = ?report.event.source_loaded,
+        source_features = ?report.event.source_features,
+        rendered_features = ?report.event.rendered_features,
+        heat_features = ?report.event.heat_features,
+        tile_requests = ?report.event.tile_requests,
+        tile_events = ?report.event.tile_events,
+        tile = ?tile,
+        source_data_type = ?source_data_type,
+        source_id = ?source_id,
+        circle_layer = ?report.event.circle_layer,
+        heat_layer = ?report.event.heat_layer,
+        canvas_width = ?report.event.canvas_width,
+        canvas_height = ?report.event.canvas_height,
+        origin = ?origin,
+        error_name = ?error_name,
+        error_message = ?error_message,
+        http_status = ?report.event.http_status,
+        platform = ?platform,
+        os_version = ?os_version,
+        device_model = ?device_model,
+        app_version = ?app_version,
+        build_number = ?build_number,
+        "plant map client"
+    );
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn normalize_diagnostic_id(value: Option<&str>) -> ApiResult<Option<&str>> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if value.len() > 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(ApiError::BadRequest("invalid diagnostic id".into()));
+    }
+    Ok(Some(value))
+}
+
+fn diagnostic_label(value: Option<&str>, max_len: usize) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return None;
+    }
+    Some(value.chars().take(max_len).collect())
+}
+
+fn redact_diagnostic_message(value: Option<&str>) -> Option<String> {
+    let mut value = diagnostic_label(value, 512)?;
+    // MapLibre fetch errors can contain the full tile URL. Preserve the useful status/message but
+    // remove the short-lived media credential before it reaches tracing output.
+    for marker in ["token=", "authorization="] {
+        if let Some(start) = value.to_ascii_lowercase().find(marker) {
+            let value_start = start + marker.len();
+            let value_end = value[value_start..]
+                .find(|c: char| c == '&' || c == '#' || c.is_whitespace())
+                .map_or(value.len(), |offset| value_start + offset);
+            value.replace_range(value_start..value_end, "[redacted]");
+        }
+    }
+    Some(value)
 }
 
 // --- metric scale ----------------------------------------------------------
@@ -407,6 +645,28 @@ mod tests {
         let id = Uuid::new_v4();
         assert_eq!(parse_capture(Some(&id.to_string())).unwrap(), Some(id));
         assert!(parse_capture(Some("not-a-uuid")).is_err());
+    }
+
+    #[test]
+    fn validates_diagnostic_ids() {
+        assert_eq!(normalize_diagnostic_id(None).unwrap(), None);
+        assert_eq!(
+            normalize_diagnostic_id(Some("pm-abc_123")).unwrap(),
+            Some("pm-abc_123")
+        );
+        assert!(normalize_diagnostic_id(Some("contains spaces")).is_err());
+        assert!(normalize_diagnostic_id(Some("token=secret")).is_err());
+        assert!(normalize_diagnostic_id(Some(&"x".repeat(65))).is_err());
+    }
+
+    #[test]
+    fn redacts_credentials_from_diagnostic_messages() {
+        assert_eq!(
+            redact_diagnostic_message(Some(
+                "fetch https://api.test/tile?metric=ndvi&token=secret-value&capture=latest"
+            )),
+            Some("fetch https://api.test/tile?metric=ndvi&token=[redacted]&capture=latest".into())
+        );
     }
 
     /// The clip buffer in `ST_TileEnvelope(margin => …)` is a fraction of the tile width, and
