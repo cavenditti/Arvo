@@ -5,17 +5,28 @@
 // Full-bleed like (tabs)/map.tsx: the map fills the screen and every control floats over it.
 // Terra: no state dots, no left-border stripes, fonts are family tokens (never fontWeight).
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { format, parseISO } from 'date-fns';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PLANT_METRICS, type PlantMetric, type ReplantReason } from '@/api/types';
 import NativeSheet from '@/components/NativeSheet';
 import PlantMap from '@/components/PlantMap';
+import PlantListDrawer, {
+  PLANT_LIST_DRAWER_COMPACT_HEIGHT,
+} from '@/components/PlantListDrawer';
 import { InteractivePressable, MonoLabel, MonoValue, Pill } from '@/components/ui';
 import { dfLocale } from '@/features/insights/format';
 import { useParcels } from '@/features/parcels/hooks';
@@ -48,11 +59,8 @@ import {
   type as typeScale,
 } from '@/theme';
 
-// Rows kept in each floating panel — the full lists live in the parcel/plant screens.
+// Rows kept in the map drawer — the full lists live in the parcel/plant screens.
 const PANEL_LIMIT = 8;
-// Panel-height guess used for the FAB offset until onLayout reports the real value.
-const PANEL_HEIGHT_ESTIMATE = 260;
-
 // Prefer an actual health index when one exists, then measurements the RGB detector can produce.
 // This keeps an RGB-only capture from opening on an empty NDVI view even though plants were found.
 const AUTO_METRIC_ORDER: PlantMetric[] = [
@@ -95,6 +103,7 @@ function metricText(metric: PlantMetric, value: number | null | undefined): stri
 export default function PlantsScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const locale = dfLocale();
 
@@ -112,7 +121,6 @@ export default function PlantsScreen() {
   const [segment, setSegment] = useState<Segment>('weakest');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [metricOpen, setMetricOpen] = useState(false);
-  const [panelHeight, setPanelHeight] = useState(0);
 
   // An explicit pick wins over the deep link — so the tab is useful without a selection step and
   // a refetch never moves the map. With neither, prefer the parcel of the newest extracted flight
@@ -189,9 +197,10 @@ export default function PlantsScreen() {
   // Only claim "no plants" once the summary actually came back — a failed request must not read
   // as an empty planting.
   const noPlants = summaryQ.isSuccess && summary?.total === 0;
-  const panelBottom =
+  const fallbackDrawerBottom =
     insets.bottom + navigationMetrics.barHeight + navigationMetrics.controlGap + spacing.md;
-  const fabBottom = panelBottom + (panelHeight || PANEL_HEIGHT_ESTIMATE) + spacing.sm;
+  const drawerBottom = Platform.OS === 'ios' ? 0 : fallbackDrawerBottom;
+  const fabBottom = drawerBottom + PLANT_LIST_DRAWER_COMPACT_HEIGHT + spacing.sm;
   const selectorTop = insets.top + 56;
 
   if (parcelsQ.isLoading) {
@@ -373,96 +382,130 @@ export default function PlantsScreen() {
         </View>
       </NativeSheet>
 
-      {/* legend + weakest-N / replant panels */}
-      <View
-        style={[styles.panel, { bottom: panelBottom }]}
-        onLayout={(e) => setPanelHeight(e.nativeEvent.layout.height)}
-      >
-        <View style={styles.legendRow}>
-          <MonoLabel color={colors.textMuted}>
-            {t('plantmap.legend', { metric: t(metricLabelKey(metric)), date: legendDate })}
-          </MonoLabel>
-        </View>
-        <View style={styles.legendScale}>
-          <Text style={styles.legendEdge} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('plantmap.legend_low')}
-          </Text>
-          <View style={styles.gradientBar}>
-            {ramp.map((c) => (
-              <View key={c} style={[styles.gradientCell, { backgroundColor: c }]} />
-            ))}
+      {/* Native iOS drawer: compact leaves the map usable, large exposes the full plant list. */}
+      <PlantListDrawer presented={isFocused} bottomOffset={fallbackDrawerBottom}>
+        <View style={styles.drawerContent}>
+          <View style={styles.legendRow}>
+            <MonoLabel color={colors.textMuted}>
+              {t('plantmap.legend', { metric: t(metricLabelKey(metric)), date: legendDate })}
+            </MonoLabel>
           </View>
-          <Text style={styles.legendEdge} maxFontSizeMultiplier={typeScale.maxMult}>
-            {t('plantmap.legend_high')}
-          </Text>
-          <View style={styles.flex1} />
-          <MonoValue size={typeScale.caption} weight="600" color={colors.textMuted}>
-            {domain
-              ? `${metricText(metric, domain.p5)} → ${metricText(metric, domain.p95)}`
-              : t('plantmap.no_data')}
-          </MonoValue>
-        </View>
-
-        <View style={styles.segRow}>
-          <SegButton
-            label={t('plants.ranking_weakest')}
-            active={segment === 'weakest'}
-            onPress={() => setSegment('weakest')}
-          />
-          <SegButton
-            label={t('replant.title')}
-            active={segment === 'replant'}
-            onPress={() => setSegment('replant')}
-          />
-          <View style={styles.flex1} />
-          {summary ? (
-            <MonoLabel>{t('plants.count', { count: summary.total })}</MonoLabel>
-          ) : null}
-        </View>
-
-        <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-          {noPlants ? (
-            <View style={styles.emptyBox}>
-              <Text style={styles.emptyTitle} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('plants.empty_title')}
-              </Text>
-              <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('plants.empty_body')}
-              </Text>
-              <InteractivePressable style={styles.retry} onPress={openCapture}>
-                <Text style={styles.retryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                  {t('plants.empty_cta')}
-                </Text>
-              </InteractivePressable>
+          <View style={styles.legendScale}>
+            <Text style={styles.legendEdge} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('plantmap.legend_low')}
+            </Text>
+            <View style={styles.gradientBar}>
+              {ramp.map((c) => (
+                <View key={c} style={[styles.gradientCell, { backgroundColor: c }]} />
+              ))}
             </View>
-          ) : segment === 'weakest' ? (
-            rankingQ.isLoading ? (
+            <Text style={styles.legendEdge} maxFontSizeMultiplier={typeScale.maxMult}>
+              {t('plantmap.legend_high')}
+            </Text>
+            <View style={styles.flex1} />
+            <MonoValue size={typeScale.caption} weight="600" color={colors.textMuted}>
+              {domain
+                ? `${metricText(metric, domain.p5)} → ${metricText(metric, domain.p95)}`
+                : t('plantmap.no_data')}
+            </MonoValue>
+          </View>
+
+          <View style={styles.segRow}>
+            <SegButton
+              label={t('plants.ranking_weakest')}
+              active={segment === 'weakest'}
+              onPress={() => setSegment('weakest')}
+            />
+            <SegButton
+              label={t('replant.title')}
+              active={segment === 'replant'}
+              onPress={() => setSegment('replant')}
+            />
+            <View style={styles.flex1} />
+            {summary ? (
+              <MonoLabel>{t('plants.count', { count: summary.total })}</MonoLabel>
+            ) : null}
+          </View>
+
+          <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+            {noPlants ? (
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyTitle} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('plants.empty_title')}
+                </Text>
+                <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('plants.empty_body')}
+                </Text>
+                <InteractivePressable style={styles.retry} onPress={openCapture}>
+                  <Text style={styles.retryTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                    {t('plants.empty_cta')}
+                  </Text>
+                </InteractivePressable>
+              </View>
+            ) : segment === 'weakest' ? (
+              rankingQ.isLoading ? (
+                <ActivityIndicator color={colors.primary} style={styles.pad} />
+              ) : weakest.length === 0 ? (
+                <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
+                  {t('plants.ranking_empty')}
+                </Text>
+              ) : (
+                weakest.map((r) => {
+                  const vs = formatVsBlock(r.vs_block_pct);
+                  const rowName = plantName(r, t('plant.unlabeled'));
+                  return (
+                    <InteractivePressable
+                      key={r.plant_id}
+                      style={styles.row}
+                      accessibilityLabel={`${rowName} · ${t('plants.open_plant')}`}
+                      onPress={() => openPlant(r.plant_id)}
+                    >
+                      <View
+                        style={[
+                          styles.swatch,
+                          { backgroundColor: plantColor(r.status, metric, r.normalized) },
+                        ]}
+                      >
+                        <Text style={styles.swatchTxt} maxFontSizeMultiplier={typeScale.maxMult}>
+                          {r.rank}
+                        </Text>
+                      </View>
+                      <View style={styles.flex1}>
+                        <Text
+                          style={styles.rowName}
+                          numberOfLines={1}
+                          maxFontSizeMultiplier={typeScale.maxMult}
+                        >
+                          {rowName}
+                        </Text>
+                        <MonoLabel>
+                          {`${metricText(metric, r.value)}${unit}${
+                            vs ? ` · ${t('plants.vs_block')} ${vs}` : ''
+                          }`}
+                        </MonoLabel>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+                    </InteractivePressable>
+                  );
+                })
+              )
+            ) : replantQ.isLoading ? (
               <ActivityIndicator color={colors.primary} style={styles.pad} />
-            ) : weakest.length === 0 ? (
+            ) : replant.length === 0 ? (
               <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
-                {t('plants.ranking_empty')}
+                {t('replant.empty')}
               </Text>
             ) : (
-              weakest.map((r) => {
-                const vs = formatVsBlock(r.vs_block_pct);
-                const rowName = plantName(r, t('plant.unlabeled'));
+              replant.map((e) => {
+                const tint = REASON_TINT[e.reason];
+                const rowName = plantName(e, t('plant.unlabeled'));
                 return (
                   <InteractivePressable
-                    key={r.plant_id}
+                    key={e.plant_id}
                     style={styles.row}
-                    accessibilityLabel={`${rowName} · ${t('plants.open_plant')}`}
-                    onPress={() => openPlant(r.plant_id)}
+                    accessibilityLabel={`${rowName} · ${t('replant.open_plant')}`}
+                    onPress={() => openPlant(e.plant_id)}
                   >
-                    <View
-                      style={[
-                        styles.swatch,
-                        { backgroundColor: plantColor(r.status, metric, r.normalized) },
-                      ]}
-                    >
-                      <Text style={styles.swatchTxt} maxFontSizeMultiplier={typeScale.maxMult}>
-                        {r.rank}
-                      </Text>
-                    </View>
                     <View style={styles.flex1}>
                       <Text
                         style={styles.rowName}
@@ -472,57 +515,22 @@ export default function PlantsScreen() {
                         {rowName}
                       </Text>
                       <MonoLabel>
-                        {`${metricText(metric, r.value)}${unit}${
-                          vs ? ` · ${t('plants.vs_block')} ${vs}` : ''
-                        }`}
+                        {e.last_seen_at
+                          ? `${t('replant.last_seen')} ${format(parseISO(e.last_seen_at), 'd MMM', {
+                              locale,
+                            })}`
+                          : t('replant.never_seen')}
                       </MonoLabel>
                     </View>
+                    <Pill label={t(`replant.reason.${e.reason}`)} fg={tint.fg} bg={tint.bg} />
                     <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
                   </InteractivePressable>
                 );
               })
-            )
-          ) : replantQ.isLoading ? (
-            <ActivityIndicator color={colors.primary} style={styles.pad} />
-          ) : replant.length === 0 ? (
-            <Text style={styles.msg} maxFontSizeMultiplier={typeScale.maxMult}>
-              {t('replant.empty')}
-            </Text>
-          ) : (
-            replant.map((e) => {
-              const tint = REASON_TINT[e.reason];
-              const rowName = plantName(e, t('plant.unlabeled'));
-              return (
-                <InteractivePressable
-                  key={e.plant_id}
-                  style={styles.row}
-                  accessibilityLabel={`${rowName} · ${t('replant.open_plant')}`}
-                  onPress={() => openPlant(e.plant_id)}
-                >
-                  <View style={styles.flex1}>
-                    <Text
-                      style={styles.rowName}
-                      numberOfLines={1}
-                      maxFontSizeMultiplier={typeScale.maxMult}
-                    >
-                      {rowName}
-                    </Text>
-                    <MonoLabel>
-                      {e.last_seen_at
-                        ? `${t('replant.last_seen')} ${format(parseISO(e.last_seen_at), 'd MMM', {
-                            locale,
-                          })}`
-                        : t('replant.never_seen')}
-                    </MonoLabel>
-                  </View>
-                  <Pill label={t(`replant.reason.${e.reason}`)} fg={tint.fg} bg={tint.bg} />
-                  <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-                </InteractivePressable>
-              );
-            })
-          )}
-        </ScrollView>
-      </View>
+            )}
+          </ScrollView>
+        </View>
+      </PlantListDrawer>
 
       <InteractivePressable
         style={[styles.fab, { bottom: fabBottom }]}
@@ -686,23 +694,12 @@ const styles = StyleSheet.create({
   sheetRowTxt: { fontSize: typeScale.bodyLg, fontFamily: fonts.body, color: colors.text },
   sheetRowTxtActive: { fontFamily: fonts.bodySemiBold, color: colors.primary },
 
-  // bottom panel
-  panel: {
-    position: 'absolute',
-    left: spacing.md,
-    right: spacing.md,
-    maxHeight: 340,
-    backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.md,
+  // content inside the platform bottom drawer
+  drawerContent: {
+    flex: 1,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
     gap: spacing.sm,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
   },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   legendScale: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
@@ -723,8 +720,7 @@ const styles = StyleSheet.create({
   segBtnActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   segTxt: { fontSize: typeScale.caption, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
   segTxtActive: { color: colors.onPrimary },
-  // bounded so the panel keeps its shape and the list scrolls inside it
-  list: { maxHeight: 176, flexGrow: 0 },
+  list: { flex: 1 },
   listContent: { gap: spacing.xs, paddingBottom: spacing.xs },
   row: {
     minHeight: touch.min,
